@@ -3,7 +3,13 @@ from __future__ import annotations
 import argparse
 
 from meeg_pipeline import __version__
-from meeg_pipeline.bids import has_dataset_description, list_bids_entities
+from meeg_pipeline.bids import (
+    compare_subjects_with_participants,
+    has_dataset_description,
+    has_participants_tsv,
+    list_bids_entities,
+    read_participants,
+)
 from meeg_pipeline.config import load_config
 
 
@@ -62,10 +68,22 @@ def main() -> None:
             "dataset_description.json:",
             "found" if has_dataset_description(config.paths.bids_root) else "missing",
         )
+        print(
+            "participants.tsv:",
+            "found" if has_participants_tsv(config.paths.bids_root) else "missing",
+        )
+        print(f"Participants: {read_participants(config.paths.bids_root)}")
         print(f"Subjects: {list_bids_entities(config, 'subject')}")
         print(f"Sessions: {list_bids_entities(config, 'session')}")
         print(f"Tasks: {list_bids_entities(config, 'task')}")
         print(f"Runs: {list_bids_entities(config, 'run')}")
+
+        missing_in_participants, missing_subject_folders = (
+            compare_subjects_with_participants(config)
+        )
+
+        print(f"Subjects missing in participants.tsv: {missing_in_participants}")
+        print(f"Participants without subject folder: {missing_subject_folders}")
 
     else:
         parser.print_help()

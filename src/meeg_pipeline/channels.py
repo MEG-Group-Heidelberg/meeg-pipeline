@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pandas as pd
+
 from collections import Counter
 from dataclasses import dataclass
 
@@ -47,6 +49,54 @@ def summarize_channels(raw: BaseRaw) -> ChannelSummary:
         eog_channels=eog_channels,
         ecg_channels=ecg_channels,
     )
+
+
+def channel_summary_to_dataframe(summary: ChannelSummary) -> pd.DataFrame:
+    """Convert a ChannelSummary to a notebook-friendly overview table."""
+    return pd.DataFrame(
+        [
+            {
+                "n_channels": summary.n_channels,
+                "channel_types": ", ".join(
+                    f"{channel_type}: {count}"
+                    for channel_type, count in summary.channel_types.items()
+                ),
+                "n_bad_channels": len(summary.bad_channels),
+                "n_stim_channels": len(summary.stim_channels),
+                "n_eog_channels": len(summary.eog_channels),
+                "n_ecg_channels": len(summary.ecg_channels),
+            }
+        ]
+    )
+
+
+def channel_lists_to_dataframe(summary: ChannelSummary) -> pd.DataFrame:
+    """Convert channel lists from a ChannelSummary to a notebook-friendly table."""
+    rows = []
+
+    for channel_type, channel_names in [
+        ("bad", summary.bad_channels),
+        ("stim", summary.stim_channels),
+        ("eog", summary.eog_channels),
+        ("ecg", summary.ecg_channels),
+    ]:
+        if channel_names:
+            for channel_name in channel_names:
+                rows.append(
+                    {
+                        "channel_type": channel_type,
+                        "channel_name": channel_name,
+                    }
+                )
+        else:
+            rows.append(
+                {
+                    "channel_type": channel_type,
+                    "channel_name": None,
+                }
+            )
+
+    return pd.DataFrame(rows)
 
 
 def print_channel_summary(summary: ChannelSummary) -> None:

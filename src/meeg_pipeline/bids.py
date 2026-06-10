@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
-from mne_bids import BIDSPath, get_entity_vals
+from mne_bids import BIDSPath, get_entity_vals, read_raw_bids
 
 from meeg_pipeline.config import PipelineConfig
 
@@ -107,3 +107,32 @@ def list_bids_entities(config: PipelineConfig, entity: str) -> list[str]:
         values = sorted(set(values) | set(folder_subjects))
 
     return sorted(values)
+
+
+def read_raw_bids_recording(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    task: str | None = None,
+    session: str | None = None,
+    run: str | None = None,
+    preload: bool = False,
+):
+    """Read a raw BIDS recording using MNE-BIDS."""
+    bids_path = make_bids_path(
+        config,
+        subject=subject,
+        task=task,
+        session=session,
+        run=run,
+        extension=".fif",
+    )
+
+    if not bids_path.fpath.exists():
+        raise FileNotFoundError(f"Raw BIDS file does not exist: {bids_path.fpath}")
+
+    return read_raw_bids(
+        bids_path=bids_path,
+        extra_params={"preload": preload},
+        verbose=True,
+    )

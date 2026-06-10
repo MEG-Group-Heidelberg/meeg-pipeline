@@ -10,6 +10,7 @@ from meeg_pipeline.bids import (
     list_bids_entities,
     make_bids_path,
     read_participants,
+    read_raw_bids_recording,
 )
 from meeg_pipeline.sourcedata import discover_source_recordings, make_target_bids_path
 from meeg_pipeline.conversion import convert_source_recording_to_bids
@@ -88,6 +89,25 @@ def main() -> None:
         "--overwrite",
         action="store_true",
         help="Overwrite existing BIDS files. Default: do not overwrite.",
+    )
+
+    raw_info_parser = subparsers.add_parser(
+        "raw-info",
+        help="Read a raw BIDS recording and show basic information.",
+    )
+    raw_info_parser.add_argument(
+        "--config",
+        required=True,
+        help="Path to a project config YAML file.",
+    )
+    raw_info_parser.add_argument("--subject", required=True)
+    raw_info_parser.add_argument("--task", default=None)
+    raw_info_parser.add_argument("--session", default=None)
+    raw_info_parser.add_argument("--run", default=None)
+    raw_info_parser.add_argument(
+        "--preload",
+        action="store_true",
+        help="Preload the raw data into memory.",
     )
 
     args = parser.parse_args()
@@ -189,6 +209,27 @@ def main() -> None:
 
             print(f"Status: {result.status}")
             print(f"Target: {result.target_path}")
+
+    elif args.command == "raw-info":
+        config = load_config(args.config)
+
+        raw = read_raw_bids_recording(
+            config,
+            subject=args.subject,
+            task=args.task,
+            session=args.session,
+            run=args.run,
+            preload=args.preload,
+        )
+
+        duration = raw.times[-1] if len(raw.times) > 0 else 0.0
+
+        print(raw)
+        print(f"Channels: {len(raw.ch_names)}")
+        print(f"Sampling frequency: {raw.info['sfreq']} Hz")
+        print(f"Duration: {duration:.2f} s")
+        print(f"Bad channels: {raw.info['bads']}")
+        print(f"Annotations: {len(raw.annotations)}")
 
     else:
         parser.print_help()

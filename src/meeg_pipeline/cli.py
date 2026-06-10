@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 
 from meeg_pipeline import __version__
+from meeg_pipeline.bids import has_dataset_description, list_bids_entities
 from meeg_pipeline.config import load_config
 
 
@@ -30,6 +31,16 @@ def main() -> None:
         help="Path to a project config YAML file.",
     )
 
+    bids_parser = subparsers.add_parser(
+        "bids-info",
+        help="Show basic information about the configured BIDS dataset.",
+    )
+    bids_parser.add_argument(
+        "--config",
+        required=True,
+        help="Path to a project config YAML file.",
+    )
+
     args = parser.parse_args()
 
     if args.command == "config-info":
@@ -42,5 +53,19 @@ def main() -> None:
         print(f"Task: {config.bids.task}")
         print(f"Session: {config.bids.session}")
         print(f"Run: {config.bids.run}")
+
+    elif args.command == "bids-info":
+        config = load_config(args.config)
+
+        print(f"BIDS root: {config.paths.bids_root}")
+        print(
+            "dataset_description.json:",
+            "found" if has_dataset_description(config.paths.bids_root) else "missing",
+        )
+        print(f"Subjects: {list_bids_entities(config, 'subject')}")
+        print(f"Sessions: {list_bids_entities(config, 'session')}")
+        print(f"Tasks: {list_bids_entities(config, 'task')}")
+        print(f"Runs: {list_bids_entities(config, 'run')}")
+
     else:
         parser.print_help()

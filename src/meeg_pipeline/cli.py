@@ -14,6 +14,7 @@ from meeg_pipeline.bids import (
 )
 from meeg_pipeline.sourcedata import discover_source_recordings, make_target_bids_path
 from meeg_pipeline.conversion import convert_source_recording_to_bids
+from meeg_pipeline.channels import print_channel_summary, summarize_channels
 from meeg_pipeline.config import load_config
 
 
@@ -109,6 +110,20 @@ def main() -> None:
         action="store_true",
         help="Preload the raw data into memory.",
     )
+
+    channels_info_parser = subparsers.add_parser(
+        "channels-info",
+        help="Read a raw BIDS recording and show channel information.",
+    )
+    channels_info_parser.add_argument(
+        "--config",
+        required=True,
+        help="Path to a project config YAML file.",
+    )
+    channels_info_parser.add_argument("--subject", required=True)
+    channels_info_parser.add_argument("--task", default=None)
+    channels_info_parser.add_argument("--session", default=None)
+    channels_info_parser.add_argument("--run", default=None)
 
     args = parser.parse_args()
 
@@ -230,6 +245,21 @@ def main() -> None:
         print(f"Duration: {duration:.2f} s")
         print(f"Bad channels: {raw.info['bads']}")
         print(f"Annotations: {len(raw.annotations)}")
+
+    elif args.command == "channels-info":
+        config = load_config(args.config)
+
+        raw = read_raw_bids_recording(
+            config,
+            subject=args.subject,
+            task=args.task,
+            session=args.session,
+            run=args.run,
+            preload=False,
+        )
+
+        summary = summarize_channels(raw)
+        print_channel_summary(summary)
 
     else:
         parser.print_help()

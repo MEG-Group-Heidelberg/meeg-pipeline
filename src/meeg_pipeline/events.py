@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from itertools import combinations
 from functools import reduce
+from itertools import combinations
+from pathlib import Path
 
 import mne
 import numpy as np
+import pandas as pd
 from mne.io import BaseRaw
 
 from meeg_pipeline.config import PipelineConfig
@@ -294,3 +296,59 @@ def print_event_summary(summary: EventSummary) -> None:
     print(f"Min. sample distance: {summary.min_sample_distance}")
     print(f"Max. sample distance: {summary.max_sample_distance}")
     print(f"First events: {summary.first_events}")
+
+
+def events_to_dataframe(
+    events: np.ndarray,
+    raw: BaseRaw,
+    *,
+    trial_type: str = "trigger",
+) -> pd.DataFrame:
+    """Convert an MNE-style events array to a BIDS-like events table.
+
+    The BIDS-required columns are:
+    - onset
+    - duration
+    - trial_type
+
+    Additional useful columns:
+    - value
+    - sample
+    """
+    if len(events) == 0:
+        return pd.DataFrame(
+            columns=["onset", "duration", "trial_type", "value", "sample"]
+        )
+
+    first_samp = int(raw.first_samp)
+    sfreq = float(raw.info["sfreq"])
+
+    samples = events[:, 0].astype(int)
+    onset = (samples - first_samp) / sfreq
+
+    return pd.DataFrame(
+        {
+            "onset": onset,
+            "duration": 0.0,
+            "trial_type": trial_type,
+            "value": events[:, 2].astype(int),
+            "sample": samples,
+        }
+    )
+
+
+def write_events_tsv(
+    events_table: pd.DataFrame,
+    output_path: Path,
+    *,
+    overwrite: bool = False,
+) -> Path:
+    """Write an events table to TSV."""
+    from meeg_pipeline.io import ensure_output_does_not_exist
+
+    ensure_output_does_not_exist(output_path, overwrite=overwrite)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    events_table.to_csv(output_path, sep="\t", index=False)
+
+    return output_path

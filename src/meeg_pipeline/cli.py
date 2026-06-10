@@ -9,6 +9,7 @@ from meeg_pipeline.bids import (
     has_participants_tsv,
     list_bids_entities,
     make_bids_path,
+    make_events_path,
     read_participants,
     read_raw_bids_recording,
 )
@@ -18,9 +19,11 @@ from meeg_pipeline.channels import print_channel_summary, summarize_channels
 from meeg_pipeline.events import (
     BinaryChannelEventConfig,
     binary_event_config_from_pipeline_config,
+    events_to_dataframe,
     find_binary_channel_events,
     print_event_summary,
     summarize_events,
+    write_events_tsv,
 )
 from meeg_pipeline.config import load_config
 
@@ -173,6 +176,25 @@ def main() -> None:
         action="store_false",
         default=None,
         help="Override config: do not zero stim channels during BAD annotations.",
+    )
+
+    write_events_parser = subparsers.add_parser(
+        "write-events",
+        help="Extract events and write a BIDS-compatible events.tsv file.",
+    )
+    write_events_parser.add_argument(
+        "--config",
+        required=True,
+        help="Path to a project config YAML file.",
+    )
+    write_events_parser.add_argument("--subject", required=True)
+    write_events_parser.add_argument("--task", default=None)
+    write_events_parser.add_argument("--session", default=None)
+    write_events_parser.add_argument("--run", default=None)
+    write_events_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite an existing events.tsv file.",
     )
 
     args = parser.parse_args()
@@ -358,6 +380,41 @@ def main() -> None:
         events = find_binary_channel_events(raw, event_config)
         summary = summarize_events(events)
         print_event_summary(summary)
+
+    elif args.command == "write-events":
+        config = load_config(args.config)
+
+        raw = read_raw_bids_recording(
+            config,
+            subject=args.subject,
+            task=args.task,
+            session=args.session,
+            run=args.run,
+            preload=False,
+        )
+
+        event_config = binary_event_config_from_pipeline_config(config)
+        events = find_binary_channel_events(raw, event_config)
+        summary = summarize_events(events)
+
+        events_table = events_to_dataframe(events, raw)
+
+        events_path = make_events_path(
+            config,
+            subject=args.subject,
+            task=args.task,
+            session=args.session,
+            run=args.run,
+        )
+
+        output_path = write_events_tsv(
+            events_table,
+            events_path.fpath,
+            overwrite=args.overwrite,
+        )
+
+        print_event_summary(summary)
+        print(f"Wrote events: {output_path}")
 
     else:
         parser.print_help()

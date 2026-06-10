@@ -81,6 +81,27 @@ def make_bids_path(
     )
 
 
+def make_events_path(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    task: str | None = None,
+    session: str | None = None,
+    run: str | None = None,
+) -> BIDSPath:
+    """Create a BIDSPath for an events.tsv file."""
+    return BIDSPath(
+        root=config.paths.bids_root,
+        subject=subject.removeprefix("sub-"),
+        session=session or config.bids.session,
+        task=task or config.bids.task,
+        run=run or config.bids.run,
+        datatype=config.bids.datatype,
+        suffix="events",
+        extension=".tsv",
+    )
+
+
 def list_bids_entities(config: PipelineConfig, entity: str) -> list[str]:
     """Return sorted BIDS entity values if they can be found.
 

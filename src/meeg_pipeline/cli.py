@@ -8,6 +8,7 @@ from meeg_pipeline.bids import (
     has_dataset_description,
     has_participants_tsv,
     list_bids_entities,
+    make_bids_path,
     read_participants,
 )
 from meeg_pipeline.config import load_config
@@ -47,6 +48,20 @@ def main() -> None:
         help="Path to a project config YAML file.",
     )
 
+    bids_path_parser = subparsers.add_parser(
+        "bids-path",
+        help="Show the BIDSPath constructed for a recording.",
+    )
+    bids_path_parser.add_argument(
+        "--config",
+        required=True,
+        help="Path to a project config YAML file.",
+    )
+    bids_path_parser.add_argument("--subject", required=True)
+    bids_path_parser.add_argument("--task", default=None)
+    bids_path_parser.add_argument("--session", default=None)
+    bids_path_parser.add_argument("--run", default=None)
+
     args = parser.parse_args()
 
     if args.command == "config-info":
@@ -84,6 +99,28 @@ def main() -> None:
 
         print(f"Subjects missing in participants.tsv: {missing_in_participants}")
         print(f"Participants without subject folder: {missing_subject_folders}")
+        
+    elif args.command == "bids-path":
+        config = load_config(args.config)
+
+        bids_path = make_bids_path(
+            config,
+            subject=args.subject,
+            task=args.task,
+            session=args.session,
+            run=args.run,
+        )
+
+        print(f"BIDSPath: {bids_path}")
+        print(f"Root: {bids_path.root}")
+        print(f"Subject: {bids_path.subject}")
+        print(f"Session: {bids_path.session}")
+        print(f"Task: {bids_path.task}")
+        print(f"Run: {bids_path.run}")
+        print(f"Datatype: {bids_path.datatype}")
+        print(f"Suffix: {bids_path.suffix}")
+        print(f"Basename: {bids_path.basename}")
+        print(f"Directory: {bids_path.directory}")
 
     else:
         parser.print_help()

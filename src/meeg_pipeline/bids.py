@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pandas as pd
-from mne_bids import get_entity_vals
+from mne_bids import BIDSPath, get_entity_vals
 
 from meeg_pipeline.config import PipelineConfig
 
@@ -57,6 +57,26 @@ def compare_subjects_with_participants(config: PipelineConfig) -> tuple[list[str
     participants_without_subject_folder = sorted(participants - subjects)
 
     return subjects_not_in_participants, participants_without_subject_folder
+
+
+def make_bids_path(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    task: str | None = None,
+    session: str | None = None,
+    run: str | None = None,
+) -> BIDSPath:
+    """Create an MNE-BIDS path for a raw M/EEG recording."""
+    return BIDSPath(
+        root=config.paths.bids_root,
+        subject=subject.removeprefix("sub-"),
+        session=session or config.bids.session,
+        task=task or config.bids.task,
+        run=run or config.bids.run,
+        datatype=config.bids.datatype,
+        suffix=config.bids.datatype,
+    )
 
 
 def list_bids_entities(config: PipelineConfig, entity: str) -> list[str]:

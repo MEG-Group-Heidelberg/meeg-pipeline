@@ -11,6 +11,7 @@ from meeg_pipeline.bids import (
     make_bids_path,
     read_participants,
 )
+from meeg_pipeline.sourcedata import discover_source_recordings, make_target_bids_path
 from meeg_pipeline.config import load_config
 
 
@@ -62,6 +63,16 @@ def main() -> None:
     bids_path_parser.add_argument("--session", default=None)
     bids_path_parser.add_argument("--run", default=None)
     bids_path_parser.add_argument("--extension", default=None)
+
+    sourcedata_parser = subparsers.add_parser(
+        "sourcedata-info",
+        help="Show source recordings found in the standardized sourcedata structure.",
+    )
+    sourcedata_parser.add_argument(
+        "--config",
+        required=True,
+        help="Path to a project config YAML file.",
+    )
 
     args = parser.parse_args()
 
@@ -125,6 +136,24 @@ def main() -> None:
         print(f"Directory: {bids_path.directory}")
         print(f"Full path: {bids_path.fpath}")
         print(f"Path exists: {bids_path.fpath.exists()}")
+
+    elif args.command == "sourcedata-info":
+        config = load_config(args.config)
+        recordings = discover_source_recordings(config)
+
+        print(f"Found {len(recordings)} source recording(s).")
+
+        for recording in recordings:
+            target_bids_path = make_target_bids_path(config, recording)
+
+            print()
+            print(f"Source: {recording.source_path}")
+            print(f"Subject: {recording.subject}")
+            print(f"Session: {recording.session}")
+            print(f"Task: {recording.task}")
+            print(f"Run: {recording.run}")
+            print(f"Target: {target_bids_path.fpath}")
+            print(f"Target exists: {target_bids_path.fpath.exists()}")
 
     else:
         parser.print_help()

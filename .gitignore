@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# IDEs
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+
+# Test/cache
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Data/results should not go into the library repo
+data/
+sourcedata/
+derivatives/
+results/
+logs/
+
+# Large neuroimaging files
+*.fif
+*.ds
+*.vhdr
+*.vmrk
+*.eeg
+*.bdf
+*.edf
+*.set
+*.mat
+*.nii
+*.nii.gz

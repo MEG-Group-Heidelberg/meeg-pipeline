@@ -12,6 +12,7 @@ from meeg_pipeline.bids import (
     read_participants,
 )
 from meeg_pipeline.sourcedata import discover_source_recordings, make_target_bids_path
+from meeg_pipeline.conversion import convert_source_recording_to_bids
 from meeg_pipeline.config import load_config
 
 
@@ -72,6 +73,21 @@ def main() -> None:
         "--config",
         required=True,
         help="Path to a project config YAML file.",
+    )
+
+    convert_parser = subparsers.add_parser(
+        "convert-to-bids",
+        help="Convert source FIF files from sourcedata/ to raw BIDS.",
+    )
+    convert_parser.add_argument(
+        "--config",
+        required=True,
+        help="Path to a project config YAML file.",
+    )
+    convert_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite existing BIDS files. Default: do not overwrite.",
     )
 
     args = parser.parse_args()
@@ -154,6 +170,25 @@ def main() -> None:
             print(f"Run: {recording.run}")
             print(f"Target: {target_bids_path.fpath}")
             print(f"Target exists: {target_bids_path.fpath.exists()}")
+
+    elif args.command == "convert-to-bids":
+        config = load_config(args.config)
+        recordings = discover_source_recordings(config)
+
+        print(f"Found {len(recordings)} source recording(s).")
+
+        for recording in recordings:
+            print()
+            print(f"Converting: {recording.source_path}")
+
+            result = convert_source_recording_to_bids(
+                config,
+                recording,
+                overwrite=args.overwrite,
+            )
+
+            print(f"Status: {result.status}")
+            print(f"Target: {result.target_path}")
 
     else:
         parser.print_help()

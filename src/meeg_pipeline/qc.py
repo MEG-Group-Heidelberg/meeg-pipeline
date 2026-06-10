@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import json
-import pandas as pd
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+import pandas as pd
 from mne.io import BaseRaw
 
 from meeg_pipeline.config import PipelineConfig
@@ -30,6 +30,14 @@ class SaveBadChannelsResult:
     method: str
     notes: str
     message: str = ""
+
+
+def _format_status_description(method: str, notes: str) -> str:
+    """Create a compact status_description string for channels.tsv."""
+    if notes:
+        return f"{method}: {notes}"
+
+    return method
 
 
 def make_bad_channels_path(
@@ -196,7 +204,7 @@ def save_or_load_bad_channels(
                 task=task,
                 run=run,
                 bads=existing.bads,
-                status_description=f"{existing.method}: {existing.notes}".strip(": "),
+                status_description=_format_status_description(existing.method, existing.notes),
             )
 
         return SaveBadChannelsResult(
@@ -228,7 +236,7 @@ def save_or_load_bad_channels(
             task=task,
             run=run,
             bads=bads,
-            status_description=f"{method}: {notes}".strip(": "),
+            status_description=_format_status_description(method, notes),
         )
 
     return SaveBadChannelsResult(
@@ -263,6 +271,43 @@ def apply_bad_channels(
     return raw
 
 
+def make_channels_tsv_path(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    task: str | None = None,
+    session: str | None = None,
+    run: str | None = None,
+) -> Path:
+    """Create the raw BIDS channels.tsv path for a recording."""
+    subject = subject.removeprefix("sub-")
+
+    parts = [f"sub-{subject}"]
+
+    if session is not None:
+        parts.append(f"ses-{session}")
+
+    if task is not None:
+        parts.append(f"task-{task}")
+
+    if run is not None:
+        parts.append(f"run-{run}")
+
+    basename = "_".join(parts + ["channels.tsv"])
+
+    if session is None:
+        directory = config.paths.bids_root / f"sub-{subject}" / config.bids.datatype
+    else:
+        directory = (
+            config.paths.bids_root
+            / f"sub-{subject}"
+            / f"ses-{session}"
+            / config.bids.datatype
+        )
+
+    return directory / basename
+
+
 def update_channels_tsv_with_bads(
     config: PipelineConfig,
     *,
@@ -277,17 +322,13 @@ def update_channels_tsv_with_bads(
 
     This modifies only the BIDS sidecar metadata file, not the raw FIF file.
     """
-    from meeg_pipeline.bids import make_bids_path
-
-    channels_path = make_bids_path(
+    channels_path = make_channels_tsv_path(
         config,
         subject=subject,
         session=session,
         task=task,
         run=run,
-        suffix="channels",
-        extension=".tsv",
-    ).fpath
+    )
 
     if not channels_path.exists():
         raise FileNotFoundError(f"channels.tsv file does not exist: {channels_path}")

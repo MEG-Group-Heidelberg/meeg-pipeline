@@ -22,10 +22,35 @@ class BIDSConfig:
 
 
 @dataclass(frozen=True)
+class EventExtractionConfig:
+    method: str = "binary_channels"
+    stim_channels: tuple[str, ...] = (
+        "STI 001",
+        "STI 002",
+        "STI 003",
+        "STI 004",
+        "STI 005",
+        "STI 006",
+    )
+    min_duration: float = 0.0
+    shortest_event: int = 1
+    min_gap: int = 7000
+    adjust_timeline_by_msec: float = 0.0
+    tolerance_samples: int = 1
+    mute_bad_annotations: bool = True
+
+
+@dataclass(frozen=True)
+class EventsConfig:
+    extraction: EventExtractionConfig
+
+
+@dataclass(frozen=True)
 class PipelineConfig:
     project_name: str
     paths: ProjectPaths
     bids: BIDSConfig
+    events: EventsConfig
 
 
 def _resolve_path(path: str | Path, *, base_dir: Path) -> Path:
@@ -67,8 +92,39 @@ def load_config(config_path: str | Path) -> PipelineConfig:
         run=bids_raw.get("run"),
     )
 
+    events_raw = raw.get("events", {})
+    extraction_raw = events_raw.get("extraction", {})
+
+    event_extraction = EventExtractionConfig(
+        method=extraction_raw.get("method", "binary_channels"),
+        stim_channels=tuple(
+            extraction_raw.get(
+                "stim_channels",
+                [
+                    "STI 001",
+                    "STI 002",
+                    "STI 003",
+                    "STI 004",
+                    "STI 005",
+                    "STI 006",
+                ],
+            )
+        ),
+        min_duration=float(extraction_raw.get("min_duration", 0.0)),
+        shortest_event=int(extraction_raw.get("shortest_event", 1)),
+        min_gap=int(extraction_raw.get("min_gap", 7000)),
+        adjust_timeline_by_msec=float(
+            extraction_raw.get("adjust_timeline_by_msec", 0.0)
+        ),
+        tolerance_samples=int(extraction_raw.get("tolerance_samples", 1)),
+        mute_bad_annotations=bool(extraction_raw.get("mute_bad_annotations", True)),
+    )
+
+    events = EventsConfig(extraction=event_extraction)
+
     return PipelineConfig(
         project_name=raw["project"]["name"],
         paths=paths,
         bids=bids,
+        events=events,
     )

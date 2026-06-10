@@ -8,6 +8,8 @@ import mne
 import numpy as np
 from mne.io import BaseRaw
 
+from meeg_pipeline.config import PipelineConfig
+
 
 @dataclass(frozen=True)
 class BinaryChannelEventConfig:
@@ -238,6 +240,29 @@ def find_binary_channel_events(
         events = np.array(kept, dtype=np.int32)
 
     return events
+
+
+def binary_event_config_from_pipeline_config(
+    config: PipelineConfig,
+) -> BinaryChannelEventConfig:
+    """Create a binary-channel event config from the project config."""
+    extraction = config.events.extraction
+
+    if extraction.method != "binary_channels":
+        raise ValueError(
+            f"Unsupported event extraction method for this function: "
+            f"{extraction.method}"
+        )
+
+    return BinaryChannelEventConfig(
+        stim_channels=extraction.stim_channels,
+        min_duration=extraction.min_duration,
+        shortest_event=extraction.shortest_event,
+        min_gap=extraction.min_gap,
+        adjust_timeline_by_msec=extraction.adjust_timeline_by_msec,
+        tolerance_samples=extraction.tolerance_samples,
+        mute_bad_annotations=extraction.mute_bad_annotations,
+    )
 
 
 def summarize_events(events: np.ndarray, *, n_first: int = 10) -> EventSummary:

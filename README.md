@@ -361,6 +361,77 @@ Then inspect the BIDS structure:
 meegpipe bids-info --config configs/local.yaml
 ```
 
+## Event extraction config
+
+Event extraction parameters are stored in the project config, not hard-coded in
+the library.
+
+Example for a lab setup where trigger IDs are encoded as binary combinations
+across six stimulus channels:
+
+```yaml
+events:
+  extraction:
+    method: "binary_channels"
+    stim_channels:
+      - "STI 001"
+      - "STI 002"
+      - "STI 003"
+      - "STI 004"
+      - "STI 005"
+      - "STI 006"
+    min_duration: 0.0
+    shortest_event: 1
+    min_gap: 7000
+    adjust_timeline_by_msec: 0.0
+    tolerance_samples: 1
+    mute_bad_annotations: true
+```
+
+With `method: "binary_channels"`, event IDs are created by binary coding across
+the listed stimulus channels.
+
+For example:
+
+```text
+STI 001 -> 1
+STI 002 -> 2
+STI 003 -> 4
+STI 004 -> 8
+STI 005 -> 16
+STI 006 -> 32
+```
+
+If `STI 001` and `STI 003` are active at the same event onset, the resulting
+event ID is:
+
+```text
+1 + 4 = 5
+```
+
+The same event extraction function can be reused across projects by changing the
+config values.
+
+The command-line interface uses the config values by default:
+
+```bash
+meegpipe events-info \
+  --config configs/local.yaml \
+  --subject 1409 \
+  --task chords
+```
+
+Individual parameters can still be overridden from the command line for testing:
+
+```bash
+meegpipe events-info \
+  --config configs/local.yaml \
+  --subject 1409 \
+  --task chords \
+  --min-gap 7000 \
+  --tolerance-samples 1
+```
+
 ## Minimal BIDS project files
 
 At the project root, create a `dataset_description.json` file.

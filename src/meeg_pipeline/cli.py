@@ -17,6 +17,7 @@ from meeg_pipeline.conversion import convert_source_recording_to_bids
 from meeg_pipeline.channels import print_channel_summary, summarize_channels
 from meeg_pipeline.events import (
     BinaryChannelEventConfig,
+    binary_event_config_from_pipeline_config,
     find_binary_channel_events,
     print_event_summary,
     summarize_events,
@@ -147,18 +148,31 @@ def main() -> None:
     events_info_parser.add_argument(
         "--stim-channels",
         nargs="+",
-        default=["STI 001", "STI 002", "STI 003", "STI 004", "STI 005", "STI 006"],
-        help="Stimulus channels used for binary event coding.",
+        default=None,
+        help="Override stimulus channels used for binary event coding.",
     )
-    events_info_parser.add_argument("--min-duration", type=float, default=0.0)
-    events_info_parser.add_argument("--shortest-event", type=int, default=1)
-    events_info_parser.add_argument("--min-gap", type=int, default=7000)
-    events_info_parser.add_argument("--adjust-timeline-by-msec", type=float, default=0.0)
-    events_info_parser.add_argument("--tolerance-samples", type=int, default=1)
+    events_info_parser.add_argument("--min-duration", type=float, default=None)
+    events_info_parser.add_argument("--shortest-event", type=int, default=None)
+    events_info_parser.add_argument("--min-gap", type=int, default=None)
+    events_info_parser.add_argument(
+        "--adjust-timeline-by-msec",
+        type=float,
+        default=None,
+    )
+    events_info_parser.add_argument("--tolerance-samples", type=int, default=None)
+    events_info_parser.add_argument(
+        "--mute-bad-annotations",
+        dest="mute_bad_annotations",
+        action="store_true",
+        default=None,
+        help="Override config: zero stim channels during BAD annotations.",
+    )
     events_info_parser.add_argument(
         "--no-mute-bad-annotations",
-        action="store_true",
-        help="Do not zero stim channels during BAD annotations.",
+        dest="mute_bad_annotations",
+        action="store_false",
+        default=None,
+        help="Override config: do not zero stim channels during BAD annotations.",
     )
 
     args = parser.parse_args()
@@ -309,14 +323,36 @@ def main() -> None:
             preload=False,
         )
 
+        event_config = binary_event_config_from_pipeline_config(config)
+
         event_config = BinaryChannelEventConfig(
-            stim_channels=tuple(args.stim_channels),
-            min_duration=args.min_duration,
-            shortest_event=args.shortest_event,
-            min_gap=args.min_gap,
-            adjust_timeline_by_msec=args.adjust_timeline_by_msec,
-            tolerance_samples=args.tolerance_samples,
-            mute_bad_annotations=not args.no_mute_bad_annotations,
+            stim_channels=tuple(args.stim_channels) if args.stim_channels else event_config.stim_channels,
+            min_duration=(
+                args.min_duration
+                if args.min_duration is not None
+                else event_config.min_duration
+            ),
+            shortest_event=(
+                args.shortest_event
+                if args.shortest_event is not None
+                else event_config.shortest_event
+            ),
+            min_gap=args.min_gap if args.min_gap is not None else event_config.min_gap,
+            adjust_timeline_by_msec=(
+                args.adjust_timeline_by_msec
+                if args.adjust_timeline_by_msec is not None
+                else event_config.adjust_timeline_by_msec
+            ),
+            tolerance_samples=(
+                args.tolerance_samples
+                if args.tolerance_samples is not None
+                else event_config.tolerance_samples
+            ),
+            mute_bad_annotations=(
+                event_config.mute_bad_annotations
+                if args.mute_bad_annotations is None
+                else args.mute_bad_annotations
+            ),
         )
 
         events = find_binary_channel_events(raw, event_config)

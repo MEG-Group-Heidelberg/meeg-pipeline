@@ -61,6 +61,7 @@ def main() -> None:
     bids_path_parser.add_argument("--task", default=None)
     bids_path_parser.add_argument("--session", default=None)
     bids_path_parser.add_argument("--run", default=None)
+    bids_path_parser.add_argument("--extension", default=None)
 
     args = parser.parse_args()
 
@@ -99,7 +100,7 @@ def main() -> None:
 
         print(f"Subjects missing in participants.tsv: {missing_in_participants}")
         print(f"Participants without subject folder: {missing_subject_folders}")
-        
+
     elif args.command == "bids-path":
         config = load_config(args.config)
 
@@ -109,6 +110,7 @@ def main() -> None:
             task=args.task,
             session=args.session,
             run=args.run,
+            extension=args.extension,
         )
 
         print(f"BIDSPath: {bids_path}")
@@ -121,6 +123,8 @@ def main() -> None:
         print(f"Suffix: {bids_path.suffix}")
         print(f"Basename: {bids_path.basename}")
         print(f"Directory: {bids_path.directory}")
+        print(f"Full path: {bids_path.fpath}")
+        print(f"Path exists: {bids_path.fpath.exists()}")
 
     else:
         parser.print_help()

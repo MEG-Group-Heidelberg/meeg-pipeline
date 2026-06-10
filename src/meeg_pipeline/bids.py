@@ -66,6 +66,7 @@ def make_bids_path(
     task: str | None = None,
     session: str | None = None,
     run: str | None = None,
+    extension: str | None = None,
 ) -> BIDSPath:
     """Create an MNE-BIDS path for a raw M/EEG recording."""
     return BIDSPath(
@@ -76,6 +77,7 @@ def make_bids_path(
         run=run or config.bids.run,
         datatype=config.bids.datatype,
         suffix=config.bids.datatype,
+        extension=extension,
     )
 
 

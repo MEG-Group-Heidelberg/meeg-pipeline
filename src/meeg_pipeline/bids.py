@@ -28,4 +28,12 @@ def list_bids_entities(config: PipelineConfig, entity: str) -> list[str]:
         entity_key=entity,
     )
 
+    if entity == "subject":
+        folder_subjects = [
+            path.name.removeprefix("sub-")
+            for path in config.paths.bids_root.glob("sub-*")
+            if path.is_dir()
+        ]
+        values = sorted(set(values) | set(folder_subjects))
+
     return sorted(values)

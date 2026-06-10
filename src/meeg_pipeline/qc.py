@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from mne.io import BaseRaw
 
@@ -15,6 +16,19 @@ class BadChannels:
     bads: list[str]
     method: str
     notes: str
+
+
+ExistingBadChannelsPolicy = Literal["error", "load", "overwrite"]
+
+
+@dataclass(frozen=True)
+class SaveBadChannelsResult:
+    path: str
+    status: str
+    bads: list[str]
+    method: str
+    notes: str
+    message: str = ""
 
 
 def make_bad_channels_path(
@@ -123,6 +137,82 @@ def load_bad_channels(
         bads=list(payload.get("bads", [])),
         method=str(payload.get("method", "")),
         notes=str(payload.get("notes", "")),
+    )
+
+
+def save_or_load_bad_channels(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    bads: list[str],
+    task: str | None = None,
+    session: str | None = None,
+    run: str | None = None,
+    method: str = "manual_mne_gui",
+    notes: str = "",
+    on_existing: ExistingBadChannelsPolicy = "error",
+) -> SaveBadChannelsResult:
+    """Save bad channels, or load an existing bad-channel decision.
+
+    Parameters
+    ----------
+    on_existing
+        What to do if the bad-channel JSON already exists.
+
+        - "error": raise FileExistsError
+        - "load": load and return the existing decision
+        - "overwrite": replace the existing decision
+    """
+    if on_existing not in {"error", "load", "overwrite"}:
+        raise ValueError(
+            f"Invalid on_existing value: {on_existing!r}. "
+            "Use 'error', 'load', or 'overwrite'."
+        )
+
+    path = make_bad_channels_path(
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
+    )
+
+    if path.exists() and on_existing == "load":
+        existing = load_bad_channels(
+            config,
+            subject=subject,
+            session=session,
+            task=task,
+            run=run,
+        )
+
+        return SaveBadChannelsResult(
+            path=str(path),
+            status="loaded_existing",
+            bads=existing.bads,
+            method=existing.method,
+            notes=existing.notes,
+            message="Bad-channel file already exists; loaded existing decision.",
+        )
+
+    output_path = save_bad_channels(
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
+        bads=bads,
+        method=method,
+        notes=notes,
+        overwrite=on_existing == "overwrite",
+    )
+
+    return SaveBadChannelsResult(
+        path=str(output_path),
+        status="saved",
+        bads=list(bads),
+        method=method,
+        notes=notes,
     )
 
 

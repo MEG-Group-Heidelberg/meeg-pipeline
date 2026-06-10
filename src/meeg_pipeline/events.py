@@ -289,6 +289,28 @@ def summarize_events(events: np.ndarray, *, n_first: int = 10) -> EventSummary:
     )
 
 
+def event_summary_to_dataframe(summary: EventSummary) -> pd.DataFrame:
+    """Convert an EventSummary to a notebook-friendly DataFrame."""
+    return pd.DataFrame(
+        [
+            {
+                "n_events": summary.n_events,
+                "unique_ids": ", ".join(str(value) for value in summary.unique_ids),
+                "min_sample_distance": summary.min_sample_distance,
+                "max_sample_distance": summary.max_sample_distance,
+            }
+        ]
+    )
+
+
+def first_events_to_dataframe(summary: EventSummary) -> pd.DataFrame:
+    """Convert the first events from an EventSummary to a DataFrame."""
+    return pd.DataFrame(
+        summary.first_events,
+        columns=["sample", "previous_value", "event_id"],
+    )
+
+
 def print_event_summary(summary: EventSummary) -> None:
     """Print a simple event summary."""
     print(f"Events: {summary.n_events}")

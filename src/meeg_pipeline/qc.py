@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import pandas as pd
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -151,6 +152,7 @@ def save_or_load_bad_channels(
     method: str = "manual_mne_gui",
     notes: str = "",
     on_existing: ExistingBadChannelsPolicy = "error",
+    update_channels_tsv: bool = True,
 ) -> SaveBadChannelsResult:
     """Save bad channels, or load an existing bad-channel decision.
 
@@ -186,6 +188,17 @@ def save_or_load_bad_channels(
             run=run,
         )
 
+        if update_channels_tsv:
+            update_channels_tsv_with_bads(
+                config,
+                subject=subject,
+                session=session,
+                task=task,
+                run=run,
+                bads=existing.bads,
+                status_description=f"{existing.method}: {existing.notes}".strip(": "),
+            )
+
         return SaveBadChannelsResult(
             path=str(path),
             status="loaded_existing",
@@ -206,6 +219,17 @@ def save_or_load_bad_channels(
         notes=notes,
         overwrite=on_existing == "overwrite",
     )
+
+    if update_channels_tsv:
+        update_channels_tsv_with_bads(
+            config,
+            subject=subject,
+            session=session,
+            task=task,
+            run=run,
+            bads=bads,
+            status_description=f"{method}: {notes}".strip(": "),
+        )
 
     return SaveBadChannelsResult(
         path=str(output_path),
@@ -237,3 +261,64 @@ def apply_bad_channels(
     raw.info["bads"] = bad_channels.bads
 
     return raw
+
+
+def update_channels_tsv_with_bads(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    bads: list[str],
+    task: str | None = None,
+    session: str | None = None,
+    run: str | None = None,
+    status_description: str = "Marked as bad during manual MNE GUI inspection.",
+) -> Path:
+    """Update the raw BIDS channels.tsv file with bad-channel markings.
+
+    This modifies only the BIDS sidecar metadata file, not the raw FIF file.
+    """
+    from meeg_pipeline.bids import make_bids_path
+
+    channels_path = make_bids_path(
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
+        suffix="channels",
+        extension=".tsv",
+    ).fpath
+
+    if not channels_path.exists():
+        raise FileNotFoundError(f"channels.tsv file does not exist: {channels_path}")
+
+    channels = pd.read_csv(channels_path, sep="\t")
+
+    if "name" not in channels.columns:
+        raise ValueError(f"channels.tsv has no 'name' column: {channels_path}")
+
+    if "status" not in channels.columns:
+        channels["status"] = "good"
+
+    if "status_description" not in channels.columns:
+        channels["status_description"] = ""
+
+    bads = list(bads)
+
+    unknown_bads = sorted(set(bads) - set(channels["name"]))
+    if unknown_bads:
+        raise ValueError(
+            "Some bad channels were not found in channels.tsv: "
+            f"{unknown_bads}"
+        )
+
+    channels["status"] = "good"
+    channels["status_description"] = ""
+
+    is_bad = channels["name"].isin(bads)
+    channels.loc[is_bad, "status"] = "bad"
+    channels.loc[is_bad, "status_description"] = status_description
+
+    channels.to_csv(channels_path, sep="\t", index=False)
+
+    return channels_path

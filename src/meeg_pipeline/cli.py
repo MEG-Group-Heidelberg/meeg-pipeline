@@ -14,7 +14,7 @@ from meeg_pipeline.bids import (
     read_raw_bids_recording,
 )
 from meeg_pipeline.sourcedata import discover_source_recordings, make_target_bids_path
-from meeg_pipeline.conversion import convert_source_recording_to_bids
+from meeg_pipeline.conversion import convert_source_recordings_to_bids
 from meeg_pipeline.channels import print_channel_summary, summarize_channels
 from meeg_pipeline.events import (
     BinaryChannelEventConfig,
@@ -284,18 +284,19 @@ def main() -> None:
 
         print(f"Found {len(recordings)} source recording(s).")
 
-        for recording in recordings:
+        results = convert_source_recordings_to_bids(
+            config,
+            recordings,
+            on_existing="overwrite" if args.overwrite else "error",
+        )
+
+        for result in results:
             print()
-            print(f"Converting: {recording.source_path}")
-
-            result = convert_source_recording_to_bids(
-                config,
-                recording,
-                overwrite=args.overwrite,
-            )
-
             print(f"Status: {result.status}")
+            print(f"Source: {result.source_path}")
             print(f"Target: {result.target_path}")
+            if result.message:
+                print(f"Message: {result.message}")
 
     elif args.command == "raw-info":
         config = load_config(args.config)

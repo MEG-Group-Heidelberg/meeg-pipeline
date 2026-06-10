@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 
 from meeg_pipeline import __version__
+from meeg_pipeline.config import load_config
 
 
 def main() -> None:
@@ -17,4 +18,29 @@ def main() -> None:
         version=f"meeg-pipeline {__version__}",
     )
 
-    parser.parse_args()
+    subparsers = parser.add_subparsers(dest="command")
+
+    config_parser = subparsers.add_parser(
+        "config-info",
+        help="Show basic information from a project config file.",
+    )
+    config_parser.add_argument(
+        "--config",
+        required=True,
+        help="Path to a project config YAML file.",
+    )
+
+    args = parser.parse_args()
+
+    if args.command == "config-info":
+        config = load_config(args.config)
+
+        print(f"Project: {config.project_name}")
+        print(f"BIDS root: {config.paths.bids_root}")
+        print(f"Derivatives root: {config.paths.derivatives_root}")
+        print(f"Datatype: {config.bids.datatype}")
+        print(f"Task: {config.bids.task}")
+        print(f"Session: {config.bids.session}")
+        print(f"Run: {config.bids.run}")
+    else:
+        parser.print_help()

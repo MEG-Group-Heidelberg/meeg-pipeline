@@ -324,7 +324,7 @@ def events_to_dataframe(
     events: np.ndarray,
     raw: BaseRaw,
     *,
-    trial_type: str = "trigger",
+    trial_type_prefix: str = "trigger",
 ) -> pd.DataFrame:
     """Convert an MNE-style events array to a BIDS-like events table.
 
@@ -346,14 +346,15 @@ def events_to_dataframe(
     sfreq = float(raw.info["sfreq"])
 
     samples = events[:, 0].astype(int)
+    values = events[:, 2].astype(int)
     onset = (samples - first_samp) / sfreq
 
     return pd.DataFrame(
         {
             "onset": onset,
             "duration": 0.0,
-            "trial_type": trial_type,
-            "value": events[:, 2].astype(int),
+            "trial_type": [f"{trial_type_prefix}_{value}" for value in values],
+            "value": values,
             "sample": samples,
         }
     )

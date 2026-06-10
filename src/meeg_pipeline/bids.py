@@ -155,5 +155,5 @@ def read_raw_bids_recording(
     return read_raw_bids(
         bids_path=bids_path,
         extra_params={"preload": preload},
-        verbose=True,
+        verbose="error",
     )

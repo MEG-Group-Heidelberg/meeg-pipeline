@@ -15,6 +15,12 @@ from meeg_pipeline.bids import (
 from meeg_pipeline.sourcedata import discover_source_recordings, make_target_bids_path
 from meeg_pipeline.conversion import convert_source_recording_to_bids
 from meeg_pipeline.channels import print_channel_summary, summarize_channels
+from meeg_pipeline.events import (
+    BinaryChannelEventConfig,
+    find_binary_channel_events,
+    print_event_summary,
+    summarize_events,
+)
 from meeg_pipeline.config import load_config
 
 
@@ -124,6 +130,36 @@ def main() -> None:
     channels_info_parser.add_argument("--task", default=None)
     channels_info_parser.add_argument("--session", default=None)
     channels_info_parser.add_argument("--run", default=None)
+
+    events_info_parser = subparsers.add_parser(
+        "events-info",
+        help="Extract binary-coded events and show basic information.",
+    )
+    events_info_parser.add_argument(
+        "--config",
+        required=True,
+        help="Path to a project config YAML file.",
+    )
+    events_info_parser.add_argument("--subject", required=True)
+    events_info_parser.add_argument("--task", default=None)
+    events_info_parser.add_argument("--session", default=None)
+    events_info_parser.add_argument("--run", default=None)
+    events_info_parser.add_argument(
+        "--stim-channels",
+        nargs="+",
+        default=["STI 001", "STI 002", "STI 003", "STI 004", "STI 005", "STI 006"],
+        help="Stimulus channels used for binary event coding.",
+    )
+    events_info_parser.add_argument("--min-duration", type=float, default=0.0)
+    events_info_parser.add_argument("--shortest-event", type=int, default=1)
+    events_info_parser.add_argument("--min-gap", type=int, default=7000)
+    events_info_parser.add_argument("--adjust-timeline-by-msec", type=float, default=0.0)
+    events_info_parser.add_argument("--tolerance-samples", type=int, default=1)
+    events_info_parser.add_argument(
+        "--no-mute-bad-annotations",
+        action="store_true",
+        help="Do not zero stim channels during BAD annotations.",
+    )
 
     args = parser.parse_args()
 
@@ -260,6 +296,32 @@ def main() -> None:
 
         summary = summarize_channels(raw)
         print_channel_summary(summary)
+
+    elif args.command == "events-info":
+        config = load_config(args.config)
+
+        raw = read_raw_bids_recording(
+            config,
+            subject=args.subject,
+            task=args.task,
+            session=args.session,
+            run=args.run,
+            preload=False,
+        )
+
+        event_config = BinaryChannelEventConfig(
+            stim_channels=tuple(args.stim_channels),
+            min_duration=args.min_duration,
+            shortest_event=args.shortest_event,
+            min_gap=args.min_gap,
+            adjust_timeline_by_msec=args.adjust_timeline_by_msec,
+            tolerance_samples=args.tolerance_samples,
+            mute_bad_annotations=not args.no_mute_bad_annotations,
+        )
+
+        events = find_binary_channel_events(raw, event_config)
+        summary = summarize_events(events)
+        print_event_summary(summary)
 
     else:
         parser.print_help()

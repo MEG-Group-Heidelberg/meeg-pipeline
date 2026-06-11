@@ -15,12 +15,13 @@ live in separate project folders and use this package as a library.
 
 - BIDS-compatible project organization
 - Clear separation between reusable pipeline code and project-specific data
-- Original source data are preserved unchanged in `sourcedata/`
+- Original source data are preserved unchanged
 - Raw BIDS FIF files are treated as immutable analysis inputs
 - BIDS sidecar metadata such as `channels.tsv` may be updated when appropriate
 - Processed outputs are written to `derivatives/meeg-pipeline/`
 - Intermediate preprocessing steps are saved as separate files
 - Existing output files are not overwritten by default
+- Missing inputs are reported as status values instead of interrupting batch workflows
 - Manual QC decisions are stored explicitly
 - Event handling is table-based and metadata-friendly
 - Notebook-friendly interactive workflow
@@ -39,6 +40,7 @@ meeg-pipeline/
   src/
     meeg_pipeline/
       __init__.py
+      annotations.py
       bids.py
       channels.py
       cli.py
@@ -46,6 +48,7 @@ meeg-pipeline/
       conversion.py
       events.py
       io.py
+      preprocessing.py
       qc.py
       sourcedata.py
 ```
@@ -111,8 +114,10 @@ my-meeg-project/
 
   notebooks/
     00_project_summary.ipynb
-    01_raw_bids_badchannels_events.ipynb
-    02_preprocessing.ipynb
+    01_raw_bids_and_bad_channels.ipynb
+    02_events.ipynb
+    03_preprocessing.ipynb
+    04_artifact_annotation.ipynb
 
   sourcedata/
     sub-0001/
@@ -143,6 +148,7 @@ my-meeg-project/
           meg/
             sub-0001_ses-001_task-chords_desc-badchannels.json
             sub-0001_ses-001_task-chords_desc-filtered_meg.fif
+            sub-0001_ses-001_task-chords_desc-badsegments_annotations.fif
             sub-0001_ses-001_task-chords_desc-cleaned_meg.fif
             sub-0001_ses-001_task-chords_desc-cleaned_epo.fif
 ```
@@ -161,6 +167,8 @@ derivatives/
     sub-0001/
       meg/
         sub-0001_task-chords_desc-badchannels.json
+        sub-0001_task-chords_desc-filtered_meg.fif
+        sub-0001_task-chords_desc-badsegments_annotations.fif
 ```
 
 ## Data organization
@@ -170,7 +178,24 @@ derivatives/
 `sourcedata/` contains the original files as exported from the acquisition system
 or laboratory storage. These files should remain unchanged.
 
-The folder structure should encode the relevant BIDS entities.
+The source-data root is configured in `configs/local.yaml`:
+
+```yaml
+paths:
+  sourcedata_root: "./sourcedata"
+```
+
+It may also point to an external drive or network location:
+
+```yaml
+paths:
+  sourcedata_root: "/Volumes/MEGDrive/my-meeg-project/sourcedata"
+```
+
+Relative paths are resolved relative to the project root.
+
+The folder structure inside `sourcedata_root` should encode the relevant BIDS
+entities.
 
 With sessions:
 
@@ -278,6 +303,7 @@ Examples:
 derivatives/meeg-pipeline/sub-0001/ses-001/meg/
   sub-0001_ses-001_task-chords_desc-badchannels.json
   sub-0001_ses-001_task-chords_desc-filtered_meg.fif
+  sub-0001_ses-001_task-chords_desc-badsegments_annotations.fif
   sub-0001_ses-001_task-chords_desc-cleaned_meg.fif
   sub-0001_ses-001_task-chords_desc-cleaned_epo.fif
 ```
@@ -430,6 +456,35 @@ events:
     adjust_timeline_by_msec: 0.0
     tolerance_samples: 1
     mute_bad_annotations: true
+
+preprocessing:
+  filtering:
+    notch_freqs: [50]
+    l_freq: 1.0
+    h_freq: 40.0
+    method: "fir"
+```
+
+To disable notch filtering, use:
+
+```yaml
+preprocessing:
+  filtering:
+    notch_freqs: null
+    l_freq: 1.0
+    h_freq: 40.0
+    method: "fir"
+```
+
+To disable either the high-pass or low-pass filter, use `null`:
+
+```yaml
+preprocessing:
+  filtering:
+    notch_freqs: [50]
+    l_freq: null
+    h_freq: 40.0
+    method: "fir"
 ```
 
 From the project root, test the config:
@@ -443,6 +498,32 @@ Then inspect the BIDS structure:
 ```bash
 meegpipe bids-info --config configs/local.yaml
 ```
+
+## Status-oriented batch behavior
+
+Pipeline functions are designed to support projects where not every subject,
+session, task, or run has been collected or processed yet.
+
+Normal pipeline states are reported as status values instead of interrupting
+the whole batch process.
+
+Common status values include:
+
+```text
+missing_input
+skipped_existing
+loaded
+loaded_existing
+written
+applied
+```
+
+For example, if a filtered file does not exist for one subject, the corresponding
+notebook row should report `missing_input`, while processing can continue for
+other subjects.
+
+Exceptions are reserved for actual programming or configuration errors, such as
+invalid policy values or malformed input files.
 
 ## Event extraction config
 
@@ -540,12 +621,13 @@ Manual bad-channel marking is treated as an explicit QC decision.
 Recommended workflow:
 
 1. Load one raw BIDS recording.
-2. Open the interactive MNE browser with `raw.plot(block=True)`.
-3. Mark bad channels in the GUI.
-4. Close the browser window.
-5. Save the bad-channel decision as a JSON derivative.
-6. Update the raw BIDS `*_channels.tsv` sidecar.
-7. Keep the raw `*_meg.fif` file unchanged.
+2. Optionally compute automatic bad-channel candidates.
+3. Open the interactive MNE browser with `raw.plot(block=True)`.
+4. Mark bad channels in the GUI.
+5. Close the browser window.
+6. Save the bad-channel decision as a JSON derivative.
+7. Update the raw BIDS `*_channels.tsv` sidecar.
+8. Keep the raw `*_meg.fif` file unchanged.
 
 Example files:
 
@@ -574,21 +656,64 @@ Example bad-channel JSON:
   "task": "chords",
   "run": null,
   "bads": ["MEG0112"],
-  "method": "manual_mne_gui",
-  "notes": "Marked interactively with raw.plot(block=True)."
+  "method": "manual_mne_gui_with_maxwell_candidates",
+  "notes": "Automatic Maxwell bad-channel candidates were pre-marked and manually reviewed with raw.plot(block=True)."
 }
 ```
 
 Example `channels.tsv` rows after manual QC:
 
 ```text
-name       type   units   status   status_description
-MEG0112    MEGGRAD T/m    bad      manual_mne_gui: Marked interactively with raw.plot(block=True).
-MEG0113    MEGGRAD T/m    good
+name       type     units   status   status_description
+MEG0112    MEGGRAD  T/m     bad      manual_mne_gui_with_maxwell_candidates: Automatic Maxwell bad-channel candidates were pre-marked and manually reviewed with raw.plot(block=True).
+MEG0113    MEGGRAD  T/m     good
 ```
 
 This makes bad-channel decisions visible to BIDS-aware tools while keeping the
 original raw FIF data intact.
+
+## Bad-segment annotation
+
+Bad-segment annotation is used to mark bad time spans after filtering.
+
+Recommended workflow:
+
+1. Load a filtered raw derivative, for example `desc-filtered_meg.fif`.
+2. Open the interactive MNE browser with `raw.plot(picks="meg", block=True)`.
+3. Press `a` to open the annotation controls.
+4. Use **Add Description** to create a bad-segment label.
+5. Mark bad time spans using a label that starts with `BAD`.
+6. Close the browser window.
+7. Save only the `BAD*` annotations as a derivative.
+
+Recommended bad-segment descriptions:
+
+```text
+BAD_artifact
+BAD_jump
+BAD_movement
+BAD_noise
+BAD_muscle
+BAD_other
+```
+
+Event-like descriptions such as `trigger_1`, `trigger_2`, etc. may appear in the
+MNE annotation dropdown if events were loaded as annotations. These should not be
+used for artifact rejection.
+
+Only annotations whose description starts with `BAD` are saved in the
+bad-segment derivative.
+
+Example file:
+
+```text
+derivatives/meeg-pipeline/sub-1409/meg/
+  sub-1409_task-chords_desc-badsegments_annotations.fif
+```
+
+These annotations can later be applied to filtered or cleaned data. Downstream
+MNE steps can use the standard `reject_by_annotation=True` behavior to ignore
+bad spans.
 
 ## Notebook workflow
 
@@ -599,8 +724,10 @@ A project may contain notebooks such as:
 ```text
 notebooks/
   00_project_summary.ipynb
-  01_raw_bids_badchannels_events.ipynb
-  02_preprocessing.ipynb
+  01_raw_bids_and_bad_channels.ipynb
+  02_events.ipynb
+  03_preprocessing.ipynb
+  04_artifact_annotation.ipynb
 ```
 
 Suggested roles:
@@ -609,16 +736,27 @@ Suggested roles:
 00_project_summary.ipynb
   Read-only dashboard.
   Shows what data exist, what has been computed, event status, bad-channel status,
-  and derivative status.
+  filtered-derivative status, bad-segment annotation status, and later derivative
+  status.
 
-01_raw_bids_badchannels_events.ipynb
-  Active raw-data notebook.
+01_raw_bids_and_bad_channels.ipynb
+  Active raw-data and bad-channel notebook.
   Discovers sourcedata, converts to raw BIDS, inspects channels, performs manual
-  bad-channel QC, and writes events.tsv.
+  bad-channel QC, and updates channels.tsv.
 
-02_preprocessing.ipynb
-  Active preprocessing notebook.
-  Applies saved bad-channel decisions, filters data, and writes derivatives.
+02_events.ipynb
+  Event extraction notebook.
+  Extracts or writes BIDS-compatible events.tsv files.
+
+03_preprocessing.ipynb
+  Preprocessing notebook.
+  Applies saved bad-channel decisions, filters data, and writes filtered raw
+  derivatives.
+
+04_artifact_annotation.ipynb
+  Bad-segment annotation notebook.
+  Loads filtered data, interactively marks BAD_* time spans, and writes
+  bad-segment annotation derivatives.
 ```
 
 Notebook steps should call reusable library functions rather than implementing
@@ -632,13 +770,19 @@ Different steps can use different existing-output policies:
 
 ```text
 convert_to_bids:
-  error / skip / overwrite
+  skip / overwrite
 
 events:
-  error / skip / overwrite
+  skip / overwrite
 
 bad_channels:
-  error / load / overwrite
+  load / overwrite
+
+annotations:
+  load / overwrite
+
+filtering:
+  skip / overwrite
 ```
 
 For notebooks, a central variable can be used:
@@ -647,7 +791,8 @@ For notebooks, a central variable can be used:
 OVERWRITE_STEPS = []
 OVERWRITE_STEPS = ["events"]
 OVERWRITE_STEPS = ["bad_channels"]
-OVERWRITE_STEPS = ["convert_to_bids"]
+OVERWRITE_STEPS = ["annotations"]
+OVERWRITE_STEPS = ["filtering"]
 OVERWRITE_STEPS = ["events", "bad_channels"]
 OVERWRITE_STEPS = "all"
 ```
@@ -664,6 +809,8 @@ This means:
 convert_to_bids  -> skip existing raw BIDS files
 events           -> skip existing events.tsv files
 bad_channels     -> load existing bad-channel decisions
+annotations      -> load existing bad-segment annotations
+filtering        -> skip existing filtered derivatives
 ```
 
 To recompute a specific step, either delete the corresponding output file
@@ -755,7 +902,8 @@ is better handled in notebooks.
 
 ## Recommended first data import step
 
-Before converting to BIDS, place the original files under `sourcedata/`.
+Before converting to BIDS, place the original files under the configured
+`sourcedata_root`.
 
 For one participant with one session and two tasks:
 
@@ -857,26 +1005,30 @@ Currently implemented:
 - Python package structure
 - `meegpipe` command-line entry point
 - project config loading
+- configurable `sourcedata_root`
 - basic BIDS dataset inspection
 - participants.tsv inspection
 - BIDSPath construction
 - sourcedata discovery
-- conversion from `sourcedata/` to raw BIDS
+- conversion from `sourcedata_root` to raw BIDS
 - raw data loading via MNE-BIDS
+- status-oriented batch behavior for missing inputs and existing outputs
 - channel summaries
-- binary-channel event extraction
-- BIDS-compatible `events.tsv` writing
-- notebook-friendly event and channel summaries
+- automatic bad-channel candidate detection using Maxwell-based heuristics
 - manual bad-channel QC utilities
 - bad-channel JSON derivatives
 - updating BIDS `channels.tsv` from manual bad-channel decisions
-- existing-output policies for conversion, events, and bad-channel QC
+- binary-channel event extraction
+- BIDS-compatible `events.tsv` writing
+- notebook-friendly event and channel summaries
+- preprocessing filter configuration
+- filtered raw derivatives
+- bad-segment annotation utilities
+- bad-segment annotation derivatives
+- existing-output policies for conversion, events, bad-channel QC, filtering, and annotations
 
 Not yet implemented:
 
-- filtering preprocessing step
-- filtered raw derivatives
-- bad segment annotation workflow
 - ICA / SSP artifact handling
 - cleaned raw derivatives
 - epoching

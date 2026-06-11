@@ -5,7 +5,6 @@ from pathlib import Path
 from typing import Literal
 
 import mne
-import numpy as np
 from mne import Annotations
 from mne.io import BaseRaw
 
@@ -100,6 +99,26 @@ def annotation_descriptions(annotations: Annotations) -> list[str]:
     return sorted(set(str(description) for description in annotations.description))
 
 
+def keep_only_bad_annotations(annotations: Annotations) -> Annotations:
+    """Return a copy containing only BAD-like annotations.
+
+    Event-like annotations such as trigger_1, trigger_2, ... are not bad-segment
+    annotations and should not be saved in the bad-segment derivative.
+    """
+    if len(annotations) == 0:
+        return mne.Annotations([], [], [], orig_time=annotations.orig_time)
+
+    bad_indices = [
+        is_bad_annotation_description(str(description))
+        for description in annotations.description
+    ]
+
+    if not any(bad_indices):
+        return mne.Annotations([], [], [], orig_time=annotations.orig_time)
+
+    return annotations[bad_indices]
+
+
 def _annotation_result(
     *,
     annotations: Annotations | None,
@@ -125,106 +144,6 @@ def _annotation_result(
         descriptions=annotation_descriptions(annotations),
         message=message,
     )
-
-
-def clean_bad_segment_annotations(
-    annotations: Annotations,
-    *,
-    remove_templates: bool = True,
-    keep_bad_only: bool = True,
-    template_descriptions: tuple[str, ...] = BAD_ANNOTATION_DESCRIPTIONS,
-) -> Annotations:
-    """Return annotations suitable for saving as bad-segment annotations.
-
-    By default this keeps only BAD-like annotations and removes zero-duration
-    template annotations that are only used to pre-populate the MNE annotation
-    dropdown.
-    """
-    if len(annotations) == 0:
-        return mne.Annotations([], [], [], orig_time=annotations.orig_time)
-
-    keep: list[bool] = []
-
-    for onset, duration, description in zip(
-        annotations.onset,
-        annotations.duration,
-        annotations.description,
-        strict=True,
-    ):
-        description = str(description)
-
-        if keep_bad_only and not is_bad_annotation_description(description):
-            keep.append(False)
-            continue
-
-        is_template = (
-            remove_templates
-            and float(duration) == 0.0
-            and description in template_descriptions
-        )
-        keep.append(not is_template)
-
-    if not any(keep):
-        return mne.Annotations([], [], [], orig_time=annotations.orig_time)
-
-    keep_array = np.asarray(keep, dtype=bool)
-
-    return mne.Annotations(
-        onset=np.asarray(annotations.onset)[keep_array],
-        duration=np.asarray(annotations.duration)[keep_array],
-        description=np.asarray(annotations.description, dtype=str)[keep_array],
-        orig_time=annotations.orig_time,
-    )
-
-
-def prepare_raw_for_bad_segment_annotation(
-    raw: BaseRaw,
-    *,
-    descriptions: tuple[str, ...] = BAD_ANNOTATION_DESCRIPTIONS,
-    keep_existing_bad_annotations: bool = True,
-    add_description_templates: bool = True,
-) -> BaseRaw:
-    """Prepare a Raw object for interactive bad-segment annotation.
-
-    This removes non-BAD annotations such as trigger_1, trigger_2, ... from the
-    annotation object used in the browser, and adds zero-duration BAD_* template
-    annotations so the descriptions are already available in the MNE annotation
-    dropdown.
-
-    The Raw object is modified in-place and returned.
-    """
-    current = raw.annotations
-
-    if keep_existing_bad_annotations:
-        prepared = clean_bad_segment_annotations(
-            current,
-            remove_templates=True,
-            keep_bad_only=True,
-            template_descriptions=descriptions,
-        )
-    else:
-        prepared = mne.Annotations([], [], [], orig_time=current.orig_time)
-
-    if add_description_templates:
-        existing_descriptions = set(str(desc) for desc in prepared.description)
-        missing_descriptions = [
-            description
-            for description in descriptions
-            if description not in existing_descriptions
-        ]
-
-        if missing_descriptions:
-            templates = mne.Annotations(
-                onset=[0.0] * len(missing_descriptions),
-                duration=[0.0] * len(missing_descriptions),
-                description=missing_descriptions,
-                orig_time=prepared.orig_time,
-            )
-            prepared = prepared + templates
-
-    raw.set_annotations(prepared)
-
-    return raw
 
 
 def load_bad_annotations(
@@ -269,7 +188,12 @@ def save_or_load_bad_annotations(
     run: str | None = None,
     on_existing: ExistingAnnotationsPolicy = "load",
 ) -> AnnotationResult:
-    """Save annotations or load an existing annotation decision."""
+    """Save BAD annotations or load an existing annotation decision.
+
+    Only annotations whose description starts with BAD are saved. This prevents
+    event-like annotations such as trigger_1 from becoming part of the
+    bad-segment derivative.
+    """
     if on_existing not in {"load", "overwrite"}:
         raise ValueError(
             f"Invalid on_existing value: {on_existing!r}. "
@@ -293,13 +217,13 @@ def save_or_load_bad_annotations(
             message="Annotation file already exists; loaded existing decision.",
         )
 
-    cleaned = clean_bad_segment_annotations(annotations)
+    bad_annotations = keep_only_bad_annotations(annotations)
 
     path.parent.mkdir(parents=True, exist_ok=True)
-    cleaned.save(path, overwrite=on_existing == "overwrite")
+    bad_annotations.save(path, overwrite=on_existing == "overwrite")
 
     return _annotation_result(
-        annotations=cleaned,
+        annotations=bad_annotations,
         path=path,
         status="written",
     )

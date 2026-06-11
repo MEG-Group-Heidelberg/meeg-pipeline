@@ -64,13 +64,57 @@ def compare_subjects_with_participants(
 
 
 def list_bids_entities(config: PipelineConfig, entity: str) -> list[str]:
-    if not config.paths.bids_root.exists():
+    """Return sorted BIDS entity values.
+
+    Missing or incomplete BIDS datasets are normal during data collection.
+    Therefore this function returns an empty list instead of interrupting batch
+    workflows when entities cannot be detected yet.
+    """
+    root = config.paths.bids_root
+
+    if not root.exists():
         return []
 
-    return sorted(
-        str(value)
-        for value in get_entity_vals(config.paths.bids_root, entity, ignore_sessions=False)
-    )
+    values: set[str] = set()
+
+    try:
+        values.update(
+            str(value)
+            for value in get_entity_vals(
+                root,
+                entity_key=entity,
+            )
+        )
+    except (FileNotFoundError, ValueError, TypeError):
+        values = set()
+
+    if entity == "subject":
+        values.update(
+            path.name.removeprefix("sub-")
+            for path in root.glob("sub-*")
+            if path.is_dir()
+        )
+
+    elif entity == "session":
+        values.update(
+            path.name.removeprefix("ses-")
+            for path in root.glob("sub-*/ses-*")
+            if path.is_dir()
+        )
+
+    elif entity == "task":
+        for path in root.glob("sub-*/**/*.fif"):
+            for part in path.name.split("_"):
+                if part.startswith("task-"):
+                    values.add(part.removeprefix("task-"))
+
+    elif entity == "run":
+        for path in root.glob("sub-*/**/*.fif"):
+            for part in path.name.split("_"):
+                if part.startswith("run-"):
+                    values.add(part.removeprefix("run-"))
+
+    return sorted(values)
 
 
 def make_bids_path(

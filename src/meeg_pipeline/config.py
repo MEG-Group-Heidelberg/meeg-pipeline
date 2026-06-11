@@ -46,11 +46,25 @@ class EventsConfig:
 
 
 @dataclass(frozen=True)
+class FilteringConfig:
+    notch_freqs: tuple[float, ...] = (50.0,)
+    l_freq: float | None = 1.0
+    h_freq: float | None = 40.0
+    method: str = "fir"
+
+
+@dataclass(frozen=True)
+class PreprocessingConfig:
+    filtering: FilteringConfig
+
+
+@dataclass(frozen=True)
 class PipelineConfig:
     project_name: str
     paths: ProjectPaths
     bids: BIDSConfig
     events: EventsConfig
+    preprocessing: PreprocessingConfig
 
 
 def _resolve_path(path: str | Path, *, base_dir: Path) -> Path:
@@ -122,9 +136,25 @@ def load_config(config_path: str | Path) -> PipelineConfig:
 
     events = EventsConfig(extraction=event_extraction)
 
+    preprocessing_raw = raw.get("preprocessing", {})
+    filtering_raw = preprocessing_raw.get("filtering", {})
+
+    filtering = FilteringConfig(
+        notch_freqs=tuple(
+            float(freq)
+            for freq in filtering_raw.get("notch_freqs", [50.0])
+        ),
+        l_freq=filtering_raw.get("l_freq", 1.0),
+        h_freq=filtering_raw.get("h_freq", 40.0),
+        method=filtering_raw.get("method", "fir"),
+    )
+
+    preprocessing = PreprocessingConfig(filtering=filtering)
+
     return PipelineConfig(
         project_name=raw["project"]["name"],
         paths=paths,
         bids=bids,
         events=events,
+        preprocessing=preprocessing,
     )

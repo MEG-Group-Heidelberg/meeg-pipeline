@@ -1,0 +1,170 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Literal
+
+from mne.io import BaseRaw
+
+from meeg_pipeline.bids import read_raw_bids_recording
+from meeg_pipeline.config import PipelineConfig
+from meeg_pipeline.io import ensure_output_does_not_exist
+from meeg_pipeline.qc import apply_bad_channels
+
+
+ExistingOutputPolicy = Literal["error", "skip", "overwrite"]
+
+
+@dataclass(frozen=True)
+class PreprocessingResult:
+    output_path: str
+    status: str
+    message: str = ""
+
+
+def make_filtered_raw_path(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    task: str | None = None,
+    session: str | None = None,
+    run: str | None = None,
+) -> Path:
+    """Create derivative path for filtered continuous raw data."""
+    subject = subject.removeprefix("sub-")
+
+    parts = [f"sub-{subject}"]
+
+    if session is not None:
+        parts.append(f"ses-{session}")
+
+    if task is not None:
+        parts.append(f"task-{task}")
+
+    if run is not None:
+        parts.append(f"run-{run}")
+
+    basename = "_".join(parts + ["desc-filtered_meg.fif"])
+
+    if session is None:
+        directory = config.paths.derivatives_root / f"sub-{subject}" / config.bids.datatype
+    else:
+        directory = (
+            config.paths.derivatives_root
+            / f"sub-{subject}"
+            / f"ses-{session}"
+            / config.bids.datatype
+        )
+
+    return directory / basename
+
+
+def filter_raw(
+    raw: BaseRaw,
+    config: PipelineConfig,
+) -> BaseRaw:
+    """Apply configured notch and bandpass filters to a Raw object."""
+    filtered = raw.copy().load_data()
+    filtering = config.preprocessing.filtering
+
+    if filtering.notch_freqs:
+        filtered.notch_filter(
+            freqs=list(filtering.notch_freqs),
+            picks="meg",
+            method=filtering.method,
+        )
+
+    if filtering.l_freq is not None or filtering.h_freq is not None:
+        filtered.filter(
+            l_freq=filtering.l_freq,
+            h_freq=filtering.h_freq,
+            picks="meg",
+            method=filtering.method,
+        )
+
+    return filtered
+
+
+def write_filtered_raw_for_recording(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    task: str | None = None,
+    session: str | None = None,
+    run: str | None = None,
+    on_existing: ExistingOutputPolicy = "error",
+) -> PreprocessingResult:
+    """Load raw BIDS, apply bad channels, filter, and write derivative."""
+    if on_existing not in {"error", "skip", "overwrite"}:
+        raise ValueError(
+            f"Invalid on_existing value: {on_existing!r}. "
+            "Use 'error', 'skip', or 'overwrite'."
+        )
+
+    output_path = make_filtered_raw_path(
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
+    )
+
+    if output_path.exists() and on_existing == "skip":
+        return PreprocessingResult(
+            output_path=str(output_path),
+            status="skipped_existing",
+            message="Target already exists.",
+        )
+
+    ensure_output_does_not_exist(
+        output_path,
+        overwrite=on_existing == "overwrite",
+    )
+
+    raw = read_raw_bids_recording(
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
+        preload=False,
+    )
+
+    apply_bad_channels(
+        raw,
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
+    )
+
+    filtered = filter_raw(raw, config)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    filtered.save(output_path, overwrite=on_existing == "overwrite")
+
+    return PreprocessingResult(
+        output_path=str(output_path),
+        status="written",
+    )
+
+
+def write_filtered_raw_for_recordings(
+    config: PipelineConfig,
+    recordings: list[dict[str, str | None]],
+    *,
+    on_existing: ExistingOutputPolicy = "error",
+) -> list[PreprocessingResult]:
+    """Write filtered raw derivatives for multiple recordings."""
+    return [
+        write_filtered_raw_for_recording(
+            config,
+            subject=recording["subject"],
+            session=recording.get("session"),
+            task=recording.get("task"),
+            run=recording.get("run"),
+            on_existing=on_existing,
+        )
+        for recording in recordings
+    ]

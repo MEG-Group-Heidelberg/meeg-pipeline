@@ -76,6 +76,13 @@ def _resolve_path(path: str | Path, *, base_dir: Path) -> Path:
     return path.resolve()
 
 
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+
+    return float(value)
+
+
 def load_config(config_path: str | Path) -> PipelineConfig:
     config_path = Path(config_path).expanduser().resolve()
 
@@ -139,13 +146,17 @@ def load_config(config_path: str | Path) -> PipelineConfig:
     preprocessing_raw = raw.get("preprocessing", {})
     filtering_raw = preprocessing_raw.get("filtering", {})
 
+    notch_freqs_raw = filtering_raw.get("notch_freqs", [50.0])
+
+    if notch_freqs_raw is None:
+        notch_freqs = ()
+    else:
+        notch_freqs = tuple(float(freq) for freq in notch_freqs_raw)
+
     filtering = FilteringConfig(
-        notch_freqs=tuple(
-            float(freq)
-            for freq in filtering_raw.get("notch_freqs", [50.0])
-        ),
-        l_freq=filtering_raw.get("l_freq", 1.0),
-        h_freq=filtering_raw.get("h_freq", 40.0),
+        notch_freqs=notch_freqs,
+        l_freq=_optional_float(filtering_raw.get("l_freq", 1.0)),
+        h_freq=_optional_float(filtering_raw.get("h_freq", 40.0)),
         method=filtering_raw.get("method", "fir"),
     )
 

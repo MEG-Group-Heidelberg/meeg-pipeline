@@ -252,6 +252,7 @@ def fit_ica(
     random_state: int = 97,
     max_iter: int | str = "auto",
     reject_by_annotation: bool = True,
+    decim: int | None = None,
     fit_resample_sfreq: float | None = None,
 ) -> ICA:
     """Fit ICA on a Raw object.
@@ -261,15 +262,23 @@ def fit_ica(
 
     By default, ICA is fitted at the sampling rate of the input Raw object.
 
-    If ``fit_resample_sfreq`` is not None, ICA is fitted on a resampled copy of
-    the raw data. This can greatly speed up ICA fitting for long recordings. The
-    fitted ICA can still be applied to the original filtered data as long as
-    channel names, bad channels, and picks are consistent.
+    If ``decim`` is not None, ICA fitting uses MNE's native decimation option
+    and ``fit_resample_sfreq`` is ignored.
+
+    If ``decim`` is None and ``fit_resample_sfreq`` is not None, ICA is fitted
+    on a resampled copy of the raw data. This can speed up ICA fitting for long
+    recordings. The fitted ICA can still be applied to the original filtered
+    data as long as channel names, bad channels, and picks are consistent.
     """
-    if fit_resample_sfreq is None:
+    if decim is not None:
         raw_for_fit = raw
-    else:
+        fit_decim = decim
+    elif fit_resample_sfreq is not None:
         raw_for_fit = raw.copy().resample(fit_resample_sfreq)
+        fit_decim = None
+    else:
+        raw_for_fit = raw
+        fit_decim = None
 
     ica = ICA(
         n_components=n_components,
@@ -292,6 +301,7 @@ def fit_ica(
         raw_for_fit,
         picks=picks,
         reject_by_annotation=reject_by_annotation,
+        decim=fit_decim,
     )
 
     return ica
@@ -309,6 +319,7 @@ def fit_ica_for_recording(
     method: str = "fastica",
     random_state: int = 97,
     max_iter: int | str = "auto",
+    decim: int | None = None,
     fit_resample_sfreq: float | None = None,
 ) -> ICAFitResult:
     """Fit and save ICA for one recording."""
@@ -355,6 +366,7 @@ def fit_ica_for_recording(
         method=method,
         random_state=random_state,
         max_iter=max_iter,
+        decim=decim,
         fit_resample_sfreq=fit_resample_sfreq,
     )
 
@@ -376,6 +388,7 @@ def fit_ica_for_recordings(
     method: str = "fastica",
     random_state: int = 97,
     max_iter: int | str = "auto",
+    decim: int | None = None,
     fit_resample_sfreq: float | None = None,
 ) -> list[ICAFitResult]:
     """Fit and save ICA for multiple recordings."""
@@ -391,6 +404,7 @@ def fit_ica_for_recordings(
             method=method,
             random_state=random_state,
             max_iter=max_iter,
+            decim=decim,
             fit_resample_sfreq=fit_resample_sfreq,
         )
         for recording in recordings

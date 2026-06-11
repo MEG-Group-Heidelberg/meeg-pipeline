@@ -71,6 +71,7 @@ class ICAConfig:
     method: str = "fastica"
     random_state: int = 97
     max_iter: int | str = "auto"
+    decim: int | None = None
     fit_resample_sfreq: float | None = None
 
 
@@ -305,6 +306,7 @@ def load_config(config_path: str | Path) -> PipelineConfig:
             method=ica_raw.get("method", "fastica"),
             random_state=int(ica_raw.get("random_state", 97)),
             max_iter=ica_raw.get("max_iter", "auto"),
+            decim=_optional_int(ica_raw.get("decim", None)),
             fit_resample_sfreq=_optional_float(
                 ica_raw.get("fit_resample_sfreq", None)
             ),

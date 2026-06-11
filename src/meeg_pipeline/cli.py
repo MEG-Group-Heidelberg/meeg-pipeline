@@ -24,6 +24,7 @@ from meeg_pipeline.events import (
     summarize_events,
     write_bids_events_for_recording,
 )
+from meeg_pipeline.project import init_project
 from meeg_pipeline.config import load_config
 
 
@@ -194,6 +195,28 @@ def main() -> None:
         "--overwrite",
         action="store_true",
         help="Overwrite an existing events.tsv file.",
+    )
+
+    init_project_parser = subparsers.add_parser(
+        "init-project",
+        help="Create a new meeg-pipeline project scaffold.",
+    )
+
+    init_project_parser.add_argument(
+        "project_name",
+        help="Name of the project folder to create.",
+    )
+
+    init_project_parser.add_argument(
+        "--base-dir",
+        default=".",
+        help="Directory in which the project folder should be created.",
+    )
+
+    init_project_parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Overwrite existing template files.",
     )
 
     args = parser.parse_args()
@@ -423,6 +446,30 @@ def main() -> None:
         if result.unique_ids is not None:
             print(f"Unique IDs: {result.unique_ids}")
         print(f"Output: {result.output_path}")
+    
+    elif args.command == "init-project":
+        result = init_project(
+            args.project_name,
+            base_dir=args.base_dir,
+            overwrite=args.overwrite,
+        )
+
+        print(f"Project root: {result.project_root}")
+        print(f"Status: {result.status}")
+        print(f"Created paths: {len(result.created_paths)}")
+        print(f"Skipped existing paths: {len(result.skipped_paths)}")
+
+        if result.created_paths:
+            print("\nCreated:")
+            for path in result.created_paths:
+                print(f"  {path}")
+
+        if result.skipped_paths:
+            print("\nSkipped existing:")
+            for path in result.skipped_paths:
+                print(f"  {path}")
+
+        return
 
     else:
         parser.print_help()

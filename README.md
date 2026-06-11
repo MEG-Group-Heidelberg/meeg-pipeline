@@ -8,16 +8,23 @@ The goal of this project is to provide a transparent and extensible pipeline
 for MEG and EEG data analysis. The pipeline is developed step by step, with a
 strong focus on understanding each processing stage.
 
+The package contains reusable pipeline code. Concrete research projects should
+live in separate project folders and use this package as a library.
+
 ## Design principles
 
 - BIDS-compatible project organization
 - Clear separation between reusable pipeline code and project-specific data
-- Original source data are preserved unchanged
-- Raw BIDS data are treated as immutable analysis inputs
+- Original source data are preserved unchanged in `sourcedata/`
+- Raw BIDS FIF files are treated as immutable analysis inputs
+- BIDS sidecar metadata such as `channels.tsv` may be updated when appropriate
 - Processed outputs are written to `derivatives/meeg-pipeline/`
 - Intermediate preprocessing steps are saved as separate files
 - Existing output files are not overwritten by default
-- Event handling should be based on metadata-rich event tables
+- Manual QC decisions are stored explicitly
+- Event handling is table-based and metadata-friendly
+- Notebook-friendly interactive workflow
+- CLI-friendly batch workflow
 - Local and HPC-compatible execution
 - Built on MNE-Python and MNE-BIDS
 
@@ -33,8 +40,14 @@ meeg-pipeline/
     meeg_pipeline/
       __init__.py
       bids.py
+      channels.py
       cli.py
       config.py
+      conversion.py
+      events.py
+      io.py
+      qc.py
+      sourcedata.py
 ```
 
 Concrete research projects should live in separate folders, for example:
@@ -45,8 +58,9 @@ Concrete research projects should live in separate folders, for example:
   my-meeg-project/
 ```
 
-The `meeg-pipeline` repository contains the reusable code.  
-The project folder contains data, project-specific configs, and outputs.
+The `meeg-pipeline` repository contains reusable code.  
+The project folder contains data, project-specific configs, notebooks, and
+outputs.
 
 ## Installation for development
 
@@ -80,37 +94,6 @@ python -c "import meeg_pipeline; print(meeg_pipeline.__version__)"
 meegpipe --version
 ```
 
-## Current command-line tools
-
-Show the installed version:
-
-```bash
-meegpipe --version
-```
-
-Show information from a project config:
-
-```bash
-meegpipe config-info --config configs/local.yaml
-```
-
-Show basic information about a configured BIDS dataset:
-
-```bash
-meegpipe bids-info --config configs/local.yaml
-```
-
-Construct and inspect a BIDS path:
-
-```bash
-meegpipe bids-path \
-  --config configs/local.yaml \
-  --subject 0001 \
-  --session 001 \
-  --task chords \
-  --extension .fif
-```
-
 ## Project organization
 
 A concrete M/EEG project should be organized separately from the pipeline
@@ -122,8 +105,14 @@ Example with one subject, one session, and two tasks:
 my-meeg-project/
   dataset_description.json
   participants.tsv
+
   configs/
     local.yaml
+
+  notebooks/
+    00_project_summary.ipynb
+    01_raw_bids_badchannels_events.ipynb
+    02_preprocessing.ipynb
 
   sourcedata/
     sub-0001/
@@ -152,9 +141,26 @@ my-meeg-project/
       sub-0001/
         ses-001/
           meg/
+            sub-0001_ses-001_task-chords_desc-badchannels.json
             sub-0001_ses-001_task-chords_desc-filtered_meg.fif
             sub-0001_ses-001_task-chords_desc-cleaned_meg.fif
             sub-0001_ses-001_task-chords_desc-cleaned_epo.fif
+```
+
+For projects without sessions, omit the `ses-...` level consistently:
+
+```text
+sub-0001/
+  meg/
+    sub-0001_task-chords_meg.fif
+    sub-0001_task-chords_channels.tsv
+    sub-0001_task-chords_events.tsv
+
+derivatives/
+  meeg-pipeline/
+    sub-0001/
+      meg/
+        sub-0001_task-chords_desc-badchannels.json
 ```
 
 ## Data organization
@@ -164,7 +170,9 @@ my-meeg-project/
 `sourcedata/` contains the original files as exported from the acquisition system
 or laboratory storage. These files should remain unchanged.
 
-The folder structure should encode the relevant BIDS entities:
+The folder structure should encode the relevant BIDS entities.
+
+With sessions:
 
 ```text
 sourcedata/
@@ -177,7 +185,7 @@ sourcedata/
           <original_file>.fif
 ```
 
-If a project does not use sessions, omit the `ses-...` level:
+Without sessions:
 
 ```text
 sourcedata/
@@ -189,7 +197,7 @@ sourcedata/
         <original_file>.fif
 ```
 
-If the same task has multiple runs, add `run-...` folders:
+With runs:
 
 ```text
 sourcedata/
@@ -206,6 +214,16 @@ sourcedata/
 The source FIF filename itself can be arbitrary. However, each lowest-level
 source folder should contain exactly one `.fif` file.
 
+Examples:
+
+```text
+sourcedata/sub-0001/meg/task-chords/original_file.fif
+sourcedata/sub-0001/ses-001/meg/task-chords/run-01/original_file.fif
+```
+
+The pipeline uses the folder structure to infer BIDS entities such as subject,
+session, task, and run.
+
 ### Raw BIDS data
 
 The BIDS-formatted raw data are stored outside `sourcedata/`, using BIDS naming.
@@ -217,35 +235,54 @@ sub-0001/
   ses-001/
     meg/
       sub-0001_ses-001_task-chords_meg.fif
-      sub-0001_ses-001_task-nochords_meg.fif
+      sub-0001_ses-001_task-chords_channels.tsv
+      sub-0001_ses-001_task-chords_events.tsv
 ```
 
-These files should be generated from the original source data, preferably using
-MNE-BIDS. They should be treated as immutable inputs for analysis.
+Raw BIDS FIF files are generated from the original source data, preferably using
+MNE-BIDS. They should be treated as immutable analysis inputs.
 
 The raw BIDS area should not contain intermediate preprocessing outputs.
 
+### BIDS sidecars
+
+Some BIDS sidecar files are part of the raw BIDS dataset and may be updated when
+metadata decisions are made.
+
+For example, manual bad-channel decisions should update:
+
+```text
+sub-0001/meg/sub-0001_task-chords_channels.tsv
+```
+
+using the BIDS columns:
+
+```text
+status
+status_description
+```
+
+The raw FIF file itself should remain unchanged.
+
 ### Derivatives
 
-All processed outputs are written to:
+All processed outputs and explicit pipeline decisions are written to:
 
 ```text
 derivatives/meeg-pipeline/
 ```
 
-Intermediate preprocessing steps are saved as separate files using BIDS-style
-derivative names.
-
 Examples:
 
 ```text
 derivatives/meeg-pipeline/sub-0001/ses-001/meg/
+  sub-0001_ses-001_task-chords_desc-badchannels.json
   sub-0001_ses-001_task-chords_desc-filtered_meg.fif
   sub-0001_ses-001_task-chords_desc-cleaned_meg.fif
   sub-0001_ses-001_task-chords_desc-cleaned_epo.fif
 ```
 
-The raw BIDS files should not be modified during preprocessing.
+The raw BIDS FIF files should not be modified during preprocessing.
 
 ## Subject, session, task, and run naming
 
@@ -259,7 +296,8 @@ sub-0002
 sub-0003
 ```
 
-In command-line arguments, subjects can be passed without the `sub-` prefix:
+In command-line arguments and Python functions, subjects can usually be passed
+without the `sub-` prefix:
 
 ```bash
 meegpipe bids-path --config configs/local.yaml --subject 0001
@@ -322,6 +360,33 @@ sub-0001_ses-001_task-chords_run-02_meg.fif
 Use `run-...` if the same task was repeated or split into multiple acquisition
 blocks.
 
+## Minimal BIDS project files
+
+At the project root, create a `dataset_description.json` file.
+
+Example:
+
+```json
+{
+  "Name": "my-meeg-project",
+  "BIDSVersion": "1.10.0",
+  "DatasetType": "raw",
+  "Authors": ["Léon Bartosch"]
+}
+```
+
+Also create a `participants.tsv` file.
+
+Example:
+
+```text
+participant_id
+sub-0001
+sub-0002
+```
+
+The participant IDs in `participants.tsv` should match the `sub-*` folders.
+
 ## Minimal project config
 
 Each project should contain a config file, for example:
@@ -347,6 +412,23 @@ bids:
   task: null
   session: null
   run: null
+
+events:
+  extraction:
+    method: "binary_channels"
+    stim_channels:
+      - "STI 001"
+      - "STI 002"
+      - "STI 003"
+      - "STI 004"
+      - "STI 005"
+      - "STI 006"
+    min_duration: 0.0
+    shortest_event: 1
+    min_gap: 7000
+    adjust_timeline_by_msec: 0.0
+    tolerance_samples: 1
+    mute_bad_annotations: true
 ```
 
 From the project root, test the config:
@@ -412,7 +494,244 @@ event ID is:
 The same event extraction function can be reused across projects by changing the
 config values.
 
-The command-line interface uses the config values by default:
+## Event handling principle
+
+The pipeline should not assume that recorded trigger codes are always identical
+to the final analysis events.
+
+Instead, event handling should be table-based.
+
+A simple event table may look like this:
+
+```text
+onset    duration    trial_type    value    sample
+1.532    0.0         trigger_1     1        1532
+3.847    0.0         trigger_1     1        3847
+```
+
+More complex projects may derive analysis events from anchor triggers and
+external metadata.
+
+Example:
+
+```text
+onset    duration    trial_type        trial_id    stimulus_id    speaker      phoneme    relative_onset
+42.000   3.200       sentence_onset    17          sent_017       speaker_03   n/a        0.000
+42.134   0.087       phoneme_onset     17          sent_017       speaker_03   a          0.134
+42.221   0.061       phoneme_onset     17          sent_017       speaker_03   t          0.221
+42.309   0.102       phoneme_onset     17          sent_017       speaker_03   sh         0.309
+```
+
+Design principle:
+
+```text
+Raw triggers are acquisition-level anchors.
+Analysis events are table-based, metadata-rich, and may be derived from anchors
+plus external annotations.
+MNE integer event codes are a late-stage compatibility representation, not the
+primary event model.
+```
+
+## Manual bad-channel QC
+
+Manual bad-channel marking is treated as an explicit QC decision.
+
+Recommended workflow:
+
+1. Load one raw BIDS recording.
+2. Open the interactive MNE browser with `raw.plot(block=True)`.
+3. Mark bad channels in the GUI.
+4. Close the browser window.
+5. Save the bad-channel decision as a JSON derivative.
+6. Update the raw BIDS `*_channels.tsv` sidecar.
+7. Keep the raw `*_meg.fif` file unchanged.
+
+Example files:
+
+```text
+sub-1409/meg/sub-1409_task-chords_meg.fif
+sub-1409/meg/sub-1409_task-chords_channels.tsv
+
+derivatives/meeg-pipeline/sub-1409/meg/
+  sub-1409_task-chords_desc-badchannels.json
+```
+
+The raw FIF file remains unchanged.  
+The BIDS sidecar `channels.tsv` is updated using the columns:
+
+```text
+status
+status_description
+```
+
+Example bad-channel JSON:
+
+```json
+{
+  "subject": "1409",
+  "session": null,
+  "task": "chords",
+  "run": null,
+  "bads": ["MEG0112"],
+  "method": "manual_mne_gui",
+  "notes": "Marked interactively with raw.plot(block=True)."
+}
+```
+
+Example `channels.tsv` rows after manual QC:
+
+```text
+name       type   units   status   status_description
+MEG0112    MEGGRAD T/m    bad      manual_mne_gui: Marked interactively with raw.plot(block=True).
+MEG0113    MEGGRAD T/m    good
+```
+
+This makes bad-channel decisions visible to BIDS-aware tools while keeping the
+original raw FIF data intact.
+
+## Notebook workflow
+
+The recommended project workflow is notebook-oriented.
+
+A project may contain notebooks such as:
+
+```text
+notebooks/
+  00_project_summary.ipynb
+  01_raw_bids_badchannels_events.ipynb
+  02_preprocessing.ipynb
+```
+
+Suggested roles:
+
+```text
+00_project_summary.ipynb
+  Read-only dashboard.
+  Shows what data exist, what has been computed, event status, bad-channel status,
+  and derivative status.
+
+01_raw_bids_badchannels_events.ipynb
+  Active raw-data notebook.
+  Discovers sourcedata, converts to raw BIDS, inspects channels, performs manual
+  bad-channel QC, and writes events.tsv.
+
+02_preprocessing.ipynb
+  Active preprocessing notebook.
+  Applies saved bad-channel decisions, filters data, and writes derivatives.
+```
+
+Notebook steps should call reusable library functions rather than implementing
+large processing logic directly inside notebooks.
+
+## Existing-output and overwrite policy
+
+By default, pipeline steps should not silently overwrite existing files.
+
+Different steps can use different existing-output policies:
+
+```text
+convert_to_bids:
+  error / skip / overwrite
+
+events:
+  error / skip / overwrite
+
+bad_channels:
+  error / load / overwrite
+```
+
+For notebooks, a central variable can be used:
+
+```python
+OVERWRITE_STEPS = []
+OVERWRITE_STEPS = ["events"]
+OVERWRITE_STEPS = ["bad_channels"]
+OVERWRITE_STEPS = ["convert_to_bids"]
+OVERWRITE_STEPS = ["events", "bad_channels"]
+OVERWRITE_STEPS = "all"
+```
+
+Recommended default:
+
+```python
+OVERWRITE_STEPS = []
+```
+
+This means:
+
+```text
+convert_to_bids  -> skip existing raw BIDS files
+events           -> skip existing events.tsv files
+bad_channels     -> load existing bad-channel decisions
+```
+
+To recompute a specific step, either delete the corresponding output file
+intentionally or add the step to `OVERWRITE_STEPS`.
+
+## Current command-line tools
+
+The package currently provides a small command-line interface called `meegpipe`.
+
+Show the installed version:
+
+```bash
+meegpipe --version
+```
+
+Show information from a project config:
+
+```bash
+meegpipe config-info --config configs/local.yaml
+```
+
+Show basic information about a configured BIDS dataset:
+
+```bash
+meegpipe bids-info --config configs/local.yaml
+```
+
+Construct and inspect a BIDS path:
+
+```bash
+meegpipe bids-path \
+  --config configs/local.yaml \
+  --subject 0001 \
+  --session 001 \
+  --task chords \
+  --extension .fif
+```
+
+Inspect discovered source recordings:
+
+```bash
+meegpipe sourcedata-info --config configs/local.yaml
+```
+
+Convert source recordings to raw BIDS:
+
+```bash
+meegpipe convert-to-bids --config configs/local.yaml
+```
+
+Read a raw BIDS recording and show basic information:
+
+```bash
+meegpipe raw-info \
+  --config configs/local.yaml \
+  --subject 1409 \
+  --task chords
+```
+
+Show channel information:
+
+```bash
+meegpipe channels-info \
+  --config configs/local.yaml \
+  --subject 1409 \
+  --task chords
+```
+
+Extract events and show event information:
 
 ```bash
 meegpipe events-info \
@@ -421,43 +740,17 @@ meegpipe events-info \
   --task chords
 ```
 
-Individual parameters can still be overridden from the command line for testing:
+Write BIDS-compatible `events.tsv` files:
 
 ```bash
-meegpipe events-info \
+meegpipe write-events \
   --config configs/local.yaml \
   --subject 1409 \
-  --task chords \
-  --min-gap 7000 \
-  --tolerance-samples 1
+  --task chords
 ```
 
-## Minimal BIDS project files
-
-At the project root, create a `dataset_description.json` file.
-
-Example:
-
-```json
-{
-  "Name": "my-meeg-project",
-  "BIDSVersion": "1.10.0",
-  "DatasetType": "raw",
-  "Authors": ["Léon Bartosch"]
-}
-```
-
-Also create a `participants.tsv` file.
-
-Example:
-
-```text
-participant_id
-sub-0001
-sub-0002
-```
-
-The participant IDs in `participants.tsv` should match the `sub-*` folders.
+The CLI is useful for quick checks and later batch/HPC workflows. Interactive QC
+is better handled in notebooks.
 
 ## Recommended first data import step
 
@@ -486,7 +779,7 @@ sourcedata/sub-0001/meg/task-chords/<original_chords_file>.fif
 sourcedata/sub-0001/meg/task-nochords/<original_nochords_file>.fif
 ```
 
-Do not modify these files.
+Do not modify these source files.
 
 The corresponding BIDS raw files will later be generated under:
 
@@ -516,7 +809,7 @@ sub-0001_task-nochords_meg.fif
 
 ## Checking expected BIDS paths
 
-The current CLI can construct expected BIDS paths.
+The CLI can construct expected BIDS paths.
 
 Example:
 
@@ -554,67 +847,6 @@ Expected output path:
 sub-0001/ses-001/meg/sub-0001_ses-001_task-nochords_meg.fif
 ```
 
-## Overwrite policy
-
-By default, pipeline steps should not overwrite existing files.
-
-If an output file already exists, the corresponding pipeline step should stop or
-skip that file instead of silently replacing it.
-
-To recompute a specific step, delete the corresponding output file first.
-
-For example, to recompute the filtered data for one subject, session, and task:
-
-```bash
-rm derivatives/meeg-pipeline/sub-0001/ses-001/meg/sub-0001_ses-001_task-chords_desc-filtered_meg.fif
-```
-
-Then rerun the corresponding pipeline step.
-
-This makes intermediate analysis states explicit and prevents accidental
-overwriting of previous results.
-
-An explicit overwrite option may be added later, but the recommended workflow is
-to remove specific outputs intentionally before recomputing them.
-
-## Event handling principle
-
-The pipeline should not assume that recorded trigger codes are always identical
-to the final analysis events.
-
-Instead, event handling should be table-based.
-
-A simple event table may look like this:
-
-```text
-onset    duration    trial_type    trigger_code
-1.532    0.0         stimulus      1
-3.847    0.0         stimulus      1
-```
-
-More complex projects may derive analysis events from anchor triggers and
-external metadata.
-
-Example:
-
-```text
-onset    duration    trial_type        trial_id    stimulus_id    speaker      phoneme    relative_onset
-42.000   3.200       sentence_onset    17          sent_017       speaker_03   n/a        0.000
-42.134   0.087       phoneme_onset     17          sent_017       speaker_03   a          0.134
-42.221   0.061       phoneme_onset     17          sent_017       speaker_03   t          0.221
-42.309   0.102       phoneme_onset     17          sent_017       speaker_03   sh         0.309
-```
-
-Design principle:
-
-```text
-Raw triggers are acquisition-level anchors.
-Analysis events are table-based, metadata-rich, and may be derived from anchors
-plus external annotations.
-MNE integer event codes are a late-stage compatibility representation, not the
-primary event model.
-```
-
 ## Development status
 
 Early development.
@@ -627,14 +859,27 @@ Currently implemented:
 - basic BIDS dataset inspection
 - participants.tsv inspection
 - BIDSPath construction
-- path existence check
+- sourcedata discovery
+- conversion from `sourcedata/` to raw BIDS
+- raw data loading via MNE-BIDS
+- channel summaries
+- binary-channel event extraction
+- BIDS-compatible `events.tsv` writing
+- notebook-friendly event and channel summaries
+- manual bad-channel QC utilities
+- bad-channel JSON derivatives
+- updating BIDS `channels.tsv` from manual bad-channel decisions
+- existing-output policies for conversion, events, and bad-channel QC
 
 Not yet implemented:
 
-- conversion from `sourcedata/` to raw BIDS
-- raw data loading via MNE-BIDS
-- event table creation
-- preprocessing steps
-- derivatives writing
+- filtering preprocessing step
+- filtered raw derivatives
+- bad segment annotation workflow
+- ICA / SSP artifact handling
+- cleaned raw derivatives
+- epoching
+- evoked/TFR/source analysis
 - reports
 - HPC/Slurm execution
+- automated tests

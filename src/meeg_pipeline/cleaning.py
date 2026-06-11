@@ -252,15 +252,18 @@ def fit_ica(
     random_state: int = 97,
     max_iter: int | str = "auto",
     reject_by_annotation: bool = True,
-    fit_resample_sfreq: float | None = 250.0,
+    fit_resample_sfreq: float | None = None,
 ) -> ICA:
     """Fit ICA on a Raw object.
 
     The Raw object should already contain bad channels and bad-segment
     annotations.
 
-    ICA is fitted on a resampled copy by default to keep fitting time manageable.
-    The fitted ICA can still be applied to the original filtered data as long as
+    By default, ICA is fitted at the sampling rate of the input Raw object.
+
+    If ``fit_resample_sfreq`` is not None, ICA is fitted on a resampled copy of
+    the raw data. This can greatly speed up ICA fitting for long recordings. The
+    fitted ICA can still be applied to the original filtered data as long as
     channel names, bad channels, and picks are consistent.
     """
     if fit_resample_sfreq is None:
@@ -306,7 +309,7 @@ def fit_ica_for_recording(
     method: str = "fastica",
     random_state: int = 97,
     max_iter: int | str = "auto",
-    fit_resample_sfreq: float | None = 250.0,
+    fit_resample_sfreq: float | None = None,
 ) -> ICAFitResult:
     """Fit and save ICA for one recording."""
     if on_existing not in {"skip", "overwrite"}:
@@ -373,7 +376,7 @@ def fit_ica_for_recordings(
     method: str = "fastica",
     random_state: int = 97,
     max_iter: int | str = "auto",
-    fit_resample_sfreq: float | None = 250.0,
+    fit_resample_sfreq: float | None = None,
 ) -> list[ICAFitResult]:
     """Fit and save ICA for multiple recordings."""
     return [

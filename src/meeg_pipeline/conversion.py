@@ -7,11 +7,10 @@ import mne
 from mne_bids import write_raw_bids
 
 from meeg_pipeline.config import PipelineConfig
-from meeg_pipeline.io import ensure_output_does_not_exist
 from meeg_pipeline.sourcedata import SourceRecording, make_target_bids_path
 
 
-ExistingOutputPolicy = Literal["error", "skip", "overwrite"]
+ExistingOutputPolicy = Literal["skip", "overwrite"]
 
 
 @dataclass(frozen=True)
@@ -28,15 +27,28 @@ def convert_source_recording_to_bids(
     *,
     overwrite: bool = False,
 ) -> ConversionResult:
-    """Convert one source FIF recording to raw BIDS using MNE-BIDS.
+    """Convert one source FIF recording to raw BIDS.
 
-    This function is strict: if the output exists and overwrite=False, it raises
-    FileExistsError. For notebook/batch workflows, use
-    convert_source_recordings_to_bids(..., on_existing="skip").
+    Existing targets and missing source files are returned as statuses rather
+    than exceptions.
     """
     target_bids_path = make_target_bids_path(config, recording)
 
-    ensure_output_does_not_exist(target_bids_path.fpath, overwrite=overwrite)
+    if target_bids_path.fpath.exists() and not overwrite:
+        return ConversionResult(
+            source_path=str(recording.source_path),
+            target_path=str(target_bids_path.fpath),
+            status="skipped_existing",
+            message="Target already exists.",
+        )
+
+    if not recording.source_path.exists():
+        return ConversionResult(
+            source_path=str(recording.source_path),
+            target_path=str(target_bids_path.fpath),
+            status="missing_input",
+            message="Source FIF file does not exist.",
+        )
 
     raw = mne.io.read_raw_fif(
         recording.source_path,
@@ -54,7 +66,7 @@ def convert_source_recording_to_bids(
     return ConversionResult(
         source_path=str(recording.source_path),
         target_path=str(target_bids_path.fpath),
-        status="converted",
+        status="written",
     )
 
 
@@ -62,51 +74,20 @@ def convert_source_recordings_to_bids(
     config: PipelineConfig,
     recordings: list[SourceRecording],
     *,
-    on_existing: ExistingOutputPolicy = "error",
+    on_existing: ExistingOutputPolicy = "skip",
 ) -> list[ConversionResult]:
-    """Convert multiple source recordings to raw BIDS.
-
-    Parameters
-    ----------
-    config
-        Pipeline config.
-    recordings
-        Source recordings discovered from sourcedata/.
-    on_existing
-        What to do if the target raw BIDS file already exists.
-
-        - "error": raise FileExistsError
-        - "skip": keep existing output and return status "skipped_existing"
-        - "overwrite": overwrite existing output
-    """
-    if on_existing not in {"error", "skip", "overwrite"}:
+    """Convert multiple source recordings to raw BIDS."""
+    if on_existing not in {"skip", "overwrite"}:
         raise ValueError(
             f"Invalid on_existing value: {on_existing!r}. "
-            "Use 'error', 'skip', or 'overwrite'."
+            "Use 'skip' or 'overwrite'."
         )
 
-    results: list[ConversionResult] = []
-
-    for recording in recordings:
-        target_bids_path = make_target_bids_path(config, recording)
-        target_path = target_bids_path.fpath
-
-        if target_path.exists() and on_existing == "skip":
-            results.append(
-                ConversionResult(
-                    source_path=str(recording.source_path),
-                    target_path=str(target_path),
-                    status="skipped_existing",
-                    message="Target already exists.",
-                )
-            )
-            continue
-
-        result = convert_source_recording_to_bids(
+    return [
+        convert_source_recording_to_bids(
             config,
             recording,
             overwrite=on_existing == "overwrite",
         )
-        results.append(result)
-
-    return results
+        for recording in recordings
+    ]

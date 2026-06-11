@@ -9,19 +9,29 @@ from mne import Annotations
 from mne.io import BaseRaw
 
 from meeg_pipeline.config import PipelineConfig
-from meeg_pipeline.io import ensure_output_does_not_exist
 
 
-ExistingAnnotationsPolicy = Literal["error", "load", "overwrite"]
+ExistingAnnotationsPolicy = Literal["load", "overwrite"]
 
 
 @dataclass(frozen=True)
 class AnnotationResult:
+    annotations: Annotations | None
     path: str
     status: str
-    n_annotations: int
-    n_bad_annotations: int
-    descriptions: list[str]
+    n_annotations: int = 0
+    n_bad_annotations: int = 0
+    descriptions: list[str] | None = None
+    message: str = ""
+
+
+@dataclass(frozen=True)
+class ApplyAnnotationsResult:
+    raw: BaseRaw
+    path: str
+    status: str
+    n_annotations: int = 0
+    n_bad_annotations: int = 0
     message: str = ""
 
 
@@ -70,31 +80,36 @@ def count_bad_annotations(annotations: Annotations) -> int:
     )
 
 
-def save_bad_annotations(
-    config: PipelineConfig,
+def annotation_descriptions(annotations: Annotations) -> list[str]:
+    """Return sorted unique annotation descriptions."""
+    return sorted(set(str(description) for description in annotations.description))
+
+
+def _annotation_result(
     *,
-    subject: str,
-    annotations: Annotations,
-    task: str | None = None,
-    session: str | None = None,
-    run: str | None = None,
-    overwrite: bool = False,
-) -> Path:
-    """Save annotations as a derivative FIF file."""
-    output_path = make_bad_annotations_path(
-        config,
-        subject=subject,
-        session=session,
-        task=task,
-        run=run,
+    annotations: Annotations | None,
+    path: Path,
+    status: str,
+    message: str = "",
+) -> AnnotationResult:
+    if annotations is None:
+        return AnnotationResult(
+            annotations=None,
+            path=str(path),
+            status=status,
+            message=message,
+            descriptions=[],
+        )
+
+    return AnnotationResult(
+        annotations=annotations,
+        path=str(path),
+        status=status,
+        n_annotations=len(annotations),
+        n_bad_annotations=count_bad_annotations(annotations),
+        descriptions=annotation_descriptions(annotations),
+        message=message,
     )
-
-    ensure_output_does_not_exist(output_path, overwrite=overwrite)
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    annotations.save(output_path, overwrite=overwrite)
-
-    return output_path
 
 
 def load_bad_annotations(
@@ -104,8 +119,8 @@ def load_bad_annotations(
     task: str | None = None,
     session: str | None = None,
     run: str | None = None,
-) -> Annotations:
-    """Load saved bad-segment annotations."""
+) -> AnnotationResult:
+    """Load saved bad-segment annotations if they exist."""
     path = make_bad_annotations_path(
         config,
         subject=subject,
@@ -115,9 +130,18 @@ def load_bad_annotations(
     )
 
     if not path.exists():
-        raise FileNotFoundError(f"Bad-annotation file does not exist: {path}")
+        return _annotation_result(
+            annotations=None,
+            path=path,
+            status="missing_input",
+            message="Bad-segment annotation file does not exist.",
+        )
 
-    return mne.read_annotations(path)
+    return _annotation_result(
+        annotations=mne.read_annotations(path),
+        path=path,
+        status="loaded",
+    )
 
 
 def save_or_load_bad_annotations(
@@ -128,13 +152,13 @@ def save_or_load_bad_annotations(
     task: str | None = None,
     session: str | None = None,
     run: str | None = None,
-    on_existing: ExistingAnnotationsPolicy = "error",
+    on_existing: ExistingAnnotationsPolicy = "load",
 ) -> AnnotationResult:
-    """Save annotations, or load an existing annotation decision."""
-    if on_existing not in {"error", "load", "overwrite"}:
+    """Save annotations or load an existing annotation decision."""
+    if on_existing not in {"load", "overwrite"}:
         raise ValueError(
             f"Invalid on_existing value: {on_existing!r}. "
-            "Use 'error', 'load', or 'overwrite'."
+            "Use 'load' or 'overwrite'."
         )
 
     path = make_bad_annotations_path(
@@ -146,39 +170,21 @@ def save_or_load_bad_annotations(
     )
 
     if path.exists() and on_existing == "load":
-        existing = load_bad_annotations(
-            config,
-            subject=subject,
-            session=session,
-            task=task,
-            run=run,
-        )
-
-        return AnnotationResult(
-            path=str(path),
+        existing = mne.read_annotations(path)
+        return _annotation_result(
+            annotations=existing,
+            path=path,
             status="loaded_existing",
-            n_annotations=len(existing),
-            n_bad_annotations=count_bad_annotations(existing),
-            descriptions=sorted(set(str(desc) for desc in existing.description)),
-            message="Bad-annotation file already exists; loaded existing decision.",
+            message="Annotation file already exists; loaded existing decision.",
         )
 
-    output_path = save_bad_annotations(
-        config,
-        subject=subject,
-        session=session,
-        task=task,
-        run=run,
-        annotations=annotations,
-        overwrite=on_existing == "overwrite",
-    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    annotations.save(path, overwrite=on_existing == "overwrite")
 
-    return AnnotationResult(
-        path=str(output_path),
-        status="saved",
-        n_annotations=len(annotations),
-        n_bad_annotations=count_bad_annotations(annotations),
-        descriptions=sorted(set(str(desc) for desc in annotations.description)),
+    return _annotation_result(
+        annotations=annotations,
+        path=path,
+        status="written",
     )
 
 
@@ -190,9 +196,12 @@ def apply_bad_annotations(
     task: str | None = None,
     session: str | None = None,
     run: str | None = None,
-) -> BaseRaw:
-    """Apply saved bad-segment annotations to a Raw object in-place."""
-    annotations = load_bad_annotations(
+) -> ApplyAnnotationsResult:
+    """Apply saved bad-segment annotations if they exist.
+
+    Missing annotations leave the Raw object unchanged.
+    """
+    result = load_bad_annotations(
         config,
         subject=subject,
         session=session,
@@ -200,6 +209,20 @@ def apply_bad_annotations(
         run=run,
     )
 
-    raw.set_annotations(annotations)
+    if result.annotations is None:
+        return ApplyAnnotationsResult(
+            raw=raw,
+            path=result.path,
+            status=result.status,
+            message=result.message,
+        )
 
-    return raw
+    raw.set_annotations(result.annotations)
+
+    return ApplyAnnotationsResult(
+        raw=raw,
+        path=result.path,
+        status="applied",
+        n_annotations=result.n_annotations,
+        n_bad_annotations=result.n_bad_annotations,
+    )

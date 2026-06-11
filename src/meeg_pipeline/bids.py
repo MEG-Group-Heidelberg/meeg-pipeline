@@ -1,11 +1,21 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
+from mne.io import BaseRaw
 from mne_bids import BIDSPath, get_entity_vals, read_raw_bids
 
 from meeg_pipeline.config import PipelineConfig
+
+
+@dataclass(frozen=True)
+class RawBIDSResult:
+    raw: BaseRaw | None
+    path: str
+    status: str
+    message: str = ""
 
 
 def has_dataset_description(bids_root: Path) -> bool:
@@ -25,10 +35,7 @@ def read_participants(bids_root: Path) -> list[str]:
     participants = pd.read_csv(participants_path, sep="\t")
 
     if "participant_id" not in participants.columns:
-        raise ValueError(
-            f"participants.tsv must contain a 'participant_id' column: "
-            f"{participants_path}"
-        )
+        return []
 
     return participants["participant_id"].astype(str).tolist()
 
@@ -37,26 +44,33 @@ def normalize_participant_id(participant_id: str) -> str:
     return participant_id.removeprefix("sub-")
 
 
-def compare_subjects_with_participants(config: PipelineConfig) -> tuple[list[str], list[str]]:
-    """Compare subject folders/entities with participants.tsv entries.
+def normalize_subject_id(subject: str) -> str:
+    return subject.removeprefix("sub-")
 
-    Returns
-    -------
-    subjects_not_in_participants
-        Subjects present as sub-* folders or BIDS entities but missing from participants.tsv.
-    participants_without_subject_folder
-        Participants listed in participants.tsv but missing as detected subjects.
-    """
-    subjects = set(list_bids_entities(config, "subject"))
-    participants = {
-        normalize_participant_id(participant)
-        for participant in read_participants(config.paths.bids_root)
+
+def compare_subjects_with_participants(
+    config: PipelineConfig,
+) -> tuple[list[str], list[str]]:
+    participants = set(read_participants(config.paths.bids_root))
+    subjects = {
+        f"sub-{subject}"
+        for subject in list_bids_entities(config, "subject")
     }
 
-    subjects_not_in_participants = sorted(subjects - participants)
-    participants_without_subject_folder = sorted(participants - subjects)
+    return (
+        sorted(subjects - participants),
+        sorted(participants - subjects),
+    )
 
-    return subjects_not_in_participants, participants_without_subject_folder
+
+def list_bids_entities(config: PipelineConfig, entity: str) -> list[str]:
+    if not config.paths.bids_root.exists():
+        return []
+
+    return sorted(
+        str(value)
+        for value in get_entity_vals(config.paths.bids_root, entity, ignore_sessions=False)
+    )
 
 
 def make_bids_path(
@@ -68,13 +82,12 @@ def make_bids_path(
     run: str | None = None,
     extension: str | None = None,
 ) -> BIDSPath:
-    """Create an MNE-BIDS path for a raw M/EEG recording."""
     return BIDSPath(
         root=config.paths.bids_root,
-        subject=subject.removeprefix("sub-"),
-        session=session or config.bids.session,
-        task=task or config.bids.task,
-        run=run or config.bids.run,
+        subject=normalize_subject_id(subject),
+        session=session,
+        task=task,
+        run=run,
         datatype=config.bids.datatype,
         suffix=config.bids.datatype,
         extension=extension,
@@ -89,45 +102,14 @@ def make_events_path(
     session: str | None = None,
     run: str | None = None,
 ) -> BIDSPath:
-    """Create a BIDSPath for an events.tsv file."""
-    return BIDSPath(
-        root=config.paths.bids_root,
-        subject=subject.removeprefix("sub-"),
-        session=session or config.bids.session,
-        task=task or config.bids.task,
-        run=run or config.bids.run,
-        datatype=config.bids.datatype,
-        suffix="events",
+    return make_bids_path(
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
         extension=".tsv",
-    )
-
-
-def list_bids_entities(config: PipelineConfig, entity: str) -> list[str]:
-    """Return sorted BIDS entity values if they can be found.
-
-    Examples for entity:
-    - "subject"
-    - "session"
-    - "task"
-    - "run"
-    """
-    if not config.paths.bids_root.exists():
-        raise FileNotFoundError(f"BIDS root does not exist: {config.paths.bids_root}")
-
-    values = get_entity_vals(
-        config.paths.bids_root,
-        entity_key=entity,
-    )
-
-    if entity == "subject":
-        folder_subjects = [
-            path.name.removeprefix("sub-")
-            for path in config.paths.bids_root.glob("sub-*")
-            if path.is_dir()
-        ]
-        values = sorted(set(values) | set(folder_subjects))
-
-    return sorted(values)
+    ).update(suffix="events")
 
 
 def read_raw_bids_recording(
@@ -138,22 +120,57 @@ def read_raw_bids_recording(
     session: str | None = None,
     run: str | None = None,
     preload: bool = False,
-):
-    """Read a raw BIDS recording using MNE-BIDS."""
+) -> BaseRaw | None:
+    """Read a raw BIDS recording if it exists.
+
+    Missing recordings are normal in incomplete multi-subject projects and are
+    represented by None instead of raising FileNotFoundError.
+    """
+    result = read_raw_bids_recording_if_exists(
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
+        preload=preload,
+    )
+    return result.raw
+
+
+def read_raw_bids_recording_if_exists(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    task: str | None = None,
+    session: str | None = None,
+    run: str | None = None,
+    preload: bool = False,
+) -> RawBIDSResult:
     bids_path = make_bids_path(
         config,
         subject=subject,
-        task=task,
         session=session,
+        task=task,
         run=run,
         extension=".fif",
     )
 
     if not bids_path.fpath.exists():
-        raise FileNotFoundError(f"Raw BIDS file does not exist: {bids_path.fpath}")
+        return RawBIDSResult(
+            raw=None,
+            path=str(bids_path.fpath),
+            status="missing_input",
+            message="Raw BIDS file does not exist.",
+        )
 
-    return read_raw_bids(
+    raw = read_raw_bids(
         bids_path=bids_path,
         extra_params={"preload": preload},
         verbose="error",
+    )
+
+    return RawBIDSResult(
+        raw=raw,
+        path=str(bids_path.fpath),
+        status="loaded",
     )

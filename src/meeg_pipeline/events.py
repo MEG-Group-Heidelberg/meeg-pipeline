@@ -14,7 +14,7 @@ from mne.io import BaseRaw
 from meeg_pipeline.config import PipelineConfig
 
 
-ExistingOutputPolicy = Literal["error", "skip", "overwrite"]
+ExistingOutputPolicy = Literal["skip", "overwrite"]
 
 
 @dataclass(frozen=True)
@@ -379,16 +379,17 @@ def write_events_tsv(
     *,
     overwrite: bool = False,
 ) -> Path:
-    """Write an events table to TSV."""
-    from meeg_pipeline.io import ensure_output_does_not_exist
+    """Write an events table to TSV.
 
-    ensure_output_does_not_exist(output_path, overwrite=overwrite)
+    Existing outputs are left unchanged when overwrite=False.
+    """
+    if output_path.exists() and not overwrite:
+        return output_path
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     events_table.to_csv(output_path, sep="\t", index=False)
 
     return output_path
-
 
 def write_bids_events_for_recording(
     config: PipelineConfig,
@@ -397,24 +398,16 @@ def write_bids_events_for_recording(
     task: str | None = None,
     session: str | None = None,
     run: str | None = None,
-    on_existing: ExistingOutputPolicy = "error",
+    on_existing: ExistingOutputPolicy = "skip",
 ) -> WriteEventsResult:
-    """Extract events for one recording and write a BIDS-compatible events.tsv.
-
-    Parameters
-    ----------
-    on_existing
-        - "error": raise FileExistsError if events.tsv exists
-        - "skip": return status "skipped_existing" if events.tsv exists
-        - "overwrite": overwrite existing events.tsv
-    """
-    if on_existing not in {"error", "skip", "overwrite"}:
+    """Extract events for one recording and write a BIDS-compatible events.tsv."""
+    if on_existing not in {"skip", "overwrite"}:
         raise ValueError(
             f"Invalid on_existing value: {on_existing!r}. "
-            "Use 'error', 'skip', or 'overwrite'."
+            "Use 'skip' or 'overwrite'."
         )
 
-    from meeg_pipeline.bids import make_events_path, read_raw_bids_recording
+    from meeg_pipeline.bids import make_events_path, read_raw_bids_recording_if_exists
 
     events_path = make_events_path(
         config,
@@ -431,7 +424,7 @@ def write_bids_events_for_recording(
             message="Target already exists.",
         )
 
-    raw = read_raw_bids_recording(
+    raw_result = read_raw_bids_recording_if_exists(
         config,
         subject=subject,
         session=session,
@@ -440,10 +433,17 @@ def write_bids_events_for_recording(
         preload=False,
     )
 
+    if raw_result.raw is None:
+        return WriteEventsResult(
+            output_path=str(events_path.fpath),
+            status="missing_input",
+            message=raw_result.message,
+        )
+
     event_config = binary_event_config_from_pipeline_config(config)
-    events = find_binary_channel_events(raw, event_config)
+    events = find_binary_channel_events(raw_result.raw, event_config)
     summary = summarize_events(events)
-    events_table = events_to_dataframe(events, raw)
+    events_table = events_to_dataframe(events, raw_result.raw)
 
     output_path = write_events_tsv(
         events_table,
@@ -458,12 +458,11 @@ def write_bids_events_for_recording(
         unique_ids=summary.unique_ids,
     )
 
-
 def write_bids_events_for_recordings(
     config: PipelineConfig,
     recordings: list[dict[str, str | None]],
     *,
-    on_existing: ExistingOutputPolicy = "error",
+    on_existing: ExistingOutputPolicy = "skip",
 ) -> list[WriteEventsResult]:
     """Write BIDS events.tsv files for multiple selected recordings."""
     return [

@@ -4,20 +4,28 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+import mne
 from mne.io import BaseRaw
 
-from meeg_pipeline.bids import read_raw_bids_recording
+from meeg_pipeline.bids import read_raw_bids_recording_if_exists
 from meeg_pipeline.config import PipelineConfig
-from meeg_pipeline.io import ensure_output_does_not_exist
 from meeg_pipeline.qc import apply_bad_channels
 
 
-ExistingOutputPolicy = Literal["error", "skip", "overwrite"]
+ExistingOutputPolicy = Literal["skip", "overwrite"]
 
 
 @dataclass(frozen=True)
 class PreprocessingResult:
     output_path: str
+    status: str
+    message: str = ""
+
+
+@dataclass(frozen=True)
+class LoadRawResult:
+    raw: BaseRaw | None
+    path: str
     status: str
     message: str = ""
 
@@ -59,6 +67,45 @@ def make_filtered_raw_path(
     return directory / basename
 
 
+def load_filtered_raw(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    task: str | None = None,
+    session: str | None = None,
+    run: str | None = None,
+    preload: bool = False,
+) -> LoadRawResult:
+    """Load a filtered raw derivative if it exists."""
+    path = make_filtered_raw_path(
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
+    )
+
+    if not path.exists():
+        return LoadRawResult(
+            raw=None,
+            path=str(path),
+            status="missing_input",
+            message="Filtered raw derivative does not exist.",
+        )
+
+    raw = mne.io.read_raw_fif(
+        path,
+        preload=preload,
+        verbose="error",
+    )
+
+    return LoadRawResult(
+        raw=raw,
+        path=str(path),
+        status="loaded",
+    )
+
+
 def filter_raw(
     raw: BaseRaw,
     config: PipelineConfig,
@@ -92,13 +139,13 @@ def write_filtered_raw_for_recording(
     task: str | None = None,
     session: str | None = None,
     run: str | None = None,
-    on_existing: ExistingOutputPolicy = "error",
+    on_existing: ExistingOutputPolicy = "skip",
 ) -> PreprocessingResult:
     """Load raw BIDS, apply bad channels, filter, and write derivative."""
-    if on_existing not in {"error", "skip", "overwrite"}:
+    if on_existing not in {"skip", "overwrite"}:
         raise ValueError(
             f"Invalid on_existing value: {on_existing!r}. "
-            "Use 'error', 'skip', or 'overwrite'."
+            "Use 'skip' or 'overwrite'."
         )
 
     output_path = make_filtered_raw_path(
@@ -116,12 +163,7 @@ def write_filtered_raw_for_recording(
             message="Target already exists.",
         )
 
-    ensure_output_does_not_exist(
-        output_path,
-        overwrite=on_existing == "overwrite",
-    )
-
-    raw = read_raw_bids_recording(
+    raw_result = read_raw_bids_recording_if_exists(
         config,
         subject=subject,
         session=session,
@@ -130,8 +172,15 @@ def write_filtered_raw_for_recording(
         preload=False,
     )
 
+    if raw_result.raw is None:
+        return PreprocessingResult(
+            output_path=str(output_path),
+            status="missing_input",
+            message=raw_result.message,
+        )
+
     apply_bad_channels(
-        raw,
+        raw_result.raw,
         config,
         subject=subject,
         session=session,
@@ -139,7 +188,7 @@ def write_filtered_raw_for_recording(
         run=run,
     )
 
-    filtered = filter_raw(raw, config)
+    filtered = filter_raw(raw_result.raw, config)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     filtered.save(output_path, overwrite=on_existing == "overwrite")
@@ -154,7 +203,7 @@ def write_filtered_raw_for_recordings(
     config: PipelineConfig,
     recordings: list[dict[str, str | None]],
     *,
-    on_existing: ExistingOutputPolicy = "error",
+    on_existing: ExistingOutputPolicy = "skip",
 ) -> list[PreprocessingResult]:
     """Write filtered raw derivatives for multiple recordings."""
     return [
@@ -168,3 +217,7 @@ def write_filtered_raw_for_recordings(
         )
         for recording in recordings
     ]
+
+
+# Backward-compatible alias.
+load_filtered_raw_if_exists = load_filtered_raw

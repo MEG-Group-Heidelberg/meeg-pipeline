@@ -11,7 +11,7 @@ from meeg_pipeline.bids import (
     make_bids_path,
     make_events_path,
     read_participants,
-    read_raw_bids_recording,
+    read_raw_bids_recording_if_exists,
 )
 from meeg_pipeline.sourcedata import discover_source_recordings, make_target_bids_path
 from meeg_pipeline.conversion import convert_source_recordings_to_bids
@@ -19,11 +19,10 @@ from meeg_pipeline.channels import print_channel_summary, summarize_channels
 from meeg_pipeline.events import (
     BinaryChannelEventConfig,
     binary_event_config_from_pipeline_config,
-    events_to_dataframe,
     find_binary_channel_events,
     print_event_summary,
     summarize_events,
-    write_events_tsv,
+    write_bids_events_for_recording,
 )
 from meeg_pipeline.config import load_config
 
@@ -287,7 +286,7 @@ def main() -> None:
         results = convert_source_recordings_to_bids(
             config,
             recordings,
-            on_existing="overwrite" if args.overwrite else "error",
+            on_existing="overwrite" if args.overwrite else "skip",
         )
 
         for result in results:
@@ -301,7 +300,7 @@ def main() -> None:
     elif args.command == "raw-info":
         config = load_config(args.config)
 
-        raw = read_raw_bids_recording(
+        raw_result = read_raw_bids_recording_if_exists(
             config,
             subject=args.subject,
             task=args.task,
@@ -310,6 +309,13 @@ def main() -> None:
             preload=args.preload,
         )
 
+        if raw_result.raw is None:
+            print(f"Status: {raw_result.status}")
+            print(f"Message: {raw_result.message}")
+            print(f"Path: {raw_result.path}")
+            return
+
+        raw = raw_result.raw
         duration = raw.times[-1] if len(raw.times) > 0 else 0.0
 
         print(raw)
@@ -322,7 +328,7 @@ def main() -> None:
     elif args.command == "channels-info":
         config = load_config(args.config)
 
-        raw = read_raw_bids_recording(
+        raw_result = read_raw_bids_recording_if_exists(
             config,
             subject=args.subject,
             task=args.task,
@@ -331,13 +337,19 @@ def main() -> None:
             preload=False,
         )
 
-        summary = summarize_channels(raw)
+        if raw_result.raw is None:
+            print(f"Status: {raw_result.status}")
+            print(f"Message: {raw_result.message}")
+            print(f"Path: {raw_result.path}")
+            return
+
+        summary = summarize_channels(raw_result.raw)
         print_channel_summary(summary)
 
     elif args.command == "events-info":
         config = load_config(args.config)
 
-        raw = read_raw_bids_recording(
+        raw_result = read_raw_bids_recording_if_exists(
             config,
             subject=args.subject,
             task=args.task,
@@ -345,6 +357,14 @@ def main() -> None:
             run=args.run,
             preload=False,
         )
+
+        if raw_result.raw is None:
+            print(f"Status: {raw_result.status}")
+            print(f"Message: {raw_result.message}")
+            print(f"Path: {raw_result.path}")
+            return
+
+        raw = raw_result.raw
 
         event_config = binary_event_config_from_pipeline_config(config)
 
@@ -385,37 +405,23 @@ def main() -> None:
     elif args.command == "write-events":
         config = load_config(args.config)
 
-        raw = read_raw_bids_recording(
+        result = write_bids_events_for_recording(
             config,
             subject=args.subject,
             task=args.task,
             session=args.session,
             run=args.run,
-            preload=False,
+            on_existing="overwrite" if args.overwrite else "skip",
         )
 
-        event_config = binary_event_config_from_pipeline_config(config)
-        events = find_binary_channel_events(raw, event_config)
-        summary = summarize_events(events)
-
-        events_table = events_to_dataframe(events, raw)
-
-        events_path = make_events_path(
-            config,
-            subject=args.subject,
-            task=args.task,
-            session=args.session,
-            run=args.run,
-        )
-
-        output_path = write_events_tsv(
-            events_table,
-            events_path.fpath,
-            overwrite=args.overwrite,
-        )
-
-        print_event_summary(summary)
-        print(f"Wrote events: {output_path}")
+        print(f"Status: {result.status}")
+        if result.message:
+            print(f"Message: {result.message}")
+        if result.n_events is not None:
+            print(f"Events: {result.n_events}")
+        if result.unique_ids is not None:
+            print(f"Unique IDs: {result.unique_ids}")
+        print(f"Output: {result.output_path}")
 
     else:
         parser.print_help()

@@ -11,7 +11,9 @@ from mne.io import BaseRaw
 from mne.preprocessing import find_bad_channels_maxwell
 
 from meeg_pipeline.config import PipelineConfig
-from meeg_pipeline.io import ensure_output_does_not_exist
+
+
+ExistingBadChannelsPolicy = Literal["load", "overwrite"]
 
 
 @dataclass(frozen=True)
@@ -23,43 +25,35 @@ class BadChannelCandidates:
     @property
     def combined(self) -> list[str]:
         return sorted(
-            {
-                str(channel)
-                for channel in self.noisy + self.flat + self.existing_bads
-            }
+            str(channel)
+            for channel in set(self.noisy + self.flat + self.existing_bads)
         )
 
 
 @dataclass(frozen=True)
-class BadChannelCandidateResult:
-    subject: str
-    session: str | None
-    task: str | None
-    run: str | None
-    noisy: list[str]
-    flat: list[str]
-    existing_bads: list[str]
-    combined: list[str]
-    method: str
-
-
-@dataclass(frozen=True)
-class BadChannels:
+class BadChannelsResult:
     bads: list[str]
-    method: str
-    notes: str
-
-
-ExistingBadChannelsPolicy = Literal["error", "load", "overwrite"]
+    path: str
+    status: str
+    method: str = ""
+    notes: str = ""
+    message: str = ""
 
 
 @dataclass(frozen=True)
-class SaveBadChannelsResult:
+class ApplyBadChannelsResult:
+    raw: BaseRaw
     path: str
     status: str
     bads: list[str]
-    method: str
-    notes: str
+    message: str = ""
+
+
+@dataclass(frozen=True)
+class ChannelsTSVResult:
+    path: str
+    status: str
+    n_bad_channels: int = 0
     message: str = ""
 
 
@@ -108,283 +102,6 @@ def make_bad_channels_path(
     return directory / basename
 
 
-def detect_bad_channel_candidates_maxwell(
-    raw: BaseRaw,
-    *,
-    n_jobs: int = 1,
-    coord_frame: str | None = None,
-    **kwargs,
-) -> BadChannelCandidates:
-    """Detect bad-channel candidates using MNE Maxwell-based heuristics.
-
-    This function returns candidates only. It does not modify the raw object
-    and does not save any final bad-channel decision.
-
-    Extra keyword arguments are passed to mne.preprocessing.find_bad_channels_maxwell.
-    """
-    if coord_frame is None:
-        coord_frame = "meg" if raw.info["dev_head_t"] is None else "head"
-
-    os.environ["OMP_NUM_THREADS"] = str(n_jobs)
-
-    noisy_chs, flat_chs = find_bad_channels_maxwell(
-        raw,
-        coord_frame=coord_frame,
-        **kwargs,
-    )
-
-    return BadChannelCandidates(
-        noisy=[str(channel) for channel in noisy_chs],
-        flat=[str(channel) for channel in flat_chs],
-        existing_bads=[str(channel) for channel in raw.info["bads"]],
-    )
-
-
-def bad_channel_candidates_to_dataframe(
-    candidates: BadChannelCandidates,
-) -> pd.DataFrame:
-    """Convert bad-channel candidates to a notebook-friendly table."""
-    rows = []
-
-    for kind, channels in [
-        ("noisy", candidates.noisy),
-        ("flat", candidates.flat),
-        ("existing", candidates.existing_bads),
-    ]:
-        for channel in channels:
-            rows.append(
-                {
-                    "candidate_type": kind,
-                    "channel": channel,
-                }
-            )
-
-    if not rows:
-        return pd.DataFrame(columns=["candidate_type", "channel"])
-
-    return pd.DataFrame(rows)
-
-
-def bad_channel_candidates_summary_to_dataframe(
-    candidates: BadChannelCandidates,
-) -> pd.DataFrame:
-    """Summarize automatic bad-channel candidates."""
-    return pd.DataFrame(
-        [
-            {
-                "n_noisy": len(candidates.noisy),
-                "n_flat": len(candidates.flat),
-                "n_existing": len(candidates.existing_bads),
-                "n_combined": len(candidates.combined),
-                "combined": ", ".join(candidates.combined),
-            }
-        ]
-    )
-
-
-def save_bad_channels(
-    config: PipelineConfig,
-    *,
-    subject: str,
-    bads: list[str],
-    task: str | None = None,
-    session: str | None = None,
-    run: str | None = None,
-    method: str = "manual_mne_gui_with_maxwell_candidates",
-    notes: str = (
-        "Automatic Maxwell bad-channel candidates were pre-marked and manually "
-        "reviewed with raw.plot(block=True)."
-    ),
-    overwrite: bool = False,
-) -> Path:
-    """Save manually marked bad channels as a JSON derivative."""
-    output_path = make_bad_channels_path(
-        config,
-        subject=subject,
-        session=session,
-        task=task,
-        run=run,
-    )
-
-    ensure_output_does_not_exist(output_path, overwrite=overwrite)
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    payload = {
-        "subject": subject.removeprefix("sub-"),
-        "session": session,
-        "task": task,
-        "run": run,
-        "bads": [str(channel) for channel in bads],
-        "method": method,
-        "notes": notes,
-    }
-
-    output_path.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-
-    return output_path
-
-
-def load_bad_channels(
-    config: PipelineConfig,
-    *,
-    subject: str,
-    task: str | None = None,
-    session: str | None = None,
-    run: str | None = None,
-) -> BadChannels:
-    """Load manually marked bad channels from a JSON derivative."""
-    path = make_bad_channels_path(
-        config,
-        subject=subject,
-        session=session,
-        task=task,
-        run=run,
-    )
-
-    if not path.exists():
-        raise FileNotFoundError(f"Bad-channel file does not exist: {path}")
-
-    payload = json.loads(path.read_text(encoding="utf-8"))
-
-    return BadChannels(
-        bads=[str(channel) for channel in payload.get("bads", [])],
-        method=str(payload.get("method", "")),
-        notes=str(payload.get("notes", "")),
-    )
-
-
-def save_or_load_bad_channels(
-    config: PipelineConfig,
-    *,
-    subject: str,
-    bads: list[str],
-    task: str | None = None,
-    session: str | None = None,
-    run: str | None = None,
-    method: str = "manual_mne_gui_with_maxwell_candidates",
-    notes: str = (
-        "Automatic Maxwell bad-channel candidates were pre-marked and manually "
-        "reviewed with raw.plot(block=True)."
-    ),
-    on_existing: ExistingBadChannelsPolicy = "error",
-    update_channels_tsv: bool = True,
-) -> SaveBadChannelsResult:
-    """Save bad channels, or load an existing bad-channel decision.
-
-    Parameters
-    ----------
-    on_existing
-        What to do if the bad-channel JSON already exists.
-
-        - "error": raise FileExistsError
-        - "load": load and return the existing decision
-        - "overwrite": replace the existing decision
-    """
-    if on_existing not in {"error", "load", "overwrite"}:
-        raise ValueError(
-            f"Invalid on_existing value: {on_existing!r}. "
-            "Use 'error', 'load', or 'overwrite'."
-        )
-
-    path = make_bad_channels_path(
-        config,
-        subject=subject,
-        session=session,
-        task=task,
-        run=run,
-    )
-
-    if path.exists() and on_existing == "load":
-        existing = load_bad_channels(
-            config,
-            subject=subject,
-            session=session,
-            task=task,
-            run=run,
-        )
-
-        if update_channels_tsv:
-            update_channels_tsv_with_bads(
-                config,
-                subject=subject,
-                session=session,
-                task=task,
-                run=run,
-                bads=existing.bads,
-                status_description=_format_status_description(
-                    existing.method, 
-                    existing.notes
-                ),
-            )
-
-        return SaveBadChannelsResult(
-            path=str(path),
-            status="loaded_existing",
-            bads=existing.bads,
-            method=existing.method,
-            notes=existing.notes,
-            message="Bad-channel file already exists; loaded existing decision.",
-        )
-
-    output_path = save_bad_channels(
-        config,
-        subject=subject,
-        session=session,
-        task=task,
-        run=run,
-        bads=bads,
-        method=method,
-        notes=notes,
-        overwrite=on_existing == "overwrite",
-    )
-
-    if update_channels_tsv:
-        update_channels_tsv_with_bads(
-            config,
-            subject=subject,
-            session=session,
-            task=task,
-            run=run,
-            bads=bads,
-            status_description=_format_status_description(method, notes),
-        )
-
-    return SaveBadChannelsResult(
-        path=str(output_path),
-        status="saved",
-        bads=[str(channel) for channel in bads],
-        method=method,
-        notes=notes,
-    )
-
-
-def apply_bad_channels(
-    raw: BaseRaw,
-    config: PipelineConfig,
-    *,
-    subject: str,
-    task: str | None = None,
-    session: str | None = None,
-    run: str | None = None,
-) -> BaseRaw:
-    """Apply saved bad-channel markings to a Raw object in-place."""
-    bad_channels = load_bad_channels(
-        config,
-        subject=subject,
-        session=session,
-        task=task,
-        run=run,
-    )
-
-    raw.info["bads"] = bad_channels.bads
-
-    return raw
-
-
 def make_channels_tsv_path(
     config: PipelineConfig,
     *,
@@ -422,6 +139,245 @@ def make_channels_tsv_path(
     return directory / basename
 
 
+def detect_bad_channel_candidates_maxwell(
+    raw: BaseRaw,
+    *,
+    n_jobs: int = 1,
+    coord_frame: str | None = None,
+    **kwargs,
+) -> BadChannelCandidates:
+    """Detect bad-channel candidates using MNE Maxwell-based heuristics."""
+    if coord_frame is None:
+        coord_frame = "meg" if raw.info["dev_head_t"] is None else "head"
+
+    os.environ["OMP_NUM_THREADS"] = str(n_jobs)
+
+    noisy_chs, flat_chs = find_bad_channels_maxwell(
+        raw,
+        coord_frame=coord_frame,
+        **kwargs,
+    )
+
+    return BadChannelCandidates(
+        noisy=[str(channel) for channel in noisy_chs],
+        flat=[str(channel) for channel in flat_chs],
+        existing_bads=[str(channel) for channel in raw.info["bads"]],
+    )
+
+
+def bad_channel_candidates_to_dataframe(
+    candidates: BadChannelCandidates,
+) -> pd.DataFrame:
+    """Convert bad-channel candidates to a notebook-friendly table."""
+    rows = []
+
+    for kind, channels in [
+        ("noisy", candidates.noisy),
+        ("flat", candidates.flat),
+        ("existing", candidates.existing_bads),
+    ]:
+        for channel in channels:
+            rows.append(
+                {
+                    "candidate_type": kind,
+                    "channel": channel,
+                }
+            )
+
+    return pd.DataFrame(rows, columns=["candidate_type", "channel"])
+
+
+def bad_channel_candidates_summary_to_dataframe(
+    candidates: BadChannelCandidates,
+) -> pd.DataFrame:
+    """Summarize automatic bad-channel candidates."""
+    return pd.DataFrame(
+        [
+            {
+                "n_noisy": len(candidates.noisy),
+                "n_flat": len(candidates.flat),
+                "n_existing": len(candidates.existing_bads),
+                "n_combined": len(candidates.combined),
+                "combined": ", ".join(candidates.combined),
+            }
+        ]
+    )
+
+
+def load_bad_channels(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    task: str | None = None,
+    session: str | None = None,
+    run: str | None = None,
+) -> BadChannelsResult:
+    """Load manually marked bad channels if they exist."""
+    path = make_bad_channels_path(
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
+    )
+
+    if not path.exists():
+        return BadChannelsResult(
+            bads=[],
+            path=str(path),
+            status="missing_input",
+            message="Bad-channel file does not exist.",
+        )
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+
+    return BadChannelsResult(
+        bads=[str(channel) for channel in payload.get("bads", [])],
+        path=str(path),
+        status="loaded",
+        method=str(payload.get("method", "")),
+        notes=str(payload.get("notes", "")),
+    )
+
+
+def save_or_load_bad_channels(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    bads: list[str],
+    task: str | None = None,
+    session: str | None = None,
+    run: str | None = None,
+    method: str = "manual_mne_gui_with_maxwell_candidates",
+    notes: str = (
+        "Automatic Maxwell bad-channel candidates were pre-marked and manually "
+        "reviewed with raw.plot(block=True)."
+    ),
+    on_existing: ExistingBadChannelsPolicy = "load",
+    update_channels_tsv: bool = True,
+) -> BadChannelsResult:
+    """Save bad channels, or load an existing bad-channel decision."""
+    if on_existing not in {"load", "overwrite"}:
+        raise ValueError(
+            f"Invalid on_existing value: {on_existing!r}. "
+            "Use 'load' or 'overwrite'."
+        )
+
+    path = make_bad_channels_path(
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
+    )
+
+    if path.exists() and on_existing == "load":
+        existing = load_bad_channels(
+            config,
+            subject=subject,
+            session=session,
+            task=task,
+            run=run,
+        )
+
+        if update_channels_tsv:
+            update_channels_tsv_with_bads(
+                config,
+                subject=subject,
+                session=session,
+                task=task,
+                run=run,
+                bads=existing.bads,
+                status_description=_format_status_description(
+                    existing.method,
+                    existing.notes,
+                ),
+            )
+
+        return BadChannelsResult(
+            bads=existing.bads,
+            path=str(path),
+            status="loaded_existing",
+            method=existing.method,
+            notes=existing.notes,
+            message="Bad-channel file already exists; loaded existing decision.",
+        )
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    normalized_bads = [str(channel) for channel in bads]
+    payload = {
+        "subject": subject.removeprefix("sub-"),
+        "session": session,
+        "task": task,
+        "run": run,
+        "bads": normalized_bads,
+        "method": method,
+        "notes": notes,
+    }
+
+    path.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    if update_channels_tsv:
+        update_channels_tsv_with_bads(
+            config,
+            subject=subject,
+            session=session,
+            task=task,
+            run=run,
+            bads=normalized_bads,
+            status_description=_format_status_description(method, notes),
+        )
+
+    return BadChannelsResult(
+        bads=normalized_bads,
+        path=str(path),
+        status="written",
+        method=method,
+        notes=notes,
+    )
+
+
+def apply_bad_channels(
+    raw: BaseRaw,
+    config: PipelineConfig,
+    *,
+    subject: str,
+    task: str | None = None,
+    session: str | None = None,
+    run: str | None = None,
+) -> ApplyBadChannelsResult:
+    """Apply saved bad-channel markings if they exist."""
+    bad_channels = load_bad_channels(
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
+    )
+
+    if bad_channels.status == "missing_input":
+        return ApplyBadChannelsResult(
+            raw=raw,
+            path=bad_channels.path,
+            status="missing_input",
+            bads=[],
+            message=bad_channels.message,
+        )
+
+    raw.info["bads"] = bad_channels.bads
+
+    return ApplyBadChannelsResult(
+        raw=raw,
+        path=bad_channels.path,
+        status="applied",
+        bads=bad_channels.bads,
+    )
+
+
 def update_channels_tsv_with_bads(
     config: PipelineConfig,
     *,
@@ -431,11 +387,8 @@ def update_channels_tsv_with_bads(
     session: str | None = None,
     run: str | None = None,
     status_description: str = "Marked as bad during manual MNE GUI inspection.",
-) -> Path:
-    """Update the raw BIDS channels.tsv file with bad-channel markings.
-
-    This modifies only the BIDS sidecar metadata file, not the raw FIF file.
-    """
+) -> ChannelsTSVResult:
+    """Update the raw BIDS channels.tsv file with bad-channel markings."""
     channels_path = make_channels_tsv_path(
         config,
         subject=subject,
@@ -445,7 +398,11 @@ def update_channels_tsv_with_bads(
     )
 
     if not channels_path.exists():
-        raise FileNotFoundError(f"channels.tsv file does not exist: {channels_path}")
+        return ChannelsTSVResult(
+            path=str(channels_path),
+            status="missing_input",
+            message="channels.tsv file does not exist.",
+        )
 
     channels = pd.read_csv(channels_path, sep="\t")
 
@@ -459,21 +416,28 @@ def update_channels_tsv_with_bads(
         channels["status_description"] = ""
 
     bads = [str(channel) for channel in bads]
-
+    known_bads = sorted(set(bads).intersection(set(channels["name"])))
     unknown_bads = sorted(set(bads) - set(channels["name"]))
-    if unknown_bads:
-        raise ValueError(
-            "Some bad channels were not found in channels.tsv: "
-            f"{unknown_bads}"
-        )
 
     channels["status"] = "good"
     channels["status_description"] = ""
 
-    is_bad = channels["name"].isin(bads)
+    is_bad = channels["name"].isin(known_bads)
     channels.loc[is_bad, "status"] = "bad"
     channels.loc[is_bad, "status_description"] = status_description
 
     channels.to_csv(channels_path, sep="\t", index=False)
 
-    return channels_path
+    message = ""
+    status = "updated"
+
+    if unknown_bads:
+        status = "updated_with_unknown_channels"
+        message = f"Some bad channels were not found in channels.tsv: {unknown_bads}"
+
+    return ChannelsTSVResult(
+        path=str(channels_path),
+        status=status,
+        n_bad_channels=len(known_bads),
+        message=message,
+    )

@@ -405,6 +405,7 @@ project:
 
 paths:
   bids_root: "."
+  sourcedata_root: "./sourcedata"
   derivatives_root: "./derivatives/meeg-pipeline"
 
 bids:

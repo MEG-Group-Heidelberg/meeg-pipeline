@@ -10,6 +10,7 @@ import yaml
 @dataclass(frozen=True)
 class ProjectPaths:
     bids_root: Path
+    sourcedata_root: Path
     derivatives_root: Path
 
 
@@ -97,10 +98,16 @@ def load_config(config_path: str | Path) -> PipelineConfig:
     with config_path.open("r", encoding="utf-8") as f:
         raw: dict[str, Any] = yaml.safe_load(f)
 
+    paths_raw = raw["paths"]
+
     paths = ProjectPaths(
-        bids_root=_resolve_path(raw["paths"]["bids_root"], base_dir=project_root),
+        bids_root=_resolve_path(paths_raw["bids_root"], base_dir=project_root),
         derivatives_root=_resolve_path(
-            raw["paths"]["derivatives_root"],
+            paths_raw["derivatives_root"],
+            base_dir=project_root,
+        ),
+        sourcedata_root=_resolve_path(
+            paths_raw.get("sourcedata_root", "./sourcedata"),
             base_dir=project_root,
         ),
     )

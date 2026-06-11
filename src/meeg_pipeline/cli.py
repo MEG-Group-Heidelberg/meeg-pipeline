@@ -203,6 +203,7 @@ def main() -> None:
 
         print(f"Project: {config.project_name}")
         print(f"BIDS root: {config.paths.bids_root}")
+        print(f"Sourcedata root: {config.paths.sourcedata_root}")
         print(f"Derivatives root: {config.paths.derivatives_root}")
         print(f"Datatype: {config.bids.datatype}")
         print(f"Task: {config.bids.task}")

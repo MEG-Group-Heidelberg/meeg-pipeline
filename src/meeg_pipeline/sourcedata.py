@@ -64,7 +64,7 @@ def discover_source_recordings(config: PipelineConfig) -> list[SourceRecording]:
 def discover_source_recordings_with_issues(
     config: PipelineConfig,
 ) -> tuple[list[SourceRecording], list[SourceDiscoveryIssue]]:
-    sourcedata_root = config.paths.bids_root / "sourcedata"
+    sourcedata_root = config.paths.sourcedata_root
 
     if not sourcedata_root.exists():
         return [], [

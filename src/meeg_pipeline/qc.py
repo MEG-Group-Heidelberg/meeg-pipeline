@@ -1,17 +1,17 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 import pandas as pd
-import os
 from mne.io import BaseRaw
+from mne.preprocessing import find_bad_channels_maxwell
 
 from meeg_pipeline.config import PipelineConfig
 from meeg_pipeline.io import ensure_output_does_not_exist
-from mne.preprocessing import find_bad_channels_maxwell
 
 
 @dataclass(frozen=True)
@@ -190,8 +190,11 @@ def save_bad_channels(
     task: str | None = None,
     session: str | None = None,
     run: str | None = None,
-    method: str = "manual_mne_gui",
-    notes: str = "",
+    method: str = "manual_mne_gui_with_maxwell_candidates",
+    notes: str = (
+        "Automatic Maxwell bad-channel candidates were pre-marked and manually "
+        "reviewed with raw.plot(block=True)."
+    ),
     overwrite: bool = False,
 ) -> Path:
     """Save manually marked bad channels as a JSON derivative."""
@@ -248,7 +251,7 @@ def load_bad_channels(
     payload = json.loads(path.read_text(encoding="utf-8"))
 
     return BadChannels(
-        bads=list(payload.get("bads", [])),
+        bads=[str(channel) for channel in payload.get("bads", [])],
         method=str(payload.get("method", "")),
         notes=str(payload.get("notes", "")),
     )
@@ -262,8 +265,11 @@ def save_or_load_bad_channels(
     task: str | None = None,
     session: str | None = None,
     run: str | None = None,
-    method: str = "manual_mne_gui",
-    notes: str = "",
+    method: str = "manual_mne_gui_with_maxwell_candidates",
+    notes: str = (
+        "Automatic Maxwell bad-channel candidates were pre-marked and manually "
+        "reviewed with raw.plot(block=True)."
+    ),
     on_existing: ExistingBadChannelsPolicy = "error",
     update_channels_tsv: bool = True,
 ) -> SaveBadChannelsResult:
@@ -309,7 +315,10 @@ def save_or_load_bad_channels(
                 task=task,
                 run=run,
                 bads=existing.bads,
-                status_description=_format_status_description(existing.method, existing.notes),
+                status_description=_format_status_description(
+                    existing.method, 
+                    existing.notes
+                ),
             )
 
         return SaveBadChannelsResult(
@@ -347,7 +356,7 @@ def save_or_load_bad_channels(
     return SaveBadChannelsResult(
         path=str(output_path),
         status="saved",
-        bads=list(bads),
+        bads=[str(channel) for channel in bads],
         method=method,
         notes=notes,
     )

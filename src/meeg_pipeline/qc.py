@@ -6,10 +6,36 @@ from pathlib import Path
 from typing import Literal
 
 import pandas as pd
+import os
 from mne.io import BaseRaw
 
 from meeg_pipeline.config import PipelineConfig
 from meeg_pipeline.io import ensure_output_does_not_exist
+from mne.preprocessing import find_bad_channels_maxwell
+
+
+@dataclass(frozen=True)
+class BadChannelCandidates:
+    noisy: list[str]
+    flat: list[str]
+    existing_bads: list[str]
+
+    @property
+    def combined(self) -> list[str]:
+        return sorted(set(self.noisy + self.flat + self.existing_bads))
+
+
+@dataclass(frozen=True)
+class BadChannelCandidateResult:
+    subject: str
+    session: str | None
+    task: str | None
+    run: str | None
+    noisy: list[str]
+    flat: list[str]
+    existing_bads: list[str]
+    combined: list[str]
+    method: str
 
 
 @dataclass(frozen=True)
@@ -75,6 +101,80 @@ def make_bad_channels_path(
         )
 
     return directory / basename
+
+
+def detect_bad_channel_candidates_maxwell(
+    raw: BaseRaw,
+    *,
+    n_jobs: int = 1,
+    coord_frame: str | None = None,
+    **kwargs,
+) -> BadChannelCandidates:
+    """Detect bad-channel candidates using MNE Maxwell-based heuristics.
+
+    This function returns candidates only. It does not modify the raw object
+    and does not save any final bad-channel decision.
+
+    Extra keyword arguments are passed to mne.preprocessing.find_bad_channels_maxwell.
+    """
+    if coord_frame is None:
+        coord_frame = "meg" if raw.info["dev_head_t"] is None else "head"
+
+    os.environ["OMP_NUM_THREADS"] = str(n_jobs)
+
+    noisy_chs, flat_chs = find_bad_channels_maxwell(
+        raw,
+        coord_frame=coord_frame,
+        **kwargs,
+    )
+
+    return BadChannelCandidates(
+        noisy=list(noisy_chs),
+        flat=list(flat_chs),
+        existing_bads=list(raw.info["bads"]),
+    )
+
+
+def bad_channel_candidates_to_dataframe(
+    candidates: BadChannelCandidates,
+) -> pd.DataFrame:
+    """Convert bad-channel candidates to a notebook-friendly table."""
+    rows = []
+
+    for kind, channels in [
+        ("noisy", candidates.noisy),
+        ("flat", candidates.flat),
+        ("existing", candidates.existing_bads),
+    ]:
+        for channel in channels:
+            rows.append(
+                {
+                    "candidate_type": kind,
+                    "channel": channel,
+                }
+            )
+
+    if not rows:
+        return pd.DataFrame(columns=["candidate_type", "channel"])
+
+    return pd.DataFrame(rows)
+
+
+def bad_channel_candidates_summary_to_dataframe(
+    candidates: BadChannelCandidates,
+) -> pd.DataFrame:
+    """Summarize automatic bad-channel candidates."""
+    return pd.DataFrame(
+        [
+            {
+                "n_noisy": len(candidates.noisy),
+                "n_flat": len(candidates.flat),
+                "n_existing": len(candidates.existing_bads),
+                "n_combined": len(candidates.combined),
+                "combined": ", ".join(candidates.combined),
+            }
+        ]
+    )
 
 
 def save_bad_channels(

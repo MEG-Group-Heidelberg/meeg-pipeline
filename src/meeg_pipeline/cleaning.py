@@ -252,12 +252,22 @@ def fit_ica(
     random_state: int = 97,
     max_iter: int | str = "auto",
     reject_by_annotation: bool = True,
+    fit_resample_sfreq: float | None = 250.0,
 ) -> ICA:
     """Fit ICA on a Raw object.
 
     The Raw object should already contain bad channels and bad-segment
     annotations.
+
+    ICA is fitted on a resampled copy by default to keep fitting time manageable.
+    The fitted ICA can still be applied to the original filtered data as long as
+    channel names, bad channels, and picks are consistent.
     """
+    if fit_resample_sfreq is None:
+        raw_for_fit = raw
+    else:
+        raw_for_fit = raw.copy().resample(fit_resample_sfreq)
+
     ica = ICA(
         n_components=n_components,
         method=method,
@@ -266,7 +276,7 @@ def fit_ica(
     )
 
     picks = mne.pick_types(
-        raw.info,
+        raw_for_fit.info,
         meg=True,
         eeg=True,
         eog=False,
@@ -276,7 +286,7 @@ def fit_ica(
     )
 
     ica.fit(
-        raw,
+        raw_for_fit,
         picks=picks,
         reject_by_annotation=reject_by_annotation,
     )
@@ -296,6 +306,7 @@ def fit_ica_for_recording(
     method: str = "fastica",
     random_state: int = 97,
     max_iter: int | str = "auto",
+    fit_resample_sfreq: float | None = 250.0,
 ) -> ICAFitResult:
     """Fit and save ICA for one recording."""
     if on_existing not in {"skip", "overwrite"}:
@@ -341,6 +352,7 @@ def fit_ica_for_recording(
         method=method,
         random_state=random_state,
         max_iter=max_iter,
+        fit_resample_sfreq=fit_resample_sfreq,
     )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -361,6 +373,7 @@ def fit_ica_for_recordings(
     method: str = "fastica",
     random_state: int = 97,
     max_iter: int | str = "auto",
+    fit_resample_sfreq: float | None = 250.0,
 ) -> list[ICAFitResult]:
     """Fit and save ICA for multiple recordings."""
     return [
@@ -375,6 +388,7 @@ def fit_ica_for_recordings(
             method=method,
             random_state=random_state,
             max_iter=max_iter,
+            fit_resample_sfreq=fit_resample_sfreq,
         )
         for recording in recordings
     ]

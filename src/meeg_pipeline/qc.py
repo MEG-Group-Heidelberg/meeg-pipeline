@@ -22,7 +22,12 @@ class BadChannelCandidates:
 
     @property
     def combined(self) -> list[str]:
-        return sorted(set(self.noisy + self.flat + self.existing_bads))
+        return sorted(
+            {
+                str(channel)
+                for channel in self.noisy + self.flat + self.existing_bads
+            }
+        )
 
 
 @dataclass(frozen=True)
@@ -129,9 +134,9 @@ def detect_bad_channel_candidates_maxwell(
     )
 
     return BadChannelCandidates(
-        noisy=list(noisy_chs),
-        flat=list(flat_chs),
-        existing_bads=list(raw.info["bads"]),
+        noisy=[str(channel) for channel in noisy_chs],
+        flat=[str(channel) for channel in flat_chs],
+        existing_bads=[str(channel) for channel in raw.info["bads"]],
     )
 
 
@@ -207,7 +212,7 @@ def save_bad_channels(
         "session": session,
         "task": task,
         "run": run,
-        "bads": list(bads),
+        "bads": [str(channel) for channel in bads],
         "method": method,
         "notes": notes,
     }
@@ -444,7 +449,7 @@ def update_channels_tsv_with_bads(
     if "status_description" not in channels.columns:
         channels["status_description"] = ""
 
-    bads = list(bads)
+    bads = [str(channel) for channel in bads]
 
     unknown_bads = sorted(set(bads) - set(channels["name"]))
     if unknown_bads:

@@ -47,7 +47,9 @@ meeg-pipeline/
       cli.py
       config.py
       conversion.py
+      epoching.py
       events.py
+      evokeds.py
       io.py
       preprocessing.py
       project.py
@@ -85,24 +87,22 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 ```
 
-Install the package in editable mode:
+Install the package in editable mode with development and interactive-plotting
+dependencies:
 
 ```bash
 cd ~/MEEG/meeg-pipeline
-pip install -e ".[dev]"
+pip install -e ".[dev,qt]"
 ```
 
-For interactive MNE browser windows, install the Qt dependencies:
+If you also want to use optional autoreject-based epoch cleaning, install:
 
 ```bash
-pip install "mne[qt]"
+pip install -e ".[dev,qt,autoreject]"
 ```
 
-If needed, install the Qt-related packages explicitly:
-
-```bash
-pip install pyqt6 pyqtgraph mne-qt-browser
-```
+The `qt` extra installs the packages needed for interactive MNE browser windows,
+including `mne-qt-browser`, `pyqt6`, and `pyqtgraph`.
 
 Test the installation:
 
@@ -123,7 +123,13 @@ cd ~/MEEG
 source .venv/bin/activate
 
 cd ~/MEEG/meeg-pipeline
-pip install -e ".[dev]"
+pip install -e ".[dev,qt]"
+```
+
+For autoreject workflows, use:
+
+```bash
+pip install -e ".[dev,qt,autoreject]"
 ```
 
 Then create a new project folder from the location where the project should live.
@@ -282,6 +288,8 @@ my-meeg-project/
     03_preprocessing.ipynb
     04_artifact_annotation.ipynb
     05_ica_cleaning.ipynb
+    06_epoching.ipynb
+    07_evokeds.ipynb
 
   sourcedata/
     sub-0001/
@@ -317,6 +325,7 @@ my-meeg-project/
             sub-0001_ses-001_task-chords_desc-icadecision.json
             sub-0001_ses-001_task-chords_desc-cleaned_meg.fif
             sub-0001_ses-001_task-chords_desc-cleaned_epo.fif
+            sub-0001_ses-001_task-chords_desc-evoked_ave.fif
 ```
 
 For projects without sessions, omit the `ses-...` level consistently:
@@ -338,6 +347,8 @@ derivatives/
         sub-0001_task-chords_desc-ica_ica.fif
         sub-0001_task-chords_desc-icadecision.json
         sub-0001_task-chords_desc-cleaned_meg.fif
+        sub-0001_task-chords_desc-cleaned_epo.fif
+        sub-0001_task-chords_desc-evoked_ave.fif
 ```
 
 ## Data organization
@@ -477,9 +488,13 @@ derivatives/meeg-pipeline/sub-0001/ses-001/meg/
   sub-0001_ses-001_task-chords_desc-icadecision.json
   sub-0001_ses-001_task-chords_desc-cleaned_meg.fif
   sub-0001_ses-001_task-chords_desc-cleaned_epo.fif
+  sub-0001_ses-001_task-chords_desc-evoked_ave.fif
 ```
 
 The raw BIDS FIF files should not be modified during preprocessing.
+
+Raw outputs are intended to be BIDS-compliant. Derivative outputs follow a
+BIDS-Derivatives-style organization and MNE naming conventions.
 
 ## Subject, session, task, and run naming
 
@@ -994,6 +1009,51 @@ when they clearly represent artifact sources such as heartbeat, eye movement,
 muscle bursts, or technical noise. Single outliers inside a component are usually
 better handled as bad segments, not by removing the entire component.
 
+## Epoching and evokeds
+
+Epoching turns cleaned continuous data into trial-wise data.
+
+Recommended workflow:
+
+1. Load `desc-cleaned_meg.fif`.
+2. Load project-specific `desc-analysis_events.tsv` if it exists.
+3. Otherwise load the raw BIDS `events.tsv`.
+4. Create MNE `Epochs`.
+5. Keep the full events table as `epochs.metadata`.
+6. Save `desc-cleaned_epo.fif`.
+
+Evokeds are created from saved epochs using project-specific condition
+definitions.
+
+Recommended workflow:
+
+1. Load `desc-cleaned_epo.fif`.
+2. Inspect `epochs.metadata`.
+3. Define project-specific conditions as metadata queries or old-style event ID
+   lists.
+4. Average selected epochs per condition.
+5. Save `desc-evoked_ave.fif`.
+
+Example condition definitions:
+
+```python
+CONDITIONS = {
+    "non_diatonic": "non_diatonic in [1, 2, 3, 4, 5]",
+    "key_change": "note_index == 0",
+}
+```
+
+Old-style event-code definitions are also possible:
+
+```python
+CONDITIONS = {
+    "some_condition": [1, 5, 9, 12],
+}
+```
+
+Condition definitions are project-specific and should usually live in the
+evoked notebook rather than in the reusable library.
+
 ## Notebook workflow
 
 The recommended project workflow is notebook-oriented.
@@ -1008,6 +1068,8 @@ notebooks/
   03_preprocessing.ipynb
   04_artifact_annotation.ipynb
   05_ica_cleaning.ipynb
+  06_epoching.ipynb
+  07_evokeds.ipynb
 ```
 
 Suggested roles:
@@ -1016,8 +1078,8 @@ Suggested roles:
 00_project_summary.ipynb
   Read-only dashboard.
   Shows what data exist, what has been computed, event status, bad-channel status,
-  filtered-derivative status, bad-segment annotation status, ICA status, and
-  cleaned-raw status.
+  filtered-derivative status, bad-segment annotation status, ICA status, cleaned-
+  raw status, epoch status, and evoked status.
 
 01_raw_bids_and_bad_channels.ipynb
   Active raw-data and bad-channel notebook.
@@ -1026,10 +1088,9 @@ Suggested roles:
 
 02_project_specific_events.ipynb
   Optional event-derivation notebook.
-  Reads trigger-derived events.tsv files and derives project-specific
-  analysis-ready event tables from trigger anchors and stimulus metadata.
-  This notebook can be skipped when trigger-derived events are already the
-  analysis events.
+  Reads trigger-derived events.tsv files and derives project-specific analysis-
+  ready event tables from trigger anchors and stimulus metadata. This notebook
+  can be skipped when trigger-derived events are already the analysis events.
 
 03_preprocessing.ipynb
   Preprocessing notebook.
@@ -1038,13 +1099,23 @@ Suggested roles:
 
 04_artifact_annotation.ipynb
   Bad-segment annotation notebook.
-  Loads filtered data, interactively marks BAD_* time spans, and writes
-  bad-segment annotation derivatives.
+  Loads filtered data, interactively marks BAD_* time spans, and writes bad-
+  segment annotation derivatives.
 
 05_ica_cleaning.ipynb
   ICA cleaning notebook.
   Fits ICA models, saves ICA component-exclusion decisions, and writes cleaned
   raw derivatives.
+
+06_epoching.ipynb
+  Epoching notebook.
+  Creates epochs from cleaned raw data and either analysis-event derivatives or
+  raw BIDS events.
+
+07_evokeds.ipynb
+  Evoked-response notebook.
+  Defines project-specific conditions from epoch metadata and writes evoked
+  response files.
 ```
 
 Notebook steps should call reusable library functions rather than implementing
@@ -1083,6 +1154,12 @@ ica_decision:
 
 cleaned_raw:
   skip / overwrite
+
+epochs:
+  skip / overwrite
+
+evokeds:
+  skip / overwrite
 ```
 
 For notebooks, a central variable can be used:
@@ -1097,6 +1174,8 @@ OVERWRITE_STEPS = ["filtering"]
 OVERWRITE_STEPS = ["ica"]
 OVERWRITE_STEPS = ["ica_decision"]
 OVERWRITE_STEPS = ["cleaned_raw"]
+OVERWRITE_STEPS = ["epochs"]
+OVERWRITE_STEPS = ["evokeds"]
 OVERWRITE_STEPS = ["ica_decision", "cleaned_raw"]
 OVERWRITE_STEPS = "all"
 ```
@@ -1119,6 +1198,8 @@ filtering        -> skip existing filtered derivatives
 ica              -> skip existing ICA files
 ica_decision     -> load existing ICA decisions
 cleaned_raw      -> skip existing cleaned raw derivatives
+epochs           -> skip existing epochs
+evokeds          -> skip existing evoked files
 ```
 
 To recompute a specific step, either delete the corresponding output file
@@ -1356,14 +1437,14 @@ Currently implemented:
 - ICA fitting utilities
 - ICA decision JSON derivatives
 - cleaned raw derivatives
-- existing-output policies for conversion, events, analysis events, bad-channel QC, filtering, annotations, ICA, ICA decisions, and cleaned raw derivatives
+- epoching utilities
+- evoked-response utilities
+- existing-output policies for conversion, events, analysis events, bad-channel QC, filtering, annotations, ICA, ICA decisions, cleaned raw derivatives, epochs, and evokeds
 
 Not yet implemented:
 
 - SSP / empty-room based cleaning
-- epoching
-- autoreject integration
-- evoked/TFR/source analysis
+- source analysis
 - reports
 - HPC/Slurm execution
 - automated tests

@@ -43,12 +43,14 @@ meeg-pipeline/
       annotations.py
       bids.py
       channels.py
+      cleaning.py
       cli.py
       config.py
       conversion.py
       events.py
       io.py
       preprocessing.py
+      project.py
       qc.py
       sourcedata.py
 ```
@@ -90,12 +92,173 @@ cd ~/MEEG/meeg-pipeline
 pip install -e ".[dev]"
 ```
 
+For interactive MNE browser windows, install the Qt dependencies:
+
+```bash
+pip install "mne[qt]"
+```
+
+If needed, install the Qt-related packages explicitly:
+
+```bash
+pip install pyqt6 pyqtgraph mne-qt-browser
+```
+
 Test the installation:
 
 ```bash
 python -c "import meeg_pipeline; print(meeg_pipeline.__version__)"
 meegpipe --version
 ```
+
+## Creating a new project
+
+A new project can be initialized with the command-line interface.
+
+First make sure that the pipeline package is installed in your active Python
+environment:
+
+```bash
+cd ~/MEEG
+source .venv/bin/activate
+
+cd ~/MEEG/meeg-pipeline
+pip install -e ".[dev]"
+```
+
+Then create a new project folder from the location where the project should live.
+
+Example on the internal drive:
+
+```bash
+cd ~/MEEG
+meegpipe init-project my-meeg-project
+```
+
+Example on an external drive:
+
+```bash
+cd /Volumes/YourDrive/MEEG
+meegpipe init-project my-meeg-project
+```
+
+Alternatively, pass the target directory explicitly:
+
+```bash
+meegpipe init-project my-meeg-project --base-dir /Volumes/YourDrive/MEEG
+```
+
+This creates:
+
+```text
+my-meeg-project/
+  README.md
+  dataset_description.json
+  participants.tsv
+
+  configs/
+    local.yaml
+
+  notebooks/
+    00_project_summary.ipynb
+    01_raw_bids_and_bad_channels.ipynb
+    02_events.ipynb
+    03_preprocessing.ipynb
+    04_artifact_annotation.ipynb
+    05_ica_cleaning.ipynb
+
+  sourcedata/
+    sub-0001/
+      meg/
+        task-example/
+          README.md
+
+  derivatives/
+    meeg-pipeline/
+```
+
+Existing files are not overwritten by default. To recreate template files, use:
+
+```bash
+meegpipe init-project my-meeg-project --overwrite
+```
+
+After creating the project, enter the project folder:
+
+```bash
+cd /Volumes/YourDrive/MEEG/my-meeg-project
+```
+
+Then edit:
+
+```text
+configs/local.yaml
+```
+
+At minimum, check the project name and paths:
+
+```yaml
+project:
+  name: "my-meeg-project"
+
+paths:
+  bids_root: "."
+  sourcedata_root: "./sourcedata"
+  derivatives_root: "./derivatives/meeg-pipeline"
+```
+
+If original source files live on an external drive or outside the project folder,
+set `sourcedata_root` accordingly:
+
+```yaml
+paths:
+  sourcedata_root: "/Volumes/YourDrive/source-data/my-meeg-project"
+```
+
+Relative paths are resolved relative to the project root.
+
+Test the config from the project root:
+
+```bash
+meegpipe config-info --config configs/local.yaml
+meegpipe sourcedata-info --config configs/local.yaml
+meegpipe bids-info --config configs/local.yaml
+```
+
+In Jupyter or VS Code, select the Python kernel from the environment in which the
+package was installed, for example:
+
+```text
+~/MEEG/.venv/bin/python
+```
+
+For interactive MNE plots in notebooks, run this before plotting:
+
+```python
+%matplotlib qt
+
+import mne
+mne.viz.set_browser_backend("qt")
+
+print(mne.viz.get_browser_backend())
+```
+
+Expected output:
+
+```text
+qt
+```
+
+Interactive plots such as the following should then open in separate windows:
+
+```python
+raw.plot(block=True)
+ica.plot_sources(raw_for_ica, block=True)
+```
+
+If plots do not open in an external window, restart the notebook kernel, run the
+Qt setup cell before any plotting commands, and check that the selected kernel is
+the intended virtual environment.
 
 ## Project organization
 
@@ -118,6 +281,7 @@ my-meeg-project/
     02_events.ipynb
     03_preprocessing.ipynb
     04_artifact_annotation.ipynb
+    05_ica_cleaning.ipynb
 
   sourcedata/
     sub-0001/
@@ -149,6 +313,8 @@ my-meeg-project/
             sub-0001_ses-001_task-chords_desc-badchannels.json
             sub-0001_ses-001_task-chords_desc-filtered_meg.fif
             sub-0001_ses-001_task-chords_desc-badsegments_annotations.fif
+            sub-0001_ses-001_task-chords_desc-ica_ica.fif
+            sub-0001_ses-001_task-chords_desc-icadecision.json
             sub-0001_ses-001_task-chords_desc-cleaned_meg.fif
             sub-0001_ses-001_task-chords_desc-cleaned_epo.fif
 ```
@@ -169,6 +335,9 @@ derivatives/
         sub-0001_task-chords_desc-badchannels.json
         sub-0001_task-chords_desc-filtered_meg.fif
         sub-0001_task-chords_desc-badsegments_annotations.fif
+        sub-0001_task-chords_desc-ica_ica.fif
+        sub-0001_task-chords_desc-icadecision.json
+        sub-0001_task-chords_desc-cleaned_meg.fif
 ```
 
 ## Data organization
@@ -304,6 +473,8 @@ derivatives/meeg-pipeline/sub-0001/ses-001/meg/
   sub-0001_ses-001_task-chords_desc-badchannels.json
   sub-0001_ses-001_task-chords_desc-filtered_meg.fif
   sub-0001_ses-001_task-chords_desc-badsegments_annotations.fif
+  sub-0001_ses-001_task-chords_desc-ica_ica.fif
+  sub-0001_ses-001_task-chords_desc-icadecision.json
   sub-0001_ses-001_task-chords_desc-cleaned_meg.fif
   sub-0001_ses-001_task-chords_desc-cleaned_epo.fif
 ```
@@ -434,6 +605,10 @@ paths:
   sourcedata_root: "./sourcedata"
   derivatives_root: "./derivatives/meeg-pipeline"
 
+runtime:
+  n_jobs: 4
+  thread_limits: true
+
 bids:
   datatype: "meg"
   task: null
@@ -463,6 +638,36 @@ preprocessing:
     l_freq: 1.0
     h_freq: 40.0
     method: "fir"
+
+cleaning:
+  ica:
+    n_components: 60
+    method: "fastica"
+    random_state: 97
+    max_iter: "auto"
+    decim: 4
+    fit_resample_sfreq: null
+
+epochs:
+  tmin: -1.0
+  tmax: 1.0
+  baseline: null
+  bad_interpolation: "epochs"
+
+autoreject:
+  enabled: false
+  use: null
+  consensus_percs: null
+  n_interpolates: null
+  subset: null
+
+source:
+  spacing: "ico5"
+  noise_cov_mode: "erm"
+  target_labels: null
+  parcellation: "aparc_sub"
+  extract_mode: "mean"
+  inverse_method: "dSPM"
 ```
 
 To disable notch filtering, use:
@@ -487,15 +692,28 @@ preprocessing:
     method: "fir"
 ```
 
+For ICA fitting, `decim` uses MNE's native decimation during the ICA fit. If
+`decim` is set, `fit_resample_sfreq` is ignored. A typical setting for long
+1000 Hz recordings is:
+
+```yaml
+cleaning:
+  ica:
+    n_components: 60
+    decim: 4
+    fit_resample_sfreq: null
+```
+
 From the project root, test the config:
 
 ```bash
 meegpipe config-info --config configs/local.yaml
 ```
 
-Then inspect the BIDS structure:
+Then inspect the source data and BIDS structure:
 
 ```bash
+meegpipe sourcedata-info --config configs/local.yaml
 meegpipe bids-info --config configs/local.yaml
 ```
 
@@ -525,7 +743,7 @@ other subjects.
 Exceptions are reserved for actual programming or configuration errors, such as
 invalid policy values or malformed input files.
 
-## Event extraction config
+## Event extraction and event derivation
 
 Event extraction parameters are stored in the project config, not hard-coded in
 the library.
@@ -573,8 +791,33 @@ event ID is:
 1 + 4 = 5
 ```
 
-The same event extraction function can be reused across projects by changing the
-config values.
+The pipeline distinguishes between trigger extraction and project-specific event
+derivation.
+
+```text
+Trigger extraction:
+  Raw BIDS data
+  -> acquisition-level trigger anchors
+  -> raw BIDS-compatible events.tsv
+
+Project-specific event derivation:
+  trigger anchors
+  + stimulus metadata
+  + project-specific timing rules
+  -> analysis-ready derivative events.tsv
+```
+
+The raw BIDS `events.tsv` files are written by the raw/event notebook and remain
+trigger-derived. Optional project-specific notebooks may derive richer analysis
+events and write them as derivatives, for example:
+
+```text
+derivatives/meeg-pipeline/sub-0001/meg/
+  sub-0001_task-chords_desc-analysis_events.tsv
+```
+
+Downstream analysis should prefer analysis-event derivatives if they exist and
+fall back to raw BIDS events otherwise.
 
 ## Event handling principle
 
@@ -583,7 +826,7 @@ to the final analysis events.
 
 Instead, event handling should be table-based.
 
-A simple event table may look like this:
+A simple trigger-derived event table may look like this:
 
 ```text
 onset    duration    trial_type    value    sample
@@ -597,11 +840,10 @@ external metadata.
 Example:
 
 ```text
-onset    duration    trial_type        trial_id    stimulus_id    speaker      phoneme    relative_onset
-42.000   3.200       sentence_onset    17          sent_017       speaker_03   n/a        0.000
-42.134   0.087       phoneme_onset     17          sent_017       speaker_03   a          0.134
-42.221   0.061       phoneme_onset     17          sent_017       speaker_03   t          0.221
-42.309   0.102       phoneme_onset     17          sent_017       speaker_03   sh         0.309
+onset    duration    trial_type        note_id    note_index    key_signature    scale_degree    non_diatonic
+42.000   0.0         key_change        128        0             3                1               0
+42.500   0.0         non_diatonic      129        1             3                2               1
+43.000   0.0         note              130        2             3                3               0
 ```
 
 Design principle:
@@ -715,6 +957,43 @@ These annotations can later be applied to filtered or cleaned data. Downstream
 MNE steps can use the standard `reject_by_annotation=True` behavior to ignore
 bad spans.
 
+## ICA cleaning
+
+ICA cleaning is used to remove stereotyped artifact components from filtered
+continuous data.
+
+Recommended workflow:
+
+1. Load filtered raw data.
+2. Apply saved bad-channel decisions.
+3. Apply saved bad-segment annotations.
+4. Fit ICA on the filtered data.
+5. Inspect ICA components interactively.
+6. Mark artifact components in `ica.plot_sources`.
+7. Save the selected component indices as an ICA decision JSON.
+8. Apply the ICA decision and write a cleaned raw derivative.
+
+Example files:
+
+```text
+derivatives/meeg-pipeline/sub-1409/meg/
+  sub-1409_task-chords_desc-ica_ica.fif
+  sub-1409_task-chords_desc-icadecision.json
+  sub-1409_task-chords_desc-cleaned_meg.fif
+```
+
+The `desc-cleaned_meg.fif` file is the ICA-cleaned continuous raw derivative.
+It is the recommended input for epoching and later analysis steps.
+
+ICA decisions are recording-specific. In other words, decisions are made per
+combination of subject, session, task, and run. Component index `5` in one
+recording is not the same component as index `5` in another recording.
+
+A conservative ICA decision is recommended. Components should only be excluded
+when they clearly represent artifact sources such as heartbeat, eye movement,
+muscle bursts, or technical noise. Single outliers inside a component are usually
+better handled as bad segments, not by removing the entire component.
+
 ## Notebook workflow
 
 The recommended project workflow is notebook-oriented.
@@ -725,9 +1004,10 @@ A project may contain notebooks such as:
 notebooks/
   00_project_summary.ipynb
   01_raw_bids_and_bad_channels.ipynb
-  02_events.ipynb
+  02_project_specific_events.ipynb
   03_preprocessing.ipynb
   04_artifact_annotation.ipynb
+  05_ica_cleaning.ipynb
 ```
 
 Suggested roles:
@@ -736,17 +1016,20 @@ Suggested roles:
 00_project_summary.ipynb
   Read-only dashboard.
   Shows what data exist, what has been computed, event status, bad-channel status,
-  filtered-derivative status, bad-segment annotation status, and later derivative
-  status.
+  filtered-derivative status, bad-segment annotation status, ICA status, and
+  cleaned-raw status.
 
 01_raw_bids_and_bad_channels.ipynb
   Active raw-data and bad-channel notebook.
-  Discovers sourcedata, converts to raw BIDS, inspects channels, performs manual
-  bad-channel QC, and updates channels.tsv.
+  Discovers sourcedata, converts to raw BIDS, extracts trigger-derived events,
+  inspects channels, performs manual bad-channel QC, and updates channels.tsv.
 
-02_events.ipynb
-  Event extraction notebook.
-  Extracts or writes BIDS-compatible events.tsv files.
+02_project_specific_events.ipynb
+  Optional event-derivation notebook.
+  Reads trigger-derived events.tsv files and derives project-specific
+  analysis-ready event tables from trigger anchors and stimulus metadata.
+  This notebook can be skipped when trigger-derived events are already the
+  analysis events.
 
 03_preprocessing.ipynb
   Preprocessing notebook.
@@ -757,6 +1040,11 @@ Suggested roles:
   Bad-segment annotation notebook.
   Loads filtered data, interactively marks BAD_* time spans, and writes
   bad-segment annotation derivatives.
+
+05_ica_cleaning.ipynb
+  ICA cleaning notebook.
+  Fits ICA models, saves ICA component-exclusion decisions, and writes cleaned
+  raw derivatives.
 ```
 
 Notebook steps should call reusable library functions rather than implementing
@@ -775,6 +1063,9 @@ convert_to_bids:
 events:
   skip / overwrite
 
+analysis_events:
+  skip / overwrite
+
 bad_channels:
   load / overwrite
 
@@ -783,6 +1074,15 @@ annotations:
 
 filtering:
   skip / overwrite
+
+ica:
+  skip / overwrite
+
+ica_decision:
+  load / overwrite
+
+cleaned_raw:
+  skip / overwrite
 ```
 
 For notebooks, a central variable can be used:
@@ -790,10 +1090,14 @@ For notebooks, a central variable can be used:
 ```python
 OVERWRITE_STEPS = []
 OVERWRITE_STEPS = ["events"]
+OVERWRITE_STEPS = ["analysis_events"]
 OVERWRITE_STEPS = ["bad_channels"]
 OVERWRITE_STEPS = ["annotations"]
 OVERWRITE_STEPS = ["filtering"]
-OVERWRITE_STEPS = ["events", "bad_channels"]
+OVERWRITE_STEPS = ["ica"]
+OVERWRITE_STEPS = ["ica_decision"]
+OVERWRITE_STEPS = ["cleaned_raw"]
+OVERWRITE_STEPS = ["ica_decision", "cleaned_raw"]
 OVERWRITE_STEPS = "all"
 ```
 
@@ -808,9 +1112,13 @@ This means:
 ```text
 convert_to_bids  -> skip existing raw BIDS files
 events           -> skip existing events.tsv files
+analysis_events  -> skip existing derivative analysis-event files
 bad_channels     -> load existing bad-channel decisions
 annotations      -> load existing bad-segment annotations
 filtering        -> skip existing filtered derivatives
+ica              -> skip existing ICA files
+ica_decision     -> load existing ICA decisions
+cleaned_raw      -> skip existing cleaned raw derivatives
 ```
 
 To recompute a specific step, either delete the corresponding output file
@@ -824,6 +1132,24 @@ Show the installed version:
 
 ```bash
 meegpipe --version
+```
+
+Create a new project scaffold:
+
+```bash
+meegpipe init-project my-meeg-project
+```
+
+Create a project scaffold in a specific directory:
+
+```bash
+meegpipe init-project my-meeg-project --base-dir /Volumes/YourDrive/MEEG
+```
+
+Overwrite existing template files:
+
+```bash
+meegpipe init-project my-meeg-project --overwrite
 ```
 
 Show information from a project config:
@@ -888,7 +1214,7 @@ meegpipe events-info \
   --task chords
 ```
 
-Write BIDS-compatible `events.tsv` files:
+Write BIDS-compatible trigger-derived `events.tsv` files:
 
 ```bash
 meegpipe write-events \
@@ -1004,8 +1330,10 @@ Currently implemented:
 
 - Python package structure
 - `meegpipe` command-line entry point
+- project scaffold creation with `meegpipe init-project`
 - project config loading
 - configurable `sourcedata_root`
+- runtime and analysis defaults in `configs/local.yaml`
 - basic BIDS dataset inspection
 - participants.tsv inspection
 - BIDSPath construction
@@ -1019,19 +1347,22 @@ Currently implemented:
 - bad-channel JSON derivatives
 - updating BIDS `channels.tsv` from manual bad-channel decisions
 - binary-channel event extraction
-- BIDS-compatible `events.tsv` writing
-- notebook-friendly event and channel summaries
+- BIDS-compatible trigger-derived `events.tsv` writing
+- optional project-specific analysis-event derivation notebooks
 - preprocessing filter configuration
 - filtered raw derivatives
 - bad-segment annotation utilities
 - bad-segment annotation derivatives
-- existing-output policies for conversion, events, bad-channel QC, filtering, and annotations
+- ICA fitting utilities
+- ICA decision JSON derivatives
+- cleaned raw derivatives
+- existing-output policies for conversion, events, analysis events, bad-channel QC, filtering, annotations, ICA, ICA decisions, and cleaned raw derivatives
 
 Not yet implemented:
 
-- ICA / SSP artifact handling
-- cleaned raw derivatives
+- SSP / empty-room based cleaning
 - epoching
+- autoreject integration
 - evoked/TFR/source analysis
 - reports
 - HPC/Slurm execution

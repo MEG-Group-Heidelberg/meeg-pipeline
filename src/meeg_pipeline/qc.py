@@ -25,10 +25,7 @@ class BadChannelCandidates:
 
     @property
     def combined(self) -> list[str]:
-        return sorted(
-            str(channel)
-            for channel in set(self.noisy + self.flat + self.existing_bads)
-        )
+        return normalize_channel_names(self.noisy + self.flat + self.existing_bads)
 
 
 @dataclass(frozen=True)
@@ -56,6 +53,16 @@ class ChannelsTSVResult:
     status: str
     n_bad_channels: int = 0
     message: str = ""
+
+
+
+
+def normalize_channel_names(ch_names) -> list[str]:
+    """Return sorted unique channel names as plain Python strings."""
+    if ch_names is None:
+        return []
+
+    return sorted({str(channel) for channel in ch_names})
 
 
 def _format_status_description(method: str, notes: str) -> str:
@@ -142,9 +149,9 @@ def detect_bad_channel_candidates_maxwell(
     )
 
     return BadChannelCandidates(
-        noisy=[str(channel) for channel in noisy_chs],
-        flat=[str(channel) for channel in flat_chs],
-        existing_bads=[str(channel) for channel in raw.info["bads"]],
+        noisy=normalize_channel_names(noisy_chs),
+        flat=normalize_channel_names(flat_chs),
+        existing_bads=normalize_channel_names(raw.info["bads"]),
     )
 
 
@@ -215,7 +222,7 @@ def load_bad_channels(
     payload = json.loads(path.read_text(encoding="utf-8"))
 
     return BadChannelsResult(
-        bads=[str(channel) for channel in payload.get("bads", [])],
+        bads=normalize_channel_names(payload.get("bads", [])),
         path=str(path),
         status="loaded",
         method=str(payload.get("method", "")),
@@ -288,7 +295,7 @@ def save_or_load_bad_channels(
 
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    normalized_bads = [str(channel) for channel in bads]
+    normalized_bads = normalize_channel_names(bads)
     payload = {
         "subject": subject.removeprefix("sub-"),
         "session": session,
@@ -351,13 +358,13 @@ def apply_bad_channels(
             message=bad_channels.message,
         )
 
-    raw.info["bads"] = bad_channels.bads
+    raw.info["bads"] = normalize_channel_names(bad_channels.bads)
 
     return ApplyBadChannelsResult(
         raw=raw,
         path=bad_channels.path,
         status="applied",
-        bads=bad_channels.bads,
+        bads=normalize_channel_names(bad_channels.bads),
     )
 
 
@@ -398,9 +405,10 @@ def update_channels_tsv_with_bads(
     if "status_description" not in channels.columns:
         channels["status_description"] = ""
 
-    bads = [str(channel) for channel in bads]
-    known_bads = sorted(set(bads).intersection(set(channels["name"])))
-    unknown_bads = sorted(set(bads) - set(channels["name"]))
+    bads = normalize_channel_names(bads)
+    channel_names = normalize_channel_names(channels["name"])
+    known_bads = sorted(set(bads).intersection(set(channel_names)))
+    unknown_bads = sorted(set(bads) - set(channel_names))
 
     channels["status"] = "good"
     channels["status_description"] = ""

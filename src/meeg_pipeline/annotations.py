@@ -102,6 +102,47 @@ def keep_only_bad_annotations(annotations: Annotations) -> Annotations:
     return annotations[bad_indices]
 
 
+
+
+def prepare_raw_for_bad_segment_annotation(
+    raw: BaseRaw,
+    *,
+    keep_existing_bad_annotations: bool = True,
+) -> BaseRaw:
+    """Prepare Raw for interactive bad-segment annotation.
+
+    The MNE browser should show only BAD-like annotations for artifact marking.
+    Event-like annotations such as trigger_1, trigger_2, ... are removed before
+    opening the GUI, so they cannot accidentally be saved as bad-segment
+    decisions.
+
+    The Raw object is modified in-place and returned.
+    """
+    current = raw.annotations
+
+    if keep_existing_bad_annotations:
+        prepared = keep_only_bad_annotations(current)
+    else:
+        prepared = mne.Annotations([], [], [], orig_time=current.orig_time)
+
+    raw.set_annotations(prepared)
+
+    return raw
+
+
+def plot_for_bad_segment_annotation(
+    raw: BaseRaw,
+    *,
+    picks: str | list[str] | tuple[str, ...] | None = "meg",
+    block: bool = True,
+):
+    """Open the MNE browser for manual bad-segment annotation."""
+    return raw.plot(
+        picks=picks,
+        block=block,
+    )
+
+
 def _annotation_result(
     *,
     annotations: Annotations | None,
@@ -241,12 +282,12 @@ def apply_bad_annotations(
             message=result.message,
         )
 
-    raw.set_annotations(result.annotations)
+    raw.set_annotations(keep_only_bad_annotations(result.annotations))
 
     return ApplyAnnotationsResult(
         raw=raw,
         path=result.path,
         status="applied",
-        n_annotations=result.n_annotations,
-        n_bad_annotations=result.n_bad_annotations,
+        n_annotations=count_bad_annotations(result.annotations),
+        n_bad_annotations=count_bad_annotations(result.annotations),
     )

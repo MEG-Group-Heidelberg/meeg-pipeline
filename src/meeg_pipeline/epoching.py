@@ -13,6 +13,8 @@ from mne.io import BaseRaw
 from meeg_pipeline.bids import make_events_path
 from meeg_pipeline.cleaning import make_cleaned_raw_path
 from meeg_pipeline.config import PipelineConfig
+from meeg_pipeline.event_derivatives import make_analysis_events_path
+from meeg_pipeline.paths import bids_path_to_path, derivative_path
 
 
 ExistingOutputPolicy = Literal["skip", "overwrite"]
@@ -47,86 +49,6 @@ class EpochingResult:
     message: str = ""
 
 
-def _recording_parts(
-    *,
-    subject: str,
-    task: str | None = None,
-    session: str | None = None,
-    run: str | None = None,
-) -> list[str]:
-    subject = subject.removeprefix("sub-")
-
-    parts = [f"sub-{subject}"]
-
-    if session is not None:
-        parts.append(f"ses-{session}")
-
-    if task is not None:
-        parts.append(f"task-{task}")
-
-    if run is not None:
-        parts.append(f"run-{run}")
-
-    return parts
-
-
-def _derivative_directory(
-    config: PipelineConfig,
-    *,
-    subject: str,
-    session: str | None = None,
-) -> Path:
-    subject = subject.removeprefix("sub-")
-
-    if session is None:
-        return config.paths.derivatives_root / f"sub-{subject}" / config.bids.datatype
-
-    return (
-        config.paths.derivatives_root
-        / f"sub-{subject}"
-        / f"ses-{session}"
-        / config.bids.datatype
-    )
-
-
-def _bids_path_to_path(path_like: Any) -> Path:
-    """Convert pathlib Path or MNE-BIDS BIDSPath to pathlib Path."""
-    if hasattr(path_like, "fpath"):
-        return Path(path_like.fpath)
-
-    return Path(path_like)
-
-
-def make_analysis_events_path(
-    config: PipelineConfig,
-    *,
-    subject: str,
-    task: str | None = None,
-    session: str | None = None,
-    run: str | None = None,
-    desc: str = "analysis",
-) -> Path:
-    """Create derivative path for project-specific analysis events.
-
-    These files are optional. If they exist, epoching uses them instead of the
-    raw BIDS trigger-derived events.tsv files.
-    """
-    parts = _recording_parts(
-        subject=subject,
-        session=session,
-        task=task,
-        run=run,
-    )
-
-    basename = "_".join(parts + [f"desc-{desc}", "events.tsv"])
-
-    return _derivative_directory(
-        config,
-        subject=subject,
-        session=session,
-    ) / basename
-
-
 def make_epochs_path(
     config: PipelineConfig,
     *,
@@ -137,20 +59,15 @@ def make_epochs_path(
     desc: str = "cleaned",
 ) -> Path:
     """Create derivative path for epoched data."""
-    parts = _recording_parts(
+    return derivative_path(
+        config,
         subject=subject,
         session=session,
         task=task,
         run=run,
+        kind="epochs",
+        suffix=f"desc-{desc}_epo.fif",
     )
-
-    basename = "_".join(parts + [f"desc-{desc}", "epo.fif"])
-
-    return _derivative_directory(
-        config,
-        subject=subject,
-        session=session,
-    ) / basename
 
 
 def make_reject_log_path(
@@ -163,20 +80,15 @@ def make_reject_log_path(
     desc: str = "autoreject",
 ) -> Path:
     """Create derivative path for an optional autoreject reject log."""
-    parts = _recording_parts(
+    return derivative_path(
+        config,
         subject=subject,
         session=session,
         task=task,
         run=run,
+        kind="arlog",
+        suffix=f"desc-{desc}_rejectlog.npz",
     )
-
-    basename = "_".join(parts + [f"desc-{desc}", "rejectlog.npz"])
-
-    return _derivative_directory(
-        config,
-        subject=subject,
-        session=session,
-    ) / basename
 
 
 def load_cleaned_raw_for_epoching(
@@ -229,11 +141,9 @@ def load_events_for_epoching(
 ) -> LoadEventsResult:
     """Load analysis events if present, otherwise raw BIDS events.
 
-    This keeps the project-specific event-derivation notebook optional.
-
     Priority
     --------
-    1. derivatives/.../*_desc-analysis_events.tsv
+    1. derivatives/.../events/*_desc-analysis_events.tsv
     2. raw BIDS *_events.tsv
     """
     analysis_path = make_analysis_events_path(
@@ -262,7 +172,7 @@ def load_events_for_epoching(
         run=run,
     )
 
-    raw_events_path = _bids_path_to_path(raw_bids_events_path)
+    raw_events_path = bids_path_to_path(raw_bids_events_path)
 
     if not raw_events_path.exists():
         return LoadEventsResult(
@@ -290,19 +200,7 @@ def prepare_raw_for_epoching(
     ch_names: list[str] | tuple[str, ...] | str | None = "all",
     bad_interpolation: Literal["epochs", "evokeds"] | None = "epochs",
 ) -> BaseRaw:
-    """Prepare a Raw object for epoching by applying channel selections.
-
-    Parameters
-    ----------
-    ch_types
-        Channel types to keep, e.g. ["meg"], ["meg", "eeg"], or None for all.
-    ch_names
-        Channel names to keep. Use "all" or None to keep all selected channels.
-    bad_interpolation
-        If None, bad channels are excluded before epoching. If "epochs" or
-        "evokeds", bad channels are kept as bads so later interpolation remains
-        possible.
-    """
+    """Prepare a Raw object for epoching by applying channel selections."""
     raw = raw.copy()
 
     if ch_types is not None:
@@ -459,15 +357,6 @@ def maybe_apply_autoreject(
 
     This function imports autoreject lazily so the base pipeline can be used
     without installing autoreject.
-
-    Returns
-    -------
-    epochs
-        Possibly modified epochs.
-    reject_log
-        Autoreject reject log for interpolation mode, otherwise None.
-    reject_threshold
-        Threshold dictionary for threshold mode, otherwise None.
     """
     if use_autoreject is None:
         return epochs, None, None
@@ -526,11 +415,7 @@ def write_epochs_for_recording(
     n_interpolates: list[int] | tuple[int, ...] | None = None,
     n_jobs: int = 1,
 ) -> EpochingResult:
-    """Create and write epochs for one recording.
-
-    Missing inputs are returned as status values instead of interrupting a
-    multi-recording batch.
-    """
+    """Create and write epochs for one recording."""
     if on_existing not in {"skip", "overwrite"}:
         raise ValueError(
             f"Invalid on_existing value: {on_existing!r}. "

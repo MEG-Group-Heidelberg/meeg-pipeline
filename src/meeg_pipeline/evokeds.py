@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Literal
 
 import mne
-import pandas as pd
 from mne import Epochs, Evoked
 
 from meeg_pipeline.config import PipelineConfig
 from meeg_pipeline.epoching import make_epochs_path
+from meeg_pipeline.paths import derivative_path, sanitize_bids_label
 
 
 ExistingOutputPolicy = Literal["skip", "overwrite"]
@@ -27,14 +27,16 @@ class LoadEpochsResult:
 @dataclass(frozen=True)
 class EvokedConditionResult:
     condition: str
+    path: str
     status: str
     n_epochs: int = 0
+    desc: str = ""
     message: str = ""
 
 
 @dataclass(frozen=True)
 class EvokedResult:
-    path: str
+    directory: str
     status: str
     n_evokeds: int = 0
     conditions: list[str] | None = None
@@ -42,72 +44,47 @@ class EvokedResult:
     message: str = ""
 
 
-def _recording_parts(
-    *,
-    subject: str,
-    task: str | None = None,
-    session: str | None = None,
-    run: str | None = None,
-) -> list[str]:
-    subject = subject.removeprefix("sub-")
-
-    parts = [f"sub-{subject}"]
-
-    if session is not None:
-        parts.append(f"ses-{session}")
-
-    if task is not None:
-        parts.append(f"task-{task}")
-
-    if run is not None:
-        parts.append(f"run-{run}")
-
-    return parts
-
-
-def _derivative_directory(
+def make_evoked_path(
     config: PipelineConfig,
     *,
     subject: str,
-    session: str | None = None,
-) -> Path:
-    subject = subject.removeprefix("sub-")
-
-    if session is None:
-        return config.paths.derivatives_root / f"sub-{subject}" / config.bids.datatype
-
-    return (
-        config.paths.derivatives_root
-        / f"sub-{subject}"
-        / f"ses-{session}"
-        / config.bids.datatype
-    )
-
-
-def make_evokeds_path(
-    config: PipelineConfig,
-    *,
-    subject: str,
+    condition: str,
     task: str | None = None,
     session: str | None = None,
     run: str | None = None,
-    desc: str = "evoked",
 ) -> Path:
-    """Create derivative path for averaged evoked responses."""
-    parts = _recording_parts(
+    """Create derivative path for one condition-specific evoked response.
+
+    One evoked file is written per condition to keep downstream source-analysis
+    and reporting workflows simple.
+    """
+    desc = sanitize_bids_label(condition)
+
+    return derivative_path(
+        config,
         subject=subject,
         session=session,
         task=task,
         run=run,
+        kind="evokeds",
+        suffix=f"desc-{desc}_ave.fif",
     )
 
-    basename = "_".join(parts + [f"desc-{desc}", "ave.fif"])
 
-    return _derivative_directory(
+def make_evokeds_directory(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    session: str | None = None,
+) -> Path:
+    """Return the evokeds derivative directory for one subject/session."""
+    return derivative_path(
         config,
         subject=subject,
         session=session,
-    ) / basename
+        kind="evokeds",
+        suffix="dummy",
+    ).parent
 
 
 def load_epochs_for_evokeds(
@@ -206,51 +183,109 @@ def condition_indices(
     )
 
 
-def make_evokeds(
+def make_evoked_for_condition(
     epochs: Epochs,
-    conditions: dict[str, ConditionDefinition],
     *,
+    condition_name: str,
+    condition: ConditionDefinition,
     copy_bads_from_epochs: bool = True,
-) -> tuple[list[Evoked], list[EvokedConditionResult]]:
-    """Create evoked responses from epochs using condition definitions."""
-    evokeds: list[Evoked] = []
-    condition_results: list[EvokedConditionResult] = []
+) -> tuple[Evoked | None, EvokedConditionResult]:
+    """Create one Evoked object from epochs for a condition definition."""
+    indices = condition_indices(epochs, condition)
 
-    for condition_name, condition in conditions.items():
-        indices = condition_indices(epochs, condition)
-
-        if not indices:
-            condition_results.append(
-                EvokedConditionResult(
-                    condition=condition_name,
-                    status="no_epochs",
-                    n_epochs=0,
-                    message="No epochs matched this condition.",
-                )
-            )
-            continue
-
-        selected_epochs = epochs[indices]
-        evoked = selected_epochs.average()
-        evoked.comment = condition_name
-
-        if copy_bads_from_epochs:
-            evoked.info["bads"] = [
-                ch_name
-                for ch_name in epochs.info["bads"]
-                if ch_name in evoked.info["ch_names"]
-            ]
-
-        evokeds.append(evoked)
-        condition_results.append(
-            EvokedConditionResult(
-                condition=condition_name,
-                status="computed",
-                n_epochs=len(selected_epochs),
-            )
+    if not indices:
+        return None, EvokedConditionResult(
+            condition=condition_name,
+            path="",
+            status="no_epochs",
+            n_epochs=0,
+            desc=sanitize_bids_label(condition_name),
+            message="No epochs matched this condition.",
         )
 
-    return evokeds, condition_results
+    selected_epochs = epochs[indices]
+    evoked = selected_epochs.average()
+    evoked.comment = condition_name
+
+    if copy_bads_from_epochs:
+        evoked.info["bads"] = [
+            ch_name
+            for ch_name in epochs.info["bads"]
+            if ch_name in evoked.info["ch_names"]
+        ]
+
+    return evoked, EvokedConditionResult(
+        condition=condition_name,
+        path="",
+        status="computed",
+        n_epochs=len(selected_epochs),
+        desc=sanitize_bids_label(condition_name),
+    )
+
+
+def write_evoked_for_condition(
+    config: PipelineConfig,
+    epochs: Epochs,
+    *,
+    subject: str,
+    condition_name: str,
+    condition: ConditionDefinition,
+    task: str | None = None,
+    session: str | None = None,
+    run: str | None = None,
+    on_existing: ExistingOutputPolicy = "skip",
+) -> EvokedConditionResult:
+    """Create and write one condition-specific evoked file."""
+    output_path = make_evoked_path(
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
+        condition=condition_name,
+    )
+
+    if output_path.exists() and on_existing == "skip":
+        return EvokedConditionResult(
+            condition=condition_name,
+            path=str(output_path),
+            status="skipped_existing",
+            n_epochs=0,
+            desc=sanitize_bids_label(condition_name),
+            message="Evoked file already exists.",
+        )
+
+    evoked, result = make_evoked_for_condition(
+        epochs,
+        condition_name=condition_name,
+        condition=condition,
+    )
+
+    if evoked is None:
+        return EvokedConditionResult(
+            condition=result.condition,
+            path=str(output_path),
+            status=result.status,
+            n_epochs=result.n_epochs,
+            desc=result.desc,
+            message=result.message,
+        )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    mne.write_evokeds(
+        output_path,
+        [evoked],
+        overwrite=on_existing == "overwrite",
+        verbose="error",
+    )
+
+    return EvokedConditionResult(
+        condition=condition_name,
+        path=str(output_path),
+        status="written",
+        n_epochs=result.n_epochs,
+        desc=sanitize_bids_label(condition_name),
+    )
 
 
 def write_evokeds_for_recording(
@@ -262,30 +297,19 @@ def write_evokeds_for_recording(
     session: str | None = None,
     run: str | None = None,
     on_existing: ExistingOutputPolicy = "skip",
-    desc: str = "evoked",
 ) -> EvokedResult:
-    """Create and write evokeds for one recording."""
+    """Create and write one evoked file per condition for one recording."""
     if on_existing not in {"skip", "overwrite"}:
         raise ValueError(
             f"Invalid on_existing value: {on_existing!r}. "
             "Use 'skip' or 'overwrite'."
         )
 
-    output_path = make_evokeds_path(
+    output_directory = make_evokeds_directory(
         config,
         subject=subject,
         session=session,
-        task=task,
-        run=run,
-        desc=desc,
     )
-
-    if output_path.exists() and on_existing == "skip":
-        return EvokedResult(
-            path=str(output_path),
-            status="skipped_existing",
-            message="Evokeds file already exists.",
-        )
 
     epochs_result = load_epochs_for_evokeds(
         config,
@@ -298,19 +322,43 @@ def write_evokeds_for_recording(
 
     if epochs_result.epochs is None:
         return EvokedResult(
-            path=str(output_path),
+            directory=str(output_directory),
             status=epochs_result.status,
             message=epochs_result.message,
         )
 
-    evokeds, condition_results = make_evokeds(
-        epochs_result.epochs,
-        conditions,
-    )
+    condition_results: list[EvokedConditionResult] = []
 
-    if not evokeds:
+    for condition_name, condition in conditions.items():
+        condition_results.append(
+            write_evoked_for_condition(
+                config,
+                epochs_result.epochs,
+                subject=subject,
+                session=session,
+                task=task,
+                run=run,
+                condition_name=condition_name,
+                condition=condition,
+                on_existing=on_existing,
+            )
+        )
+
+    written_or_existing = [
+        result
+        for result in condition_results
+        if result.status in {"written", "skipped_existing"}
+    ]
+
+    written = [
+        result
+        for result in condition_results
+        if result.status == "written"
+    ]
+
+    if not written_or_existing:
         return EvokedResult(
-            path=str(output_path),
+            directory=str(output_directory),
             status="no_evokeds",
             n_evokeds=0,
             conditions=[],
@@ -318,19 +366,16 @@ def write_evokeds_for_recording(
             message="No evokeds were created because no conditions matched epochs.",
         )
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    mne.write_evokeds(
-        output_path,
-        evokeds,
-        overwrite=on_existing == "overwrite",
-        verbose="error",
-    )
+    if len(written_or_existing) == len(condition_results):
+        status = "written" if written else "skipped_existing"
+    else:
+        status = "partial"
 
     return EvokedResult(
-        path=str(output_path),
-        status="written",
-        n_evokeds=len(evokeds),
-        conditions=[evoked.comment for evoked in evokeds],
+        directory=str(output_directory),
+        status=status,
+        n_evokeds=len(written_or_existing),
+        conditions=[result.condition for result in written_or_existing],
         condition_results=condition_results,
     )
 
@@ -341,7 +386,6 @@ def write_evokeds_for_recordings(
     *,
     conditions: dict[str, ConditionDefinition],
     on_existing: ExistingOutputPolicy = "skip",
-    desc: str = "evoked",
 ) -> list[EvokedResult]:
     """Create and write evokeds for multiple recordings."""
     return [
@@ -353,7 +397,6 @@ def write_evokeds_for_recordings(
             run=recording.get("run"),
             conditions=conditions,
             on_existing=on_existing,
-            desc=desc,
         )
         for recording in recordings
     ]

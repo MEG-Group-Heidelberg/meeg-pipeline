@@ -8,6 +8,7 @@ from typing import Any, Literal
 import pandas as pd
 
 from meeg_pipeline.config import PipelineConfig
+from meeg_pipeline.paths import derivative_path
 
 
 ExistingOutputPolicy = Literal["skip", "overwrite"]
@@ -22,48 +23,6 @@ class AnalysisEventsWriteResult:
     message: str = ""
 
 
-def _recording_parts(
-    *,
-    subject: str,
-    task: str | None = None,
-    session: str | None = None,
-    run: str | None = None,
-) -> list[str]:
-    subject = subject.removeprefix("sub-")
-
-    parts = [f"sub-{subject}"]
-
-    if session is not None:
-        parts.append(f"ses-{session}")
-
-    if task is not None:
-        parts.append(f"task-{task}")
-
-    if run is not None:
-        parts.append(f"run-{run}")
-
-    return parts
-
-
-def _derivative_directory(
-    config: PipelineConfig,
-    *,
-    subject: str,
-    session: str | None = None,
-) -> Path:
-    subject = subject.removeprefix("sub-")
-
-    if session is None:
-        return config.paths.derivatives_root / f"sub-{subject}" / config.bids.datatype
-
-    return (
-        config.paths.derivatives_root
-        / f"sub-{subject}"
-        / f"ses-{session}"
-        / config.bids.datatype
-    )
-
-
 def make_analysis_events_path(
     config: PipelineConfig,
     *,
@@ -74,20 +33,15 @@ def make_analysis_events_path(
     desc: str = "analysis",
 ) -> Path:
     """Create derivative path for project-specific analysis events TSV."""
-    parts = _recording_parts(
+    return derivative_path(
+        config,
         subject=subject,
         session=session,
         task=task,
         run=run,
+        kind="events",
+        suffix=f"desc-{desc}_events.tsv",
     )
-
-    basename = "_".join(parts + [f"desc-{desc}", "events.tsv"])
-
-    return _derivative_directory(
-        config,
-        subject=subject,
-        session=session,
-    ) / basename
 
 
 def make_analysis_events_sidecar_path(
@@ -233,7 +187,7 @@ def sidecar_for_events_table(
 ) -> dict[str, Any]:
     """Create a sidecar and keep only column descriptions present in events.
 
-    Unknown columns are retained with a generic description, so project-specific
+    Unknown columns are retained with a generic description so project-specific
     metadata is not silently undocumented.
     """
     sidecar = default_analysis_events_sidecar(
@@ -281,11 +235,7 @@ def write_analysis_events(
     source_events: str | None = None,
     additional_columns: dict[str, dict[str, Any]] | None = None,
 ) -> AnalysisEventsWriteResult:
-    """Write derivative analysis events TSV plus JSON sidecar.
-
-    Missing or existing outputs are reported as status values to support
-    notebook-friendly batch workflows.
-    """
+    """Write derivative analysis events TSV plus JSON sidecar."""
     if on_existing not in {"skip", "overwrite"}:
         raise ValueError(
             f"Invalid on_existing value: {on_existing!r}. "

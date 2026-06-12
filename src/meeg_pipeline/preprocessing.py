@@ -92,6 +92,8 @@ def load_filtered_raw(
 def filter_raw(
     raw: BaseRaw,
     config: PipelineConfig,
+    *,
+    verbose: bool | str | int | None = True,    
 ) -> BaseRaw:
     """Apply configured notch and bandpass filters to a Raw object."""
     filtered = raw.copy().load_data()
@@ -102,6 +104,7 @@ def filter_raw(
             freqs=list(filtering.notch_freqs),
             picks="meg",
             method=filtering.method,
+            verbose=verbose,
         )
 
     if filtering.l_freq is not None or filtering.h_freq is not None:
@@ -110,6 +113,7 @@ def filter_raw(
             h_freq=filtering.h_freq,
             picks="meg",
             method=filtering.method,
+            verbose=verbose,
         )
 
     return filtered

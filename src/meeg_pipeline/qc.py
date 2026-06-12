@@ -132,8 +132,9 @@ def make_channels_tsv_path(
 def detect_bad_channel_candidates_maxwell(
     raw: BaseRaw,
     *,
-    n_jobs: int = 1,
     coord_frame: str | None = None,
+    n_jobs: int = 1,
+    verbose: bool | str | int | None = True,
     **kwargs,
 ) -> BadChannelCandidates:
     """Detect bad-channel candidates using MNE Maxwell-based heuristics."""
@@ -145,6 +146,7 @@ def detect_bad_channel_candidates_maxwell(
     noisy_chs, flat_chs = find_bad_channels_maxwell(
         raw,
         coord_frame=coord_frame,
+        verbose=verbose,
         **kwargs,
     )
 

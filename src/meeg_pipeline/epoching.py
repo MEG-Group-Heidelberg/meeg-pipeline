@@ -315,6 +315,7 @@ def make_epochs(
     reject_by_annotation: bool = True,
     preload: bool = True,
     on_missing: str = "ignore",
+    verbose: bool | str | int | None = True,
 ) -> Epochs:
     """Create MNE Epochs from a raw object and an events table."""
     mne_events, event_id, metadata = events_table_to_mne_events(
@@ -338,7 +339,7 @@ def make_epochs(
         metadata=metadata,
         reject_by_annotation=reject_by_annotation,
         on_missing=on_missing,
-        verbose="error",
+        verbose=verbose,
     )
 
     return epochs

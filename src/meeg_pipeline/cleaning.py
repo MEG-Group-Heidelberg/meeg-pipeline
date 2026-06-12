@@ -335,6 +335,7 @@ def fit_ica_for_recordings(
     max_iter: int | str = "auto",
     decim: int | None = None,
     fit_resample_sfreq: float | None = None,
+    progress: bool = True,
     verbose: bool | str | int | None = True,
 ) -> list[ICAFitResult]:
     """Fit and save ICA for multiple recordings."""
@@ -351,7 +352,7 @@ def fit_ica_for_recordings(
 
         label = "_".join(label_parts)
 
-        if verbose:
+        if progress:
             print("=" * 80, flush=True)
             print(
                 f"ICA fitting {index + 1}/{len(recordings)}: {label}",
@@ -377,7 +378,7 @@ def fit_ica_for_recordings(
 
         results.append(result)
 
-        if verbose:
+        if progress:
             print(f"Status: {result.status}", flush=True)
             if result.message:
                 print(f"Message: {result.message}", flush=True)

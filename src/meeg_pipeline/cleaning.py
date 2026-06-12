@@ -66,6 +66,7 @@ class LoadRawResult:
     status: str
     message: str = ""
 
+
 def make_ica_path(
     config: PipelineConfig,
     *,
@@ -194,6 +195,7 @@ def fit_ica(
     reject_by_annotation: bool = True,
     decim: int | None = None,
     fit_resample_sfreq: float | None = None,
+    verbose: bool | str | int | None = True,
 ) -> ICA:
     """Fit ICA on a Raw object.
 
@@ -242,6 +244,7 @@ def fit_ica(
         picks=picks,
         reject_by_annotation=reject_by_annotation,
         decim=fit_decim,
+        verbose=verbose,
     )
 
     return ica
@@ -261,6 +264,7 @@ def fit_ica_for_recording(
     max_iter: int | str = "auto",
     decim: int | None = None,
     fit_resample_sfreq: float | None = None,
+    verbose: bool | str | int | None = True,
 ) -> ICAFitResult:
     """Fit and save ICA for one recording."""
     if on_existing not in {"skip", "overwrite"}:
@@ -308,6 +312,7 @@ def fit_ica_for_recording(
         max_iter=max_iter,
         decim=decim,
         fit_resample_sfreq=fit_resample_sfreq,
+        verbose=verbose,
     )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -330,10 +335,31 @@ def fit_ica_for_recordings(
     max_iter: int | str = "auto",
     decim: int | None = None,
     fit_resample_sfreq: float | None = None,
+    verbose: bool | str | int | None = True,
 ) -> list[ICAFitResult]:
     """Fit and save ICA for multiple recordings."""
-    return [
-        fit_ica_for_recording(
+    results = []
+
+    for index, recording in enumerate(recordings):
+        label_parts = [f"sub-{recording['subject']}"]
+        if recording.get("session") is not None:
+            label_parts.append(f"ses-{recording['session']}")
+        if recording.get("task") is not None:
+            label_parts.append(f"task-{recording['task']}")
+        if recording.get("run") is not None:
+            label_parts.append(f"run-{recording['run']}")
+
+        label = "_".join(label_parts)
+
+        if verbose:
+            print("=" * 80, flush=True)
+            print(
+                f"ICA fitting {index + 1}/{len(recordings)}: {label}",
+                flush=True,
+            )
+            print("=" * 80, flush=True)
+
+        result = fit_ica_for_recording(
             config,
             subject=recording["subject"],
             session=recording.get("session"),
@@ -346,9 +372,19 @@ def fit_ica_for_recordings(
             max_iter=max_iter,
             decim=decim,
             fit_resample_sfreq=fit_resample_sfreq,
+            verbose=verbose,
         )
-        for recording in recordings
-    ]
+
+        results.append(result)
+
+        if verbose:
+            print(f"Status: {result.status}", flush=True)
+            if result.message:
+                print(f"Message: {result.message}", flush=True)
+            print(f"Path: {result.path}", flush=True)
+            print(flush=True)
+
+    return results
 
 
 def load_ica(
@@ -576,15 +612,43 @@ def write_cleaned_raw_for_recording(
     )
 
 
+def _recording_label(recording: dict[str, str | None]) -> str:
+    parts = [f"sub-{recording['subject']}"]
+
+    if recording.get("session") is not None:
+        parts.append(f"ses-{recording['session']}")
+
+    if recording.get("task") is not None:
+        parts.append(f"task-{recording['task']}")
+
+    if recording.get("run") is not None:
+        parts.append(f"run-{recording['run']}")
+
+    return "_".join(parts)
+
+
 def write_cleaned_raw_for_recordings(
     config: PipelineConfig,
     recordings: list[dict[str, str | None]],
     *,
     on_existing: ExistingOutputPolicy = "skip",
+    progress: bool = True,
 ) -> list[CleanedRawResult]:
     """Write cleaned raw derivatives for multiple recordings."""
-    return [
-        write_cleaned_raw_for_recording(
+    results = []
+
+    for index, recording in enumerate(recordings):
+        label = _recording_label(recording)
+
+        if progress:
+            print("=" * 80, flush=True)
+            print(
+                f"Cleaned raw writing {index + 1}/{len(recordings)}: {label}",
+                flush=True,
+            )
+            print("=" * 80, flush=True)
+
+        result = write_cleaned_raw_for_recording(
             config,
             subject=recording["subject"],
             session=recording.get("session"),
@@ -592,5 +656,14 @@ def write_cleaned_raw_for_recordings(
             run=recording.get("run"),
             on_existing=on_existing,
         )
-        for recording in recordings
-    ]
+
+        results.append(result)
+
+        if progress:
+            print(f"Status: {result.status}", flush=True)
+            if result.message:
+                print(f"Message: {result.message}", flush=True)
+            print(f"Path: {result.path}", flush=True)
+            print(flush=True)
+
+    return results

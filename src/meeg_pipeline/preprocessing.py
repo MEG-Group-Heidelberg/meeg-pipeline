@@ -9,6 +9,7 @@ from mne.io import BaseRaw
 
 from meeg_pipeline.bids import read_raw_bids_recording_if_exists
 from meeg_pipeline.config import PipelineConfig
+from meeg_pipeline.paths import derivative_path
 from meeg_pipeline.qc import apply_bad_channels
 
 
@@ -39,33 +40,15 @@ def make_filtered_raw_path(
     run: str | None = None,
 ) -> Path:
     """Create derivative path for filtered continuous raw data."""
-    subject = subject.removeprefix("sub-")
-
-    parts = [f"sub-{subject}"]
-
-    if session is not None:
-        parts.append(f"ses-{session}")
-
-    if task is not None:
-        parts.append(f"task-{task}")
-
-    if run is not None:
-        parts.append(f"run-{run}")
-
-    basename = "_".join(parts + ["desc-filtered_meg.fif"])
-
-    if session is None:
-        directory = config.paths.derivatives_root / f"sub-{subject}" / config.bids.datatype
-    else:
-        directory = (
-            config.paths.derivatives_root
-            / f"sub-{subject}"
-            / f"ses-{session}"
-            / config.bids.datatype
-        )
-
-    return directory / basename
-
+    return derivative_path(
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
+        kind="preprocessing",
+        suffix="desc-filtered_meg.fif",
+    )
 
 def load_filtered_raw(
     config: PipelineConfig,

@@ -9,6 +9,7 @@ from mne import Annotations
 from mne.io import BaseRaw
 
 from meeg_pipeline.config import PipelineConfig
+from meeg_pipeline.paths import derivative_path
 
 
 ExistingAnnotationsPolicy = Literal["load", "overwrite"]
@@ -53,33 +54,15 @@ def make_bad_annotations_path(
     run: str | None = None,
 ) -> Path:
     """Create derivative path for manually marked bad time segments."""
-    subject = subject.removeprefix("sub-")
-
-    parts = [f"sub-{subject}"]
-
-    if session is not None:
-        parts.append(f"ses-{session}")
-
-    if task is not None:
-        parts.append(f"task-{task}")
-
-    if run is not None:
-        parts.append(f"run-{run}")
-
-    basename = "_".join(parts + ["desc-badsegments_annotations.fif"])
-
-    if session is None:
-        directory = config.paths.derivatives_root / f"sub-{subject}" / config.bids.datatype
-    else:
-        directory = (
-            config.paths.derivatives_root
-            / f"sub-{subject}"
-            / f"ses-{session}"
-            / config.bids.datatype
-        )
-
-    return directory / basename
-
+    return derivative_path(
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
+        kind="qc",
+        suffix="desc-badsegments_annotations.fif",
+    )
 
 def is_bad_annotation_description(description: str) -> bool:
     """Return whether an annotation description follows MNE's BAD convention."""

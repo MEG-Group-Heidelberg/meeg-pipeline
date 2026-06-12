@@ -12,6 +12,7 @@ from mne.preprocessing import ICA
 from meeg_pipeline.annotations import apply_bad_annotations
 from meeg_pipeline.config import PipelineConfig
 from meeg_pipeline.preprocessing import make_filtered_raw_path
+from meeg_pipeline.paths import derivative_path
 from meeg_pipeline.qc import apply_bad_channels
 
 
@@ -65,49 +66,6 @@ class LoadRawResult:
     status: str
     message: str = ""
 
-
-def _recording_parts(
-    *,
-    subject: str,
-    task: str | None = None,
-    session: str | None = None,
-    run: str | None = None,
-) -> list[str]:
-    subject = subject.removeprefix("sub-")
-
-    parts = [f"sub-{subject}"]
-
-    if session is not None:
-        parts.append(f"ses-{session}")
-
-    if task is not None:
-        parts.append(f"task-{task}")
-
-    if run is not None:
-        parts.append(f"run-{run}")
-
-    return parts
-
-
-def _derivative_directory(
-    config: PipelineConfig,
-    *,
-    subject: str,
-    session: str | None = None,
-) -> Path:
-    subject = subject.removeprefix("sub-")
-
-    if session is None:
-        return config.paths.derivatives_root / f"sub-{subject}" / config.bids.datatype
-
-    return (
-        config.paths.derivatives_root
-        / f"sub-{subject}"
-        / f"ses-{session}"
-        / config.bids.datatype
-    )
-
-
 def make_ica_path(
     config: PipelineConfig,
     *,
@@ -117,21 +75,15 @@ def make_ica_path(
     run: str | None = None,
 ) -> Path:
     """Create derivative path for fitted ICA."""
-    parts = _recording_parts(
+    return derivative_path(
+        config,
         subject=subject,
         session=session,
         task=task,
         run=run,
+        kind="cleaning",
+        suffix="desc-ica_ica.fif",
     )
-
-    basename = "_".join(parts + ["desc-ica_ica.fif"])
-
-    return _derivative_directory(
-        config,
-        subject=subject,
-        session=session,
-    ) / basename
-
 
 def make_ica_decision_path(
     config: PipelineConfig,
@@ -142,21 +94,15 @@ def make_ica_decision_path(
     run: str | None = None,
 ) -> Path:
     """Create derivative path for manually selected ICA exclusions."""
-    parts = _recording_parts(
+    return derivative_path(
+        config,
         subject=subject,
         session=session,
         task=task,
         run=run,
+        kind="cleaning",
+        suffix="desc-icadecision.json",
     )
-
-    basename = "_".join(parts + ["desc-icadecision.json"])
-
-    return _derivative_directory(
-        config,
-        subject=subject,
-        session=session,
-    ) / basename
-
 
 def make_cleaned_raw_path(
     config: PipelineConfig,
@@ -167,21 +113,15 @@ def make_cleaned_raw_path(
     run: str | None = None,
 ) -> Path:
     """Create derivative path for ICA-cleaned continuous raw data."""
-    parts = _recording_parts(
+    return derivative_path(
+        config,
         subject=subject,
         session=session,
         task=task,
         run=run,
+        kind="cleaning",
+        suffix="desc-cleaned_meg.fif",
     )
-
-    basename = "_".join(parts + ["desc-cleaned_meg.fif"])
-
-    return _derivative_directory(
-        config,
-        subject=subject,
-        session=session,
-    ) / basename
-
 
 def load_filtered_raw_for_cleaning(
     config: PipelineConfig,

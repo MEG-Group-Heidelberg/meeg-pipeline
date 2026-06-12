@@ -11,6 +11,7 @@ from mne.io import BaseRaw
 from mne.preprocessing import find_bad_channels_maxwell
 
 from meeg_pipeline.config import PipelineConfig
+from meeg_pipeline.paths import derivative_path
 
 
 ExistingBadChannelsPolicy = Literal["load", "overwrite"]
@@ -74,33 +75,15 @@ def make_bad_channels_path(
     run: str | None = None,
 ) -> Path:
     """Create the derivative path for manually marked bad channels."""
-    subject = subject.removeprefix("sub-")
-
-    parts = [f"sub-{subject}"]
-
-    if session is not None:
-        parts.append(f"ses-{session}")
-
-    if task is not None:
-        parts.append(f"task-{task}")
-
-    if run is not None:
-        parts.append(f"run-{run}")
-
-    basename = "_".join(parts + ["desc-badchannels.json"])
-
-    if session is None:
-        directory = config.paths.derivatives_root / f"sub-{subject}" / config.bids.datatype
-    else:
-        directory = (
-            config.paths.derivatives_root
-            / f"sub-{subject}"
-            / f"ses-{session}"
-            / config.bids.datatype
-        )
-
-    return directory / basename
-
+    return derivative_path(
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
+        kind="qc",
+        suffix="desc-badchannels.json",
+    )
 
 def make_channels_tsv_path(
     config: PipelineConfig,

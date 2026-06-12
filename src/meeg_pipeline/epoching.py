@@ -415,6 +415,7 @@ def write_epochs_for_recording(
     consensus_percs: list[float] | tuple[float, ...] | None = None,
     n_interpolates: list[int] | tuple[int, ...] | None = None,
     n_jobs: int = 1,
+    verbose: bool | str | int | None = True,
 ) -> EpochingResult:
     """Create and write epochs for one recording."""
     if on_existing not in {"skip", "overwrite"}:
@@ -498,6 +499,7 @@ def write_epochs_for_recording(
         decim=decim,
         reject_by_annotation=reject_by_annotation,
         preload=True,
+        verbose=verbose,
     )
 
     epochs, reject_log, reject_threshold = maybe_apply_autoreject(
@@ -545,6 +547,7 @@ def write_epochs_for_recordings(
     consensus_percs: list[float] | tuple[float, ...] | None = None,
     n_interpolates: list[int] | tuple[int, ...] | None = None,
     n_jobs: int = 1,
+    verbose: bool | str | int | None = True,
 ) -> list[EpochingResult]:
     """Create and write epochs for multiple recordings."""
     return [
@@ -571,6 +574,7 @@ def write_epochs_for_recordings(
             consensus_percs=consensus_percs,
             n_interpolates=n_interpolates,
             n_jobs=n_jobs,
+            verbose=verbose,
         )
         for recording in recordings
     ]

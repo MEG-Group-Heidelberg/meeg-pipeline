@@ -127,6 +127,7 @@ def write_filtered_raw_for_recording(
     session: str | None = None,
     run: str | None = None,
     on_existing: ExistingOutputPolicy = "skip",
+    verbose: bool | str | int | None = True,
 ) -> PreprocessingResult:
     """Load raw BIDS, apply bad channels, filter, and write derivative."""
     if on_existing not in {"skip", "overwrite"}:
@@ -175,7 +176,11 @@ def write_filtered_raw_for_recording(
         run=run,
     )
 
-    filtered = filter_raw(raw_result.raw, config)
+    filtered = filter_raw(
+        raw_result.raw,
+        config,
+        verbose=verbose,
+    )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     filtered.save(output_path, overwrite=on_existing == "overwrite")

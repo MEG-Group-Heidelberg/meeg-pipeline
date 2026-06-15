@@ -353,6 +353,7 @@ def maybe_apply_autoreject(
     n_interpolates: list[int] | tuple[int, ...] | None = None,
     n_jobs: int = 1,
     random_state: int = 8,
+    verbose: bool | str | int | None = True,
 ) -> tuple[Epochs, Any | None, dict[str, float] | None]:
     """Optionally apply autoreject.
 
@@ -360,33 +361,89 @@ def maybe_apply_autoreject(
     without installing autoreject.
     """
     if use_autoreject is None:
+        if verbose:
+            print("Autoreject disabled.")
         return epochs, None, None
 
     try:
         import autoreject as ar
     except ImportError:
+        if verbose:
+            print("Autoreject requested, but package 'autoreject' is not installed.")
         return epochs, None, None
+
+    if verbose:
+        ch_types_present = sorted(
+            {
+                channel_type
+                for channel_type in epochs.get_channel_types()
+                if channel_type in {"mag", "grad", "eeg"}
+            }
+        )
+        print(
+            "Autoreject input: "
+            f"{len(epochs)} epochs, "
+            f"{len(epochs.ch_names)} channels, "
+            f"ch_types={ch_types_present}, "
+            f"bads={list(epochs.info['bads'])}"
+        )
+        print(
+            "Autoreject mode: "
+            f"{use_autoreject}, "
+            f"n_jobs={n_jobs}, "
+            f"consensus={consensus_percs}, "
+            f"n_interpolate={n_interpolates}"
+        )
 
     if use_autoreject == "Interpolation":
         ar_object = ar.AutoReject(
             n_interpolate=n_interpolates,
             consensus=consensus_percs,
             n_jobs=n_jobs,
+            verbose=verbose,
         )
+
         cleaned_epochs, reject_log = ar_object.fit_transform(
             epochs,
             return_log=True,
         )
+
+        if verbose:
+            n_bad_epochs = int(reject_log.bad_epochs.sum())
+            print(
+                "Autoreject finished: "
+                f"{len(cleaned_epochs)} epochs retained, "
+                f"{n_bad_epochs} epochs marked bad in reject log."
+            )
+
         return cleaned_epochs, reject_log, None
 
     if use_autoreject == "Threshold":
         reject_threshold = ar.get_rejection_threshold(
             epochs,
             random_state=random_state,
+            verbose=verbose,
         )
+
+        if verbose:
+            print(f"Autoreject threshold estimate: {reject_threshold}")
+
         epochs = epochs.copy()
+        n_before = len(epochs)
         epochs.drop_bad(reject=reject_threshold)
+        n_after = len(epochs)
+
+        if verbose:
+            print(
+                "Autoreject thresholding finished: "
+                f"{n_before - n_after} epochs dropped, "
+                f"{n_after} epochs retained."
+            )
+
         return epochs, None, reject_threshold
+
+    if verbose:
+        print(f"Unknown autoreject mode {use_autoreject!r}; returning epochs unchanged.")
 
     return epochs, None, None
 
@@ -508,6 +565,7 @@ def write_epochs_for_recording(
         consensus_percs=consensus_percs,
         n_interpolates=n_interpolates,
         n_jobs=n_jobs,
+        verbose=verbose,
     )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)

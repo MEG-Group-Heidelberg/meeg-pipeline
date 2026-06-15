@@ -345,12 +345,112 @@ def make_epochs(
     return epochs
 
 
+def _select_autoreject_training_epochs(
+    epochs: Epochs,
+    subset: int | float | None,
+    *,
+    random_state: int = 8,
+    verbose: bool | str | int | None = True,
+) -> Epochs:
+    """Select epochs used for fitting autoreject.
+
+    Parameters
+    ----------
+    epochs
+        Full epochs object. Autoreject is later applied to all epochs.
+    subset
+        Subset specification.
+
+        - None: use all epochs.
+        - int > 1: use every nth epoch, e.g. 3 means every third epoch.
+        - int == 1: use all epochs.
+        - float between 0 and 1: randomly sample that fraction of epochs.
+    random_state
+        Random state used for fractional subsets.
+    verbose
+        Whether to print progress messages.
+    """
+    if subset is None:
+        return epochs
+
+    n_epochs = len(epochs)
+
+    if n_epochs == 0:
+        return epochs
+
+    if isinstance(subset, bool):
+        raise ValueError(
+            "autoreject subset must be None, an int, or a float between 0 and 1. "
+            f"Got {subset!r}."
+        )
+
+    if isinstance(subset, int):
+        if subset < 1:
+            raise ValueError(
+                "Integer autoreject subset must be >= 1. "
+                f"Got {subset!r}."
+            )
+
+        if subset == 1:
+            return epochs
+
+        indices = np.arange(0, n_epochs, subset, dtype=int)
+
+        if len(indices) == 0:
+            indices = np.array([0], dtype=int)
+
+        if verbose:
+            if subset == 1:
+                print(
+                    "Using all epochs to train autoreject."
+                )
+            else:
+                print(
+                    "Autoreject training subset: "
+                    f"using every {subset} epochs "
+                    f"({len(indices)} of {n_epochs} epochs)."
+                )
+
+        return epochs[indices]
+
+    if isinstance(subset, float):
+        if not 0 < subset <= 1:
+            raise ValueError(
+                "Float autoreject subset must be > 0 and <= 1. "
+                f"Got {subset!r}."
+            )
+
+        if subset == 1:
+            return epochs
+
+        n_train = max(1, int(round(n_epochs * subset)))
+        rng = np.random.default_rng(random_state)
+        indices = np.sort(
+            rng.choice(n_epochs, size=n_train, replace=False)
+        )
+
+        if verbose:
+            print(
+                "Autoreject training subset: "
+                f"using random fraction {subset:g} "
+                f"({len(indices)} of {n_epochs} epochs)."
+            )
+
+        return epochs[indices]
+
+    raise ValueError(
+        "autoreject subset must be None, an int, or a float between 0 and 1. "
+        f"Got {subset!r}."
+    )
+
+
 def maybe_apply_autoreject(
     epochs: Epochs,
     *,
     use_autoreject: Literal["Interpolation", "Threshold"] | None = None,
     consensus_percs: list[float] | tuple[float, ...] | None = None,
     n_interpolates: list[int] | tuple[int, ...] | None = None,
+    subset: int | float | None = None,
     n_jobs: int = 1,
     random_state: int = 8,
     verbose: bool | str | int | None = True,
@@ -371,6 +471,13 @@ def maybe_apply_autoreject(
         if verbose:
             print("Autoreject requested, but package 'autoreject' is not installed.")
         return epochs, None, None
+    
+    fit_epochs = _select_autoreject_training_epochs(
+        epochs,
+        subset,
+        random_state=random_state,
+        verbose=verbose,
+    )
 
     if verbose:
         ch_types_present = sorted(
@@ -382,7 +489,8 @@ def maybe_apply_autoreject(
         )
         print(
             "Autoreject input: "
-            f"{len(epochs)} epochs, "
+            f"{len(epochs)} epochs total, "
+            f"{len(fit_epochs)} epochs for fitting, "
             f"{len(epochs.ch_names)} channels, "
             f"ch_types={ch_types_present}, "
             f"bads={list(epochs.info['bads'])}"
@@ -403,7 +511,9 @@ def maybe_apply_autoreject(
             verbose=verbose,
         )
 
-        cleaned_epochs, reject_log = ar_object.fit_transform(
+        ar_object.fit(fit_epochs)
+
+        cleaned_epochs, reject_log = ar_object.transform(
             epochs,
             return_log=True,
         )
@@ -420,7 +530,7 @@ def maybe_apply_autoreject(
 
     if use_autoreject == "Threshold":
         reject_threshold = ar.get_rejection_threshold(
-            epochs,
+            fit_epochs,
             random_state=random_state,
             verbose=verbose,
         )
@@ -471,6 +581,7 @@ def write_epochs_for_recording(
     use_autoreject: Literal["Interpolation", "Threshold"] | None = None,
     consensus_percs: list[float] | tuple[float, ...] | None = None,
     n_interpolates: list[int] | tuple[int, ...] | None = None,
+    autoreject_subset: int | float | None = None,
     n_jobs: int = 1,
     verbose: bool | str | int | None = True,
 ) -> EpochingResult:
@@ -564,6 +675,7 @@ def write_epochs_for_recording(
         use_autoreject=use_autoreject,
         consensus_percs=consensus_percs,
         n_interpolates=n_interpolates,
+        subset=autoreject_subset,
         n_jobs=n_jobs,
         verbose=verbose,
     )
@@ -604,6 +716,7 @@ def write_epochs_for_recordings(
     use_autoreject: Literal["Interpolation", "Threshold"] | None = None,
     consensus_percs: list[float] | tuple[float, ...] | None = None,
     n_interpolates: list[int] | tuple[int, ...] | None = None,
+    autoreject_subset: int | float | None = None,
     n_jobs: int = 1,
     verbose: bool | str | int | None = True,
 ) -> list[EpochingResult]:
@@ -631,6 +744,7 @@ def write_epochs_for_recordings(
             use_autoreject=use_autoreject,
             consensus_percs=consensus_percs,
             n_interpolates=n_interpolates,
+            autoreject_subset=autoreject_subset,
             n_jobs=n_jobs,
             verbose=verbose,
         )

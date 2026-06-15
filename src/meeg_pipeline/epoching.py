@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
+import warnings
 
 import mne
 import numpy as np
@@ -299,6 +300,61 @@ def events_table_to_mne_events(
     return mne_events, event_id, metadata
 
 
+def _restrict_thresholds_to_existing_channel_types(
+    thresholds: dict[str, float] | None,
+    existing_ch_types: list[str],
+    *,
+    name: str,
+    verbose: bool | str | int | None = True,
+) -> dict[str, float] | None:
+    """Remove reject/flat thresholds for channel types not present in data."""
+    if thresholds is None:
+        return None
+
+    restricted = thresholds.copy()
+    removed = sorted(key for key in restricted if key not in existing_ch_types)
+
+    for key in removed:
+        restricted.pop(key)
+
+    if verbose and removed:
+        print(
+            f"Ignoring {name} threshold(s) for absent channel type(s): "
+            f"{removed}"
+        )
+
+    if not restricted:
+        if verbose:
+            print(f"No {name} thresholds remain after channel selection.")
+        return None
+
+    return restricted
+
+
+def _warn_if_bad_interpolation_evokeds_with_epoch_rejection(
+    *,
+    bad_interpolation: Literal["epochs", "evokeds"] | None,
+    use_autoreject: Literal["Interpolation", "Threshold"] | None,
+    reject: dict[str, float] | None,
+    flat: dict[str, float] | None,
+) -> None:
+    """Warn about bad-channel handling that can bias epoch rejection."""
+    if bad_interpolation != "evokeds":
+        return
+
+    if use_autoreject is None and reject is None and flat is None:
+        return
+
+    warnings.warn(
+        'With bad_interpolation="evokeds", bad channels are still included '
+        "during epoch rejection. This can heavily influence reject, flat, or "
+        "autoreject decisions. Consider bad_interpolation='epochs', "
+        "bad_interpolation=None, or disabling reject/flat/autoreject.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+
+
 def make_epochs(
     raw: BaseRaw,
     events_table: pd.DataFrame,
@@ -371,6 +427,8 @@ def _select_autoreject_training_epochs(
         Whether to print progress messages.
     """
     if subset is None:
+        if verbose:
+            print("Using all epochs to train autoreject.")
         return epochs
 
     n_epochs = len(epochs)
@@ -392,6 +450,8 @@ def _select_autoreject_training_epochs(
             )
 
         if subset == 1:
+            if verbose:
+                print("Using all epochs to train autoreject.")
             return epochs
 
         indices = np.arange(0, n_epochs, subset, dtype=int)
@@ -400,16 +460,11 @@ def _select_autoreject_training_epochs(
             indices = np.array([0], dtype=int)
 
         if verbose:
-            if subset == 1:
-                print(
-                    "Using all epochs to train autoreject."
-                )
-            else:
-                print(
-                    "Autoreject training subset: "
-                    f"using every {subset} epochs "
-                    f"({len(indices)} of {n_epochs} epochs)."
-                )
+            print(
+                "Autoreject training subset: "
+                f"using every {subset} epochs "
+                f"({len(indices)} of {n_epochs} epochs)."
+            )
 
         return epochs[indices]
 
@@ -421,6 +476,8 @@ def _select_autoreject_training_epochs(
             )
 
         if subset == 1:
+            if verbose:
+                print("Using all epochs to train autoreject.")
             return epochs
 
         n_train = max(1, int(round(n_epochs * subset)))
@@ -454,6 +511,7 @@ def maybe_apply_autoreject(
     n_jobs: int = 1,
     random_state: int = 8,
     verbose: bool | str | int | None = True,
+    autoreject_verbose: bool | str | int | None = False,
 ) -> tuple[Epochs, Any | None, dict[str, float] | None]:
     """Optionally apply autoreject.
 
@@ -471,7 +529,7 @@ def maybe_apply_autoreject(
         if verbose:
             print("Autoreject requested, but package 'autoreject' is not installed.")
         return epochs, None, None
-    
+
     fit_epochs = _select_autoreject_training_epochs(
         epochs,
         subset,
@@ -500,18 +558,28 @@ def maybe_apply_autoreject(
             f"{use_autoreject}, "
             f"n_jobs={n_jobs}, "
             f"consensus={consensus_percs}, "
-            f"n_interpolate={n_interpolates}"
+            f"n_interpolate={n_interpolates}, "
+            f"internal_verbose={autoreject_verbose}"
         )
 
     if use_autoreject == "Interpolation":
+        if verbose:
+            print("Creating AutoReject object.")
+
         ar_object = ar.AutoReject(
             n_interpolate=n_interpolates,
             consensus=consensus_percs,
             n_jobs=n_jobs,
-            verbose=verbose,
+            verbose=autoreject_verbose,
         )
 
+        if verbose:
+            print("Fitting AutoReject on training epochs...")
+
         ar_object.fit(fit_epochs)
+
+        if verbose:
+            print("Epochs fitted. Starting batch transform on all epochs.")
 
         cleaned_epochs, reject_log = ar_object.transform(
             epochs,
@@ -529,14 +597,18 @@ def maybe_apply_autoreject(
         return cleaned_epochs, reject_log, None
 
     if use_autoreject == "Threshold":
+        if verbose:
+            print("Estimating autoreject rejection thresholds on training epochs...")
+
         reject_threshold = ar.get_rejection_threshold(
             fit_epochs,
             random_state=random_state,
-            verbose=verbose,
+            verbose=autoreject_verbose,
         )
 
         if verbose:
             print(f"Autoreject threshold estimate: {reject_threshold}")
+            print("Dropping bad epochs with autoreject rejection thresholds...")
 
         epochs = epochs.copy()
         n_before = len(epochs)
@@ -582,6 +654,7 @@ def write_epochs_for_recording(
     consensus_percs: list[float] | tuple[float, ...] | None = None,
     n_interpolates: list[int] | tuple[int, ...] | None = None,
     autoreject_subset: int | float | None = None,
+    autoreject_verbose: bool | str | int | None = False,
     n_jobs: int = 1,
     verbose: bool | str | int | None = True,
 ) -> EpochingResult:
@@ -654,6 +727,29 @@ def write_epochs_for_recording(
         bad_interpolation=bad_interpolation,
     )
 
+    _warn_if_bad_interpolation_evokeds_with_epoch_rejection(
+        bad_interpolation=bad_interpolation,
+        use_autoreject=use_autoreject,
+        reject=reject,
+        flat=flat,
+    )
+
+    existing_ch_types = raw.get_channel_types(unique=True, only_data_chs=True)
+
+    reject = _restrict_thresholds_to_existing_channel_types(
+        reject,
+        existing_ch_types,
+        name="reject",
+        verbose=verbose,
+    )
+
+    flat = _restrict_thresholds_to_existing_channel_types(
+        flat,
+        existing_ch_types,
+        name="flat",
+        verbose=verbose,
+    )
+
     epochs = make_epochs(
         raw,
         events_result.events,
@@ -678,6 +774,7 @@ def write_epochs_for_recording(
         subset=autoreject_subset,
         n_jobs=n_jobs,
         verbose=verbose,
+        autoreject_verbose=autoreject_verbose,
     )
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -717,6 +814,7 @@ def write_epochs_for_recordings(
     consensus_percs: list[float] | tuple[float, ...] | None = None,
     n_interpolates: list[int] | tuple[int, ...] | None = None,
     autoreject_subset: int | float | None = None,
+    autoreject_verbose: bool | str | int | None = False,
     n_jobs: int = 1,
     verbose: bool | str | int | None = True,
 ) -> list[EpochingResult]:
@@ -745,6 +843,7 @@ def write_epochs_for_recordings(
             consensus_percs=consensus_percs,
             n_interpolates=n_interpolates,
             autoreject_subset=autoreject_subset,
+            autoreject_verbose=autoreject_verbose,
             n_jobs=n_jobs,
             verbose=verbose,
         )

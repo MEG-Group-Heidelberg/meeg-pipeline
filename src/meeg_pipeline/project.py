@@ -89,6 +89,13 @@ paths:
   sourcedata_root: "./sourcedata"
   derivatives_root: "./derivatives/meeg-pipeline"
 
+sourcedata:
+  # How ses-* folders in sourcedata are mapped to BIDS sessions:
+  # "ignore": allow ses-* folders for organization, but omit ses from BIDS paths
+  # "include": keep ses-* folders as BIDS sessions
+  # "auto": include sessions only when a subject has multiple ses-* folders
+  sessions: "ignore"
+
 bids:
   datatype: "meg"
   task: null
@@ -168,6 +175,14 @@ Place original files under a folder structure like:
 
     sourcedata/sub-0001/meg/task-example/<original_file>.fif
 
+or, when you want to organize source files by acquisition date:
+
+    sourcedata/sub-0001/ses-20260523/meg/task-example/<original_file>.fif
+
+By default, `sourcedata.sessions` is set to `ignore`, so a single `ses-*`
+folder can be used for organization without creating a BIDS session entity.
+Set `sourcedata.sessions: "include"` for true multi-session BIDS datasets.
+
 If source data live outside this project folder, set `sourcedata_root` in
 `configs/local.yaml`, for example:
 
@@ -244,6 +259,12 @@ def init_project(
         project_root / "notebooks",
         project_root / "sourcedata",
         project_root / "sourcedata" / "sub-0001" / "meg" / "task-example",
+        project_root
+        / "sourcedata"
+        / "sub-0001"
+        / "ses-20260523"
+        / "meg"
+        / "task-example",
         project_root / "derivatives" / "meeg-pipeline",
     ]:
         _mkdir_if_missing(
@@ -260,6 +281,25 @@ def init_project(
         / "task-example"
         / "README.md",
         "Place exactly one original .fif file for this example task in this folder.\n",
+        overwrite=overwrite,
+        created_paths=created_paths,
+        skipped_paths=skipped_paths,
+    )
+
+
+    _write_text_if_missing(
+        project_root
+        / "sourcedata"
+        / "sub-0001"
+        / "ses-20260523"
+        / "meg"
+        / "task-example"
+        / "README.md",
+        (
+            "Alternative example using an acquisition-date session folder. "
+            "With sourcedata.sessions: 'ignore', this folder is used only for "
+            "source organization and the BIDS target omits ses-20260523.\n"
+        ),
         overwrite=overwrite,
         created_paths=created_paths,
         skipped_paths=skipped_paths,

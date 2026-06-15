@@ -13,7 +13,11 @@ from meeg_pipeline.bids import (
     read_participants,
     read_raw_bids_recording_if_exists,
 )
-from meeg_pipeline.sourcedata import discover_source_recordings, make_target_bids_path
+from meeg_pipeline.sourcedata import (
+    discover_source_recordings,
+    discover_source_recordings_with_issues,
+    make_target_bids_path,
+)
 from meeg_pipeline.conversion import convert_source_recordings_to_bids
 from meeg_pipeline.channels import print_channel_summary, summarize_channels
 from meeg_pipeline.events import (
@@ -285,9 +289,10 @@ def main() -> None:
 
     elif args.command == "sourcedata-info":
         config = load_config(args.config)
-        recordings = discover_source_recordings(config)
+        recordings, issues = discover_source_recordings_with_issues(config)
 
         print(f"Found {len(recordings)} source recording(s).")
+        print(f"Found {len(issues)} issue(s).")
 
         for recording in recordings:
             target_bids_path = make_target_bids_path(config, recording)
@@ -295,11 +300,18 @@ def main() -> None:
             print()
             print(f"Source: {recording.source_path}")
             print(f"Subject: {recording.subject}")
-            print(f"Session: {recording.session}")
+            print(f"Source session: {getattr(recording, 'source_session', None)}")
+            print(f"BIDS session: {recording.session}")
             print(f"Task: {recording.task}")
             print(f"Run: {recording.run}")
             print(f"Target: {target_bids_path.fpath}")
             print(f"Target exists: {target_bids_path.fpath.exists()}")
+
+        if issues:
+            print()
+            print("Issues:")
+            for issue in issues:
+                print(f"- {issue.status}: {issue.path} — {issue.message}")
 
     elif args.command == "convert-to-bids":
         config = load_config(args.config)

@@ -178,6 +178,10 @@ my-meeg-project/
       meg/
         task-example/
           README.md
+      ses-20260523/
+        meg/
+          task-example/
+            README.md
 
   derivatives/
     meeg-pipeline/
@@ -211,6 +215,9 @@ paths:
   bids_root: "."
   sourcedata_root: "./sourcedata"
   derivatives_root: "./derivatives/meeg-pipeline"
+
+sourcedata:
+  sessions: "ignore"  # "ignore" | "include" | "auto"
 ```
 
 If original source files live on an external drive or outside the project folder,
@@ -293,7 +300,7 @@ my-meeg-project/
 
   sourcedata/
     sub-0001/
-      ses-001/
+      ses-yyyymmdd/
         meg/
           task-chords/
             original_chords_file.fif
@@ -301,31 +308,31 @@ my-meeg-project/
             original_nochords_file.fif
 
   sub-0001/
-    ses-001/
+    ses-yyyymmdd/
       meg/
-        sub-0001_ses-001_task-chords_meg.fif
-        sub-0001_ses-001_task-chords_meg.json
-        sub-0001_ses-001_task-chords_channels.tsv
-        sub-0001_ses-001_task-chords_events.tsv
+        sub-0001_ses-yyyymmdd_task-chords_meg.fif
+        sub-0001_ses-yyyymmdd_task-chords_meg.json
+        sub-0001_ses-yyyymmdd_task-chords_channels.tsv
+        sub-0001_ses-yyyymmdd_task-chords_events.tsv
 
-        sub-0001_ses-001_task-nochords_meg.fif
-        sub-0001_ses-001_task-nochords_meg.json
-        sub-0001_ses-001_task-nochords_channels.tsv
-        sub-0001_ses-001_task-nochords_events.tsv
+        sub-0001_ses-yyyymmdd_task-nochords_meg.fif
+        sub-0001_ses-yyyymmdd_task-nochords_meg.json
+        sub-0001_ses-yyyymmdd_task-nochords_channels.tsv
+        sub-0001_ses-yyyymmdd_task-nochords_events.tsv
 
   derivatives/
     meeg-pipeline/
       sub-0001/
-        ses-001/
+        ses-yyyymmdd/
           meg/
-            sub-0001_ses-001_task-chords_desc-badchannels.json
-            sub-0001_ses-001_task-chords_desc-filtered_meg.fif
-            sub-0001_ses-001_task-chords_desc-badsegments_annotations.fif
-            sub-0001_ses-001_task-chords_desc-ica_ica.fif
-            sub-0001_ses-001_task-chords_desc-icadecision.json
-            sub-0001_ses-001_task-chords_desc-cleaned_meg.fif
-            sub-0001_ses-001_task-chords_desc-cleaned_epo.fif
-            sub-0001_ses-001_task-chords_desc-evoked_ave.fif
+            sub-0001_ses-yyyymmdd_task-chords_desc-badchannels.json
+            sub-0001_ses-yyyymmdd_task-chords_desc-filtered_meg.fif
+            sub-0001_ses-yyyymmdd_task-chords_desc-badsegments_annotations.fif
+            sub-0001_ses-yyyymmdd_task-chords_desc-ica_ica.fif
+            sub-0001_ses-yyyymmdd_task-chords_desc-icadecision.json
+            sub-0001_ses-yyyymmdd_task-chords_desc-cleaned_meg.fif
+            sub-0001_ses-yyyymmdd_task-chords_desc-cleaned_epo.fif
+            sub-0001_ses-yyyymmdd_task-chords_desc-evoked_ave.fif
 ```
 
 For projects without sessions, omit the `ses-...` level consistently:
@@ -374,32 +381,48 @@ paths:
 
 Relative paths are resolved relative to the project root.
 
-The folder structure inside `sourcedata_root` should encode the relevant BIDS
-entities.
+The folder structure inside `sourcedata_root` should encode subject, task, and
+optionally acquisition-date/session and run information. Session folders may be
+used for source-data organization without necessarily becoming BIDS sessions.
+This is controlled in `configs/local.yaml`:
 
-With sessions:
-
-```text
-sourcedata/
-  sub-0001/
-    ses-001/
-      meg/
-        task-chords/
-          <original_file>.fif
-        task-nochords/
-          <original_file>.fif
+```yaml
+sourcedata:
+  sessions: "ignore"  # "ignore" | "include" | "auto"
 ```
 
-Without sessions:
+Supported session modes:
+
+- `ignore`: `ses-*` folders are allowed in `sourcedata/`, but omitted from BIDS
+  target paths. This is the recommended default for one-session analyses.
+- `include`: `ses-*` folders become BIDS session entities. Use this for true
+  multi-session BIDS datasets.
+- `auto`: sessions are included only for subjects with more than one `ses-*`
+  folder. This is convenient, but less reproducible than an explicit choice.
+
+Without source session folders:
 
 ```text
 sourcedata/
   sub-0001/
     meg/
-      task-chords/
+      task-rest/
         <original_file>.fif
-      task-nochords/
+      task-auditory/
         <original_file>.fif
+```
+
+With acquisition-date folders:
+
+```text
+sourcedata/
+  sub-0001/
+    ses-20260523/
+      meg/
+        task-rest/
+          <original_file>.fif
+        task-auditory/
+          <original_file>.fif
 ```
 
 With runs:
@@ -407,9 +430,9 @@ With runs:
 ```text
 sourcedata/
   sub-0001/
-    ses-001/
+    ses-20260523/
       meg/
-        task-chords/
+        task-rest/
           run-01/
             <original_file>.fif
           run-02/
@@ -422,12 +445,13 @@ source folder should contain exactly one `.fif` file.
 Examples:
 
 ```text
-sourcedata/sub-0001/meg/task-chords/original_file.fif
-sourcedata/sub-0001/ses-001/meg/task-chords/run-01/original_file.fif
+sourcedata/sub-0001/meg/task-rest/original_file.fif
+sourcedata/sub-0001/ses-20260523/meg/task-rest/run-01/original_file.fif
 ```
 
 The pipeline uses the folder structure to infer BIDS entities such as subject,
-session, task, and run.
+session, task, and run. If `sourcedata.sessions` is `ignore`, the source session
+is retained in source-discovery summaries but not written to raw BIDS filenames.
 
 ### Raw BIDS data
 
@@ -437,11 +461,11 @@ Example:
 
 ```text
 sub-0001/
-  ses-001/
+  ses-yyyymmdd/
     meg/
-      sub-0001_ses-001_task-chords_meg.fif
-      sub-0001_ses-001_task-chords_channels.tsv
-      sub-0001_ses-001_task-chords_events.tsv
+      sub-0001_ses-yyyymmdd_task-chords_meg.fif
+      sub-0001_ses-yyyymmdd_task-chords_channels.tsv
+      sub-0001_ses-yyyymmdd_task-chords_events.tsv
 ```
 
 Raw BIDS FIF files are generated from the original source data, preferably using
@@ -480,15 +504,15 @@ derivatives/meeg-pipeline/
 Examples:
 
 ```text
-derivatives/meeg-pipeline/sub-0001/ses-001/meg/
-  sub-0001_ses-001_task-chords_desc-badchannels.json
-  sub-0001_ses-001_task-chords_desc-filtered_meg.fif
-  sub-0001_ses-001_task-chords_desc-badsegments_annotations.fif
-  sub-0001_ses-001_task-chords_desc-ica_ica.fif
-  sub-0001_ses-001_task-chords_desc-icadecision.json
-  sub-0001_ses-001_task-chords_desc-cleaned_meg.fif
-  sub-0001_ses-001_task-chords_desc-cleaned_epo.fif
-  sub-0001_ses-001_task-chords_desc-evoked_ave.fif
+derivatives/meeg-pipeline/sub-0001/ses-yyyymmdd/meg/
+  sub-0001_ses-yyyymmdd_task-chords_desc-badchannels.json
+  sub-0001_ses-yyyymmdd_task-chords_desc-filtered_meg.fif
+  sub-0001_ses-yyyymmdd_task-chords_desc-badsegments_annotations.fif
+  sub-0001_ses-yyyymmdd_task-chords_desc-ica_ica.fif
+  sub-0001_ses-yyyymmdd_task-chords_desc-icadecision.json
+  sub-0001_ses-yyyymmdd_task-chords_desc-cleaned_meg.fif
+  sub-0001_ses-yyyymmdd_task-chords_desc-cleaned_epo.fif
+  sub-0001_ses-yyyymmdd_task-chords_desc-evoked_ave.fif
 ```
 
 The raw BIDS FIF files should not be modified during preprocessing.
@@ -525,24 +549,17 @@ or timepoints.
 If a project is known to contain only one measurement appointment per
 participant, the `ses-...` level can be omitted.
 
-Recommended session naming:
+Recommended session naming for acquisition-date folders:
 
 ```text
-ses-001
-ses-002
-ses-003
+ses-20260523
+ses-20260602
 ```
 
-The session index is participant-specific:
-
-```text
-sub-0001/ses-001 = first measurement appointment of participant sub-0001
-sub-0001/ses-002 = second measurement appointment of participant sub-0001
-sub-0002/ses-001 = first measurement appointment of participant sub-0002
-```
-
-The same session label does not have to correspond to the same calendar date
-across participants.
+Use dates without hyphens because BIDS entity labels are alphanumeric. Date-like
+session labels also make it easier to match recordings to empty-room
+measurements. Numeric labels such as `ses-yyyymmdd` are still valid when they better
+fit the project.
 
 ### Tasks
 
@@ -565,8 +582,8 @@ Runs are used for repeated recordings of the same task within the same session.
 Example:
 
 ```text
-sub-0001_ses-001_task-chords_run-01_meg.fif
-sub-0001_ses-001_task-chords_run-02_meg.fif
+sub-0001_ses-yyyymmdd_task-chords_run-01_meg.fif
+sub-0001_ses-yyyymmdd_task-chords_run-02_meg.fif
 ```
 
 Use `run-...` if the same task was repeated or split into multiple acquisition
@@ -1317,15 +1334,15 @@ For one participant with one session and two tasks:
 ```bash
 cd ~/MEEG/my-meeg-project
 
-mkdir -p sourcedata/sub-0001/ses-001/meg/task-chords
-mkdir -p sourcedata/sub-0001/ses-001/meg/task-nochords
+mkdir -p sourcedata/sub-0001/ses-yyyymmdd/meg/task-chords
+mkdir -p sourcedata/sub-0001/ses-yyyymmdd/meg/task-nochords
 ```
 
 Copy the original FIF files into the corresponding `sourcedata/` task folders:
 
 ```text
-sourcedata/sub-0001/ses-001/meg/task-chords/<original_chords_file>.fif
-sourcedata/sub-0001/ses-001/meg/task-nochords/<original_nochords_file>.fif
+sourcedata/sub-0001/ses-yyyymmdd/meg/task-chords/<original_chords_file>.fif
+sourcedata/sub-0001/ses-yyyymmdd/meg/task-nochords/<original_nochords_file>.fif
 ```
 
 For projects without sessions, use:
@@ -1340,7 +1357,7 @@ Do not modify these source files.
 The corresponding BIDS raw files will later be generated under:
 
 ```text
-sub-0001/ses-001/meg/
+sub-0001/ses-yyyymmdd/meg/
 ```
 
 or, if no session level is used:
@@ -1352,8 +1369,8 @@ sub-0001/meg/
 with filenames such as:
 
 ```text
-sub-0001_ses-001_task-chords_meg.fif
-sub-0001_ses-001_task-nochords_meg.fif
+sub-0001_ses-yyyymmdd_task-chords_meg.fif
+sub-0001_ses-yyyymmdd_task-nochords_meg.fif
 ```
 
 or, without sessions:
@@ -1383,7 +1400,7 @@ meegpipe bids-path \
 Expected output path:
 
 ```text
-sub-0001/ses-001/meg/sub-0001_ses-001_task-chords_meg.fif
+sub-0001/ses-yyyymmdd/meg/sub-0001_ses-yyyymmdd_task-chords_meg.fif
 ```
 
 For the no-chords recording:
@@ -1400,7 +1417,7 @@ meegpipe bids-path \
 Expected output path:
 
 ```text
-sub-0001/ses-001/meg/sub-0001_ses-001_task-nochords_meg.fif
+sub-0001/ses-yyyymmdd/meg/sub-0001_ses-yyyymmdd_task-nochords_meg.fif
 ```
 
 ## Development status

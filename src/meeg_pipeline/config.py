@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 
@@ -98,6 +98,11 @@ class AutorejectConfig:
 
 
 @dataclass(frozen=True)
+class SourcedataConfig:
+    sessions: Literal["ignore", "include", "auto"] = "ignore"
+
+
+@dataclass(frozen=True)
 class SourceConfig:
     spacing: str = "ico5"
     noise_cov_mode: str = "erm"
@@ -113,6 +118,7 @@ class PipelineConfig:
     paths: ProjectPaths
     runtime: RuntimeConfig
     bids: BIDSConfig
+    sourcedata: SourcedataConfig
     events: EventsConfig
     preprocessing: PreprocessingConfig
     cleaning: CleaningConfig
@@ -248,6 +254,17 @@ def load_config(config_path: str | Path) -> PipelineConfig:
         run=bids_raw.get("run"),
     )
 
+    sourcedata_raw = raw.get("sourcedata", {})
+    sourcedata_sessions = sourcedata_raw.get("sessions", "ignore")
+
+    if sourcedata_sessions not in {"ignore", "include", "auto"}:
+        raise ValueError(
+            "sourcedata.sessions must be one of 'ignore', 'include', "
+            f"or 'auto', got {sourcedata_sessions!r}."
+        )
+
+    sourcedata = SourcedataConfig(sessions=sourcedata_sessions)
+
     events_raw = raw.get("events", {})
     extraction_raw = events_raw.get("extraction", {})
 
@@ -349,6 +366,7 @@ def load_config(config_path: str | Path) -> PipelineConfig:
         paths=paths,
         runtime=runtime,
         bids=bids,
+        sourcedata=sourcedata,
         events=events,
         preprocessing=preprocessing,
         cleaning=cleaning,

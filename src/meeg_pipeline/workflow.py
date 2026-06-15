@@ -1076,6 +1076,7 @@ def source_recordings_to_dataframe(config: PipelineConfig) -> pd.DataFrame:
         rows.append(
             {
                 "subject": recording.subject,
+                "source_session": getattr(recording, "source_session", None),
                 "session": recording.session,
                 "task": recording.task,
                 "run": recording.run,
@@ -1089,6 +1090,7 @@ def source_recordings_to_dataframe(config: PipelineConfig) -> pd.DataFrame:
         rows,
         columns=[
             "subject",
+            "source_session",
             "session",
             "task",
             "run",

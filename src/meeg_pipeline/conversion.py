@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Literal
 
@@ -76,18 +77,52 @@ def convert_source_recordings_to_bids(
     *,
     on_existing: ExistingOutputPolicy = "skip",
 ) -> list[ConversionResult]:
-    """Convert multiple source recordings to raw BIDS."""
+    """Convert multiple source recordings to raw BIDS.
+
+    If multiple source recordings map to the same target BIDS path, none of the
+    colliding recordings are converted. This prevents accidental overwrites when
+    sourcedata session folders are ignored or when run folders are missing.
+    """
     if on_existing not in {"skip", "overwrite"}:
         raise ValueError(
             f"Invalid on_existing value: {on_existing!r}. "
             "Use 'skip' or 'overwrite'."
         )
 
-    return [
-        convert_source_recording_to_bids(
-            config,
-            recording,
-            overwrite=on_existing == "overwrite",
+    target_to_recordings: dict[str, list[SourceRecording]] = defaultdict(list)
+
+    for recording in recordings:
+        target_to_recordings[str(make_target_bids_path(config, recording).fpath)].append(
+            recording
         )
-        for recording in recordings
-    ]
+
+    results: list[ConversionResult] = []
+
+    for recording in recordings:
+        target_path = str(make_target_bids_path(config, recording).fpath)
+        colliding_recordings = target_to_recordings[target_path]
+
+        if len(colliding_recordings) > 1:
+            results.append(
+                ConversionResult(
+                    source_path=str(recording.source_path),
+                    target_path=target_path,
+                    status="duplicate_target",
+                    message=(
+                        "Multiple source recordings map to the same BIDS "
+                        "target. Use sourcedata.sessions: 'include', add "
+                        "run-* folders, or remove duplicate inputs."
+                    ),
+                )
+            )
+            continue
+
+        results.append(
+            convert_source_recording_to_bids(
+                config,
+                recording,
+                overwrite=on_existing == "overwrite",
+            )
+        )
+
+    return results

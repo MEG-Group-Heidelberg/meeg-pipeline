@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 from meeg_pipeline.bids import make_bids_path
 from meeg_pipeline.config import PipelineConfig
+
+
+SourcedataSessionMode = Literal["ignore", "include", "auto"]
 
 
 @dataclass(frozen=True)
@@ -14,6 +19,7 @@ class SourceRecording:
     session: str | None
     task: str
     run: str | None
+    source_session: str | None = None
 
 
 @dataclass(frozen=True)
@@ -51,6 +57,41 @@ def _find_single_fif(folder: Path) -> tuple[Path | None, SourceDiscoveryIssue | 
     return fif_files[0], None
 
 
+def _configured_session_mode(config: PipelineConfig) -> SourcedataSessionMode:
+    sourcedata = getattr(config, "sourcedata", None)
+    mode = getattr(sourcedata, "sessions", "ignore")
+
+    if mode not in {"ignore", "include", "auto"}:
+        raise ValueError(
+            "sourcedata.sessions must be one of 'ignore', 'include', or "
+            f"'auto', got {mode!r}."
+        )
+
+    return mode
+
+
+def _resolve_bids_session(
+    source_session: str | None,
+    *,
+    subject: str,
+    mode: SourcedataSessionMode,
+    subject_session_counts: dict[str, int],
+) -> str | None:
+    if source_session is None:
+        return None
+
+    if mode == "include":
+        return source_session
+
+    if mode == "ignore":
+        return None
+
+    if mode == "auto":
+        return source_session if subject_session_counts.get(subject, 0) > 1 else None
+
+    raise ValueError(f"Invalid sourcedata session mode: {mode!r}.")
+
+
 def discover_source_recordings(config: PipelineConfig) -> list[SourceRecording]:
     """Find source FIF files in the standardized sourcedata structure.
 
@@ -75,8 +116,9 @@ def discover_source_recordings_with_issues(
             )
         ]
 
-    recordings: list[SourceRecording] = []
+    raw_recordings: list[SourceRecording] = []
     issues: list[SourceDiscoveryIssue] = []
+    source_sessions_by_subject: dict[str, set[str]] = defaultdict(set)
 
     for subject_dir in sorted(sourcedata_root.glob("sub-*")):
         if not subject_dir.is_dir():
@@ -91,31 +133,65 @@ def discover_source_recordings_with_issues(
             new_recordings, new_issues = _discover_recordings_in_meg_dir(
                 meg_dir=meg_dir_without_session,
                 subject=subject,
-                session=None,
+                source_session=None,
             )
-            recordings.extend(new_recordings)
+            raw_recordings.extend(new_recordings)
             issues.extend(new_issues)
 
         for session_dir in sorted(subject_dir.glob("ses-*")):
             if not session_dir.is_dir():
                 continue
 
-            session = _strip_entity_prefix(session_dir.name, "ses")
-            if session is None:
+            source_session = _strip_entity_prefix(session_dir.name, "ses")
+            if source_session is None:
                 continue
+
+            source_sessions_by_subject[subject].add(source_session)
 
             meg_dir = session_dir / "meg"
 
             if not meg_dir.exists():
+                issues.append(
+                    SourceDiscoveryIssue(
+                        path=str(session_dir),
+                        status="missing_input",
+                        message="Session folder does not contain a meg directory.",
+                    )
+                )
                 continue
 
             new_recordings, new_issues = _discover_recordings_in_meg_dir(
                 meg_dir=meg_dir,
                 subject=subject,
-                session=session,
+                source_session=source_session,
             )
-            recordings.extend(new_recordings)
+            raw_recordings.extend(new_recordings)
             issues.extend(new_issues)
+
+    mode = _configured_session_mode(config)
+    session_counts = {
+        subject: len(source_sessions)
+        for subject, source_sessions in source_sessions_by_subject.items()
+    }
+
+    recordings = [
+        SourceRecording(
+            source_path=recording.source_path,
+            subject=recording.subject,
+            session=_resolve_bids_session(
+                recording.source_session,
+                subject=recording.subject,
+                mode=mode,
+                subject_session_counts=session_counts,
+            ),
+            task=recording.task,
+            run=recording.run,
+            source_session=recording.source_session,
+        )
+        for recording in raw_recordings
+    ]
+
+    issues.extend(_target_collision_issues(config, recordings))
 
     return recordings, issues
 
@@ -124,7 +200,7 @@ def _discover_recordings_in_meg_dir(
     *,
     meg_dir: Path,
     subject: str,
-    session: str | None,
+    source_session: str | None,
 ) -> tuple[list[SourceRecording], list[SourceDiscoveryIssue]]:
     recordings: list[SourceRecording] = []
     issues: list[SourceDiscoveryIssue] = []
@@ -155,9 +231,10 @@ def _discover_recordings_in_meg_dir(
                     SourceRecording(
                         source_path=source_path,
                         subject=subject,
-                        session=session,
+                        session=None,
                         task=task,
                         run=run,
+                        source_session=source_session,
                     )
                 )
         else:
@@ -171,13 +248,49 @@ def _discover_recordings_in_meg_dir(
                 SourceRecording(
                     source_path=source_path,
                     subject=subject,
-                    session=session,
+                    session=None,
                     task=task,
                     run=None,
+                    source_session=source_session,
                 )
             )
 
     return recordings, issues
+
+
+def _target_collision_issues(
+    config: PipelineConfig,
+    recordings: list[SourceRecording],
+) -> list[SourceDiscoveryIssue]:
+    target_to_recordings: dict[str, list[SourceRecording]] = defaultdict(list)
+
+    for recording in recordings:
+        target_to_recordings[str(make_target_bids_path(config, recording).fpath)].append(
+            recording
+        )
+
+    issues: list[SourceDiscoveryIssue] = []
+
+    for target_path, target_recordings in sorted(target_to_recordings.items()):
+        if len(target_recordings) <= 1:
+            continue
+
+        source_paths = ", ".join(
+            str(recording.source_path) for recording in target_recordings
+        )
+        issues.append(
+            SourceDiscoveryIssue(
+                path=target_path,
+                status="duplicate_target",
+                message=(
+                    "Multiple source recordings map to the same BIDS target. "
+                    "Use sourcedata.sessions: 'include', add run-* folders, or "
+                    f"remove duplicate inputs. Source files: {source_paths}"
+                ),
+            )
+        )
+
+    return issues
 
 
 def make_target_bids_path(config: PipelineConfig, recording: SourceRecording):

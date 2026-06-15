@@ -48,13 +48,16 @@ meeg-pipeline/
       config.py
       conversion.py
       epoching.py
+      event_derivatives.py
       events.py
       evokeds.py
       io.py
+      paths.py
       preprocessing.py
       project.py
       qc.py
       sourcedata.py
+      workflow.py
 ```
 
 Concrete research projects should live in separate folders, for example:
@@ -65,9 +68,8 @@ Concrete research projects should live in separate folders, for example:
   my-meeg-project/
 ```
 
-The `meeg-pipeline` repository contains reusable code.  
-The project folder contains data, project-specific configs, notebooks, and
-outputs.
+The `meeg-pipeline` repository contains reusable code. The project folder
+contains data, project-specific configs, notebooks, and outputs.
 
 ## Installation for development
 
@@ -167,11 +169,13 @@ my-meeg-project/
 
   notebooks/
     00_project_summary.ipynb
-    01_raw_bids_and_bad_channels.ipynb
-    02_events.ipynb
+    01_raw_bids_and_events.ipynb
+    02_project_specific_events.ipynb
     03_preprocessing.ipynb
     04_artifact_annotation.ipynb
     05_ica_cleaning.ipynb
+    06_epoching.ipynb
+    07_evokeds.ipynb
 
   sourcedata/
     sub-0001/
@@ -278,7 +282,16 @@ the intended virtual environment.
 A concrete M/EEG project should be organized separately from the pipeline
 library.
 
-Example with one subject, one session, and two tasks:
+The project folder contains:
+
+- project-level BIDS files such as `dataset_description.json` and `participants.tsv`
+- project-specific configuration in `configs/`
+- workflow notebooks in `notebooks/`
+- original source files in `sourcedata/`
+- raw BIDS files at the BIDS root
+- processed outputs in `derivatives/meeg-pipeline/`
+
+Example source-data organization with acquisition-date folders:
 
 ```text
 my-meeg-project/
@@ -290,8 +303,8 @@ my-meeg-project/
 
   notebooks/
     00_project_summary.ipynb
-    01_raw_bids_and_bad_channels.ipynb
-    02_events.ipynb
+    01_raw_bids_and_events.ipynb
+    02_project_specific_events.ipynb
     03_preprocessing.ipynb
     04_artifact_annotation.ipynb
     05_ica_cleaning.ipynb
@@ -300,62 +313,103 @@ my-meeg-project/
 
   sourcedata/
     sub-0001/
-      ses-yyyymmdd/
+      ses-20260523/
         meg/
-          task-chords/
-            original_chords_file.fif
-          task-nochords/
-            original_nochords_file.fif
-
-  sub-0001/
-    ses-yyyymmdd/
-      meg/
-        sub-0001_ses-yyyymmdd_task-chords_meg.fif
-        sub-0001_ses-yyyymmdd_task-chords_meg.json
-        sub-0001_ses-yyyymmdd_task-chords_channels.tsv
-        sub-0001_ses-yyyymmdd_task-chords_events.tsv
-
-        sub-0001_ses-yyyymmdd_task-nochords_meg.fif
-        sub-0001_ses-yyyymmdd_task-nochords_meg.json
-        sub-0001_ses-yyyymmdd_task-nochords_channels.tsv
-        sub-0001_ses-yyyymmdd_task-nochords_events.tsv
-
-  derivatives/
-    meeg-pipeline/
-      sub-0001/
-        ses-yyyymmdd/
-          meg/
-            sub-0001_ses-yyyymmdd_task-chords_desc-badchannels.json
-            sub-0001_ses-yyyymmdd_task-chords_desc-filtered_meg.fif
-            sub-0001_ses-yyyymmdd_task-chords_desc-badsegments_annotations.fif
-            sub-0001_ses-yyyymmdd_task-chords_desc-ica_ica.fif
-            sub-0001_ses-yyyymmdd_task-chords_desc-icadecision.json
-            sub-0001_ses-yyyymmdd_task-chords_desc-cleaned_meg.fif
-            sub-0001_ses-yyyymmdd_task-chords_desc-cleaned_epo.fif
-            sub-0001_ses-yyyymmdd_task-chords_desc-evoked_ave.fif
+          task-rest/
+            original_rest_file.fif
+          task-auditory/
+            original_auditory_file.fif
 ```
 
-For projects without sessions, omit the `ses-...` level consistently:
+If `sourcedata.sessions` is set to `include`, the date-like source session is
+written as a BIDS session:
+
+```text
+sub-0001/
+  ses-20260523/
+    meg/
+      sub-0001_ses-20260523_task-rest_meg.fif
+      sub-0001_ses-20260523_task-rest_meg.json
+      sub-0001_ses-20260523_task-rest_channels.tsv
+      sub-0001_ses-20260523_task-rest_events.tsv
+
+      sub-0001_ses-20260523_task-auditory_meg.fif
+      sub-0001_ses-20260523_task-auditory_meg.json
+      sub-0001_ses-20260523_task-auditory_channels.tsv
+      sub-0001_ses-20260523_task-auditory_events.tsv
+```
+
+If `sourcedata.sessions` is set to `ignore`, source session folders may still be
+used for organization, but BIDS output omits the session level:
 
 ```text
 sub-0001/
   meg/
-    sub-0001_task-chords_meg.fif
-    sub-0001_task-chords_channels.tsv
-    sub-0001_task-chords_events.tsv
+    sub-0001_task-rest_meg.fif
+    sub-0001_task-rest_meg.json
+    sub-0001_task-rest_channels.tsv
+    sub-0001_task-rest_events.tsv
 
+    sub-0001_task-auditory_meg.fif
+    sub-0001_task-auditory_meg.json
+    sub-0001_task-auditory_channels.tsv
+    sub-0001_task-auditory_events.tsv
+```
+
+Processed outputs are written to step-specific subfolders under
+`derivatives/meeg-pipeline/`.
+
+With BIDS sessions:
+
+```text
+derivatives/
+  meeg-pipeline/
+    sub-0001/
+      ses-20260523/
+        meg/
+          qc/
+            sub-0001_ses-20260523_task-rest_desc-badchannels.json
+          preprocessing/
+            sub-0001_ses-20260523_task-rest_desc-filtered_meg.fif
+          events/
+            sub-0001_ses-20260523_task-rest_desc-analysis_events.tsv
+            sub-0001_ses-20260523_task-rest_desc-analysis_events.json
+          cleaning/
+            sub-0001_ses-20260523_task-rest_desc-ica_ica.fif
+            sub-0001_ses-20260523_task-rest_desc-icadecision.json
+            sub-0001_ses-20260523_task-rest_desc-cleaned_meg.fif
+          annotations/
+            sub-0001_ses-20260523_task-rest_desc-badsegments_annotations.fif
+          epochs/
+            sub-0001_ses-20260523_task-rest_desc-cleaned_epo.fif
+          evokeds/
+            sub-0001_ses-20260523_task-rest_desc-evoked_ave.fif
+```
+
+Without BIDS sessions:
+
+```text
 derivatives/
   meeg-pipeline/
     sub-0001/
       meg/
-        sub-0001_task-chords_desc-badchannels.json
-        sub-0001_task-chords_desc-filtered_meg.fif
-        sub-0001_task-chords_desc-badsegments_annotations.fif
-        sub-0001_task-chords_desc-ica_ica.fif
-        sub-0001_task-chords_desc-icadecision.json
-        sub-0001_task-chords_desc-cleaned_meg.fif
-        sub-0001_task-chords_desc-cleaned_epo.fif
-        sub-0001_task-chords_desc-evoked_ave.fif
+        qc/
+          sub-0001_task-rest_desc-badchannels.json
+        preprocessing/
+          sub-0001_task-rest_desc-filtered_meg.fif
+        events/
+          sub-0001_task-rest_desc-analysis_events.tsv
+          sub-0001_task-rest_desc-analysis_events.json
+        cleaning/
+          sub-0001_task-rest_desc-ica_ica.fif
+          sub-0001_task-rest_desc-icadecision.json
+          sub-0001_task-rest_desc-cleaned_meg.fif
+        annotations/
+          sub-0001_task-rest_desc-badsegments_annotations.fif
+        epochs/
+          sub-0001_task-rest_desc-cleaned_epo.fif
+        evokeds/
+          sub-0001_task-rest_desc-evoked_ave.fif
 ```
 
 ## Data organization
@@ -450,22 +504,35 @@ sourcedata/sub-0001/ses-20260523/meg/task-rest/run-01/original_file.fif
 ```
 
 The pipeline uses the folder structure to infer BIDS entities such as subject,
-session, task, and run. If `sourcedata.sessions` is `ignore`, the source session
-is retained in source-discovery summaries but not written to raw BIDS filenames.
+source session, task, and run. If `sourcedata.sessions` is `ignore`, the source
+session is retained in source-discovery summaries but not written to raw BIDS
+filenames.
 
 ### Raw BIDS data
 
 The BIDS-formatted raw data are stored outside `sourcedata/`, using BIDS naming.
 
-Example:
+With BIDS sessions:
 
 ```text
 sub-0001/
-  ses-yyyymmdd/
+  ses-20260523/
     meg/
-      sub-0001_ses-yyyymmdd_task-chords_meg.fif
-      sub-0001_ses-yyyymmdd_task-chords_channels.tsv
-      sub-0001_ses-yyyymmdd_task-chords_events.tsv
+      sub-0001_ses-20260523_task-rest_meg.fif
+      sub-0001_ses-20260523_task-rest_meg.json
+      sub-0001_ses-20260523_task-rest_channels.tsv
+      sub-0001_ses-20260523_task-rest_events.tsv
+```
+
+Without BIDS sessions:
+
+```text
+sub-0001/
+  meg/
+    sub-0001_task-rest_meg.fif
+    sub-0001_task-rest_meg.json
+    sub-0001_task-rest_channels.tsv
+    sub-0001_task-rest_events.tsv
 ```
 
 Raw BIDS FIF files are generated from the original source data, preferably using
@@ -481,7 +548,13 @@ metadata decisions are made.
 For example, manual bad-channel decisions should update:
 
 ```text
-sub-0001/meg/sub-0001_task-chords_channels.tsv
+sub-0001/meg/sub-0001_task-rest_channels.tsv
+```
+
+or, with sessions:
+
+```text
+sub-0001/ses-20260523/meg/sub-0001_ses-20260523_task-rest_channels.tsv
 ```
 
 using the BIDS columns:
@@ -501,18 +574,57 @@ All processed outputs and explicit pipeline decisions are written to:
 derivatives/meeg-pipeline/
 ```
 
+Derivative files are organized in step-specific subfolders below each
+subject/session/datatype folder:
+
+```text
+derivatives/meeg-pipeline/sub-0001/meg/qc/
+derivatives/meeg-pipeline/sub-0001/meg/preprocessing/
+derivatives/meeg-pipeline/sub-0001/meg/annotations/
+derivatives/meeg-pipeline/sub-0001/meg/cleaning/
+derivatives/meeg-pipeline/sub-0001/meg/events/
+derivatives/meeg-pipeline/sub-0001/meg/epochs/
+derivatives/meeg-pipeline/sub-0001/meg/evokeds/
+```
+
+With BIDS sessions, the same step folders live under the session level:
+
+```text
+derivatives/meeg-pipeline/sub-0001/ses-20260523/meg/qc/
+derivatives/meeg-pipeline/sub-0001/ses-20260523/meg/preprocessing/
+derivatives/meeg-pipeline/sub-0001/ses-20260523/meg/annotations/
+derivatives/meeg-pipeline/sub-0001/ses-20260523/meg/cleaning/
+derivatives/meeg-pipeline/sub-0001/ses-20260523/meg/events/
+derivatives/meeg-pipeline/sub-0001/ses-20260523/meg/epochs/
+derivatives/meeg-pipeline/sub-0001/ses-20260523/meg/evokeds/
+```
+
 Examples:
 
 ```text
-derivatives/meeg-pipeline/sub-0001/ses-yyyymmdd/meg/
-  sub-0001_ses-yyyymmdd_task-chords_desc-badchannels.json
-  sub-0001_ses-yyyymmdd_task-chords_desc-filtered_meg.fif
-  sub-0001_ses-yyyymmdd_task-chords_desc-badsegments_annotations.fif
-  sub-0001_ses-yyyymmdd_task-chords_desc-ica_ica.fif
-  sub-0001_ses-yyyymmdd_task-chords_desc-icadecision.json
-  sub-0001_ses-yyyymmdd_task-chords_desc-cleaned_meg.fif
-  sub-0001_ses-yyyymmdd_task-chords_desc-cleaned_epo.fif
-  sub-0001_ses-yyyymmdd_task-chords_desc-evoked_ave.fif
+derivatives/meeg-pipeline/sub-0001/meg/qc/
+  sub-0001_task-rest_desc-badchannels.json
+
+derivatives/meeg-pipeline/sub-0001/meg/preprocessing/
+  sub-0001_task-rest_desc-filtered_meg.fif
+
+derivatives/meeg-pipeline/sub-0001/meg/annotations/
+  sub-0001_task-rest_desc-badsegments_annotations.fif
+
+derivatives/meeg-pipeline/sub-0001/meg/cleaning/
+  sub-0001_task-rest_desc-ica_ica.fif
+  sub-0001_task-rest_desc-icadecision.json
+  sub-0001_task-rest_desc-cleaned_meg.fif
+
+derivatives/meeg-pipeline/sub-0001/meg/events/
+  sub-0001_task-rest_desc-analysis_events.tsv
+  sub-0001_task-rest_desc-analysis_events.json
+
+derivatives/meeg-pipeline/sub-0001/meg/epochs/
+  sub-0001_task-rest_desc-cleaned_epo.fif
+
+derivatives/meeg-pipeline/sub-0001/meg/evokeds/
+  sub-0001_task-rest_desc-evoked_ave.fif
 ```
 
 The raw BIDS FIF files should not be modified during preprocessing.
@@ -544,10 +656,11 @@ meegpipe bids-path --config configs/local.yaml --subject 0001
 Sessions are optional in BIDS.
 
 Use sessions if the project contains distinct measurement appointments, visits,
-or timepoints.
+timepoints, or repeated acquisitions that should be modeled as BIDS sessions.
 
-If a project is known to contain only one measurement appointment per
-participant, the `ses-...` level can be omitted.
+If a project is known to contain only one analysis session per participant, the
+`ses-...` level can be omitted from BIDS even if `sourcedata/` contains
+acquisition-date folders for source-data organization.
 
 Recommended session naming for acquisition-date folders:
 
@@ -556,10 +669,24 @@ ses-20260523
 ses-20260602
 ```
 
-Use dates without hyphens because BIDS entity labels are alphanumeric. Date-like
-session labels also make it easier to match recordings to empty-room
-measurements. Numeric labels such as `ses-yyyymmdd` are still valid when they better
-fit the project.
+Date-like labels such as `ses-20260523` are valid because the label part is
+alphanumeric. Avoid hyphens or underscores inside BIDS labels; use
+`ses-20260523` rather than `ses-2026-05-23`.
+
+The `sourcedata.sessions` config decides whether source-data session folders are
+included in BIDS output:
+
+```yaml
+sourcedata:
+  sessions: "ignore"   # source session folders are not written to BIDS
+```
+
+or:
+
+```yaml
+sourcedata:
+  sessions: "include"  # source session folders become BIDS sessions
+```
 
 ### Tasks
 
@@ -568,12 +695,14 @@ The `task-...` entity describes the experimental paradigm or recording context.
 Example:
 
 ```text
-task-chords
-task-nochords
+task-rest
+task-auditory
+task-visual
 ```
 
-Even if both recordings are passive listening, they can be represented as
-different tasks if they correspond to distinct experimental stimulus contexts.
+Even if recordings are passive or share the same acquisition protocol, they can
+be represented as different tasks if they correspond to distinct experimental
+contexts.
 
 ### Runs
 
@@ -582,8 +711,8 @@ Runs are used for repeated recordings of the same task within the same session.
 Example:
 
 ```text
-sub-0001_ses-yyyymmdd_task-chords_run-01_meg.fif
-sub-0001_ses-yyyymmdd_task-chords_run-02_meg.fif
+sub-0001_ses-20260523_task-rest_run-01_meg.fif
+sub-0001_ses-20260523_task-rest_run-02_meg.fif
 ```
 
 Use `run-...` if the same task was repeated or split into multiple acquisition
@@ -600,7 +729,7 @@ Example:
   "Name": "my-meeg-project",
   "BIDSVersion": "1.10.0",
   "DatasetType": "raw",
-  "Authors": ["Léon Bartosch"]
+  "Authors": ["Your Name"]
 }
 ```
 
@@ -636,6 +765,9 @@ paths:
   bids_root: "."
   sourcedata_root: "./sourcedata"
   derivatives_root: "./derivatives/meeg-pipeline"
+
+sourcedata:
+  sessions: "ignore"  # "ignore" | "include" | "auto"
 
 runtime:
   n_jobs: 4
@@ -754,8 +886,8 @@ meegpipe bids-info --config configs/local.yaml
 Pipeline functions are designed to support projects where not every subject,
 session, task, or run has been collected or processed yet.
 
-Normal pipeline states are reported as status values instead of interrupting
-the whole batch process.
+Normal pipeline states are reported as status values instead of interrupting the
+whole batch process.
 
 Common status values include:
 
@@ -834,7 +966,7 @@ Trigger extraction:
 
 Project-specific event derivation:
   trigger anchors
-  + stimulus metadata
+  + stimulus or task metadata
   + project-specific timing rules
   -> analysis-ready derivative events.tsv
 ```
@@ -844,8 +976,9 @@ trigger-derived. Optional project-specific notebooks may derive richer analysis
 events and write them as derivatives, for example:
 
 ```text
-derivatives/meeg-pipeline/sub-0001/meg/
-  sub-0001_task-chords_desc-analysis_events.tsv
+derivatives/meeg-pipeline/sub-0001/meg/events/
+  sub-0001_task-rest_desc-analysis_events.tsv
+  sub-0001_task-rest_desc-analysis_events.json
 ```
 
 Downstream analysis should prefer analysis-event derivatives if they exist and
@@ -872,10 +1005,10 @@ external metadata.
 Example:
 
 ```text
-onset    duration    trial_type        note_id    note_index    key_signature    scale_degree    non_diatonic
-42.000   0.0         key_change        128        0             3                1               0
-42.500   0.0         non_diatonic      129        1             3                2               1
-43.000   0.0         note              130        2             3                3               0
+onset    duration    trial_type     event_id    event_index    condition    feature_value
+42.000   0.0         condition_a    128         0              A            3
+42.500   0.0         condition_b    129         1              B            7
+43.000   0.0         condition_a    130         2              A            4
 ```
 
 Design principle:
@@ -906,15 +1039,15 @@ Recommended workflow:
 Example files:
 
 ```text
-sub-1409/meg/sub-1409_task-chords_meg.fif
-sub-1409/meg/sub-1409_task-chords_channels.tsv
+sub-0001/meg/sub-0001_task-rest_meg.fif
+sub-0001/meg/sub-0001_task-rest_channels.tsv
 
-derivatives/meeg-pipeline/sub-1409/meg/
-  sub-1409_task-chords_desc-badchannels.json
+derivatives/meeg-pipeline/sub-0001/meg/qc/
+  sub-0001_task-rest_desc-badchannels.json
 ```
 
-The raw FIF file remains unchanged.  
-The BIDS sidecar `channels.tsv` is updated using the columns:
+The raw FIF file remains unchanged. The BIDS sidecar `channels.tsv` is updated
+using the columns:
 
 ```text
 status
@@ -925,13 +1058,13 @@ Example bad-channel JSON:
 
 ```json
 {
-  "subject": "1409",
+  "subject": "0001",
   "session": null,
-  "task": "chords",
+  "task": "rest",
   "run": null,
   "bads": ["MEG0112"],
   "method": "manual_mne_gui_with_maxwell_candidates",
-  "notes": "Automatic Maxwell bad-channel candidates were pre-marked and manually reviewed with raw.plot(block=True)."
+  "notes": "Automatic bad-channel candidates were pre-marked and manually reviewed with raw.plot(block=True)."
 }
 ```
 
@@ -939,7 +1072,7 @@ Example `channels.tsv` rows after manual QC:
 
 ```text
 name       type     units   status   status_description
-MEG0112    MEGGRAD  T/m     bad      manual_mne_gui_with_maxwell_candidates: Automatic Maxwell bad-channel candidates were pre-marked and manually reviewed with raw.plot(block=True).
+MEG0112    MEGGRAD  T/m     bad      manual_mne_gui_with_maxwell_candidates: Automatic bad-channel candidates were pre-marked and manually reviewed with raw.plot(block=True).
 MEG0113    MEGGRAD  T/m     good
 ```
 
@@ -981,8 +1114,8 @@ bad-segment derivative.
 Example file:
 
 ```text
-derivatives/meeg-pipeline/sub-1409/meg/
-  sub-1409_task-chords_desc-badsegments_annotations.fif
+derivatives/meeg-pipeline/sub-0001/meg/annotations/
+  sub-0001_task-rest_desc-badsegments_annotations.fif
 ```
 
 These annotations can later be applied to filtered or cleaned data. Downstream
@@ -1008,14 +1141,14 @@ Recommended workflow:
 Example files:
 
 ```text
-derivatives/meeg-pipeline/sub-1409/meg/
-  sub-1409_task-chords_desc-ica_ica.fif
-  sub-1409_task-chords_desc-icadecision.json
-  sub-1409_task-chords_desc-cleaned_meg.fif
+derivatives/meeg-pipeline/sub-0001/meg/cleaning/
+  sub-0001_task-rest_desc-ica_ica.fif
+  sub-0001_task-rest_desc-icadecision.json
+  sub-0001_task-rest_desc-cleaned_meg.fif
 ```
 
-The `desc-cleaned_meg.fif` file is the ICA-cleaned continuous raw derivative.
-It is the recommended input for epoching and later analysis steps.
+The `desc-cleaned_meg.fif` file is the ICA-cleaned continuous raw derivative. It
+is the recommended input for epoching and later analysis steps.
 
 ICA decisions are recording-specific. In other words, decisions are made per
 combination of subject, session, task, and run. Component index `5` in one
@@ -1055,8 +1188,8 @@ Example condition definitions:
 
 ```python
 CONDITIONS = {
-    "non_diatonic": "non_diatonic in [1, 2, 3, 4, 5]",
-    "key_change": "note_index == 0",
+    "condition_a": "trial_type == 'condition_a'",
+    "high_feature": "feature_value >= 5",
 }
 ```
 
@@ -1068,8 +1201,8 @@ CONDITIONS = {
 }
 ```
 
-Condition definitions are project-specific and should usually live in the
-evoked notebook rather than in the reusable library.
+Condition definitions are project-specific and should usually live in the evoked
+notebook rather than in the reusable library.
 
 ## Notebook workflow
 
@@ -1080,7 +1213,7 @@ A project may contain notebooks such as:
 ```text
 notebooks/
   00_project_summary.ipynb
-  01_raw_bids_and_bad_channels.ipynb
+  01_raw_bids_and_events.ipynb
   02_project_specific_events.ipynb
   03_preprocessing.ipynb
   04_artifact_annotation.ipynb
@@ -1098,7 +1231,7 @@ Suggested roles:
   filtered-derivative status, bad-segment annotation status, ICA status, cleaned-
   raw status, epoch status, and evoked status.
 
-01_raw_bids_and_bad_channels.ipynb
+01_raw_bids_and_events.ipynb
   Active raw-data and bad-channel notebook.
   Discovers sourcedata, converts to raw BIDS, extracts trigger-derived events,
   inspects channels, performs manual bad-channel QC, and updates channels.tsv.
@@ -1106,8 +1239,9 @@ Suggested roles:
 02_project_specific_events.ipynb
   Optional event-derivation notebook.
   Reads trigger-derived events.tsv files and derives project-specific analysis-
-  ready event tables from trigger anchors and stimulus metadata. This notebook
-  can be skipped when trigger-derived events are already the analysis events.
+  ready event tables from trigger anchors and stimulus/task metadata. This
+  notebook can be skipped when trigger-derived events are already the analysis
+  events.
 
 03_preprocessing.ipynb
   Preprocessing notebook.
@@ -1268,8 +1402,8 @@ Construct and inspect a BIDS path:
 meegpipe bids-path \
   --config configs/local.yaml \
   --subject 0001 \
-  --session 001 \
-  --task chords \
+  --session 20260523 \
+  --task rest \
   --extension .fif
 ```
 
@@ -1290,8 +1424,8 @@ Read a raw BIDS recording and show basic information:
 ```bash
 meegpipe raw-info \
   --config configs/local.yaml \
-  --subject 1409 \
-  --task chords
+  --subject 0001 \
+  --task rest
 ```
 
 Show channel information:
@@ -1299,8 +1433,8 @@ Show channel information:
 ```bash
 meegpipe channels-info \
   --config configs/local.yaml \
-  --subject 1409 \
-  --task chords
+  --subject 0001 \
+  --task rest
 ```
 
 Extract events and show event information:
@@ -1308,8 +1442,8 @@ Extract events and show event information:
 ```bash
 meegpipe events-info \
   --config configs/local.yaml \
-  --subject 1409 \
-  --task chords
+  --subject 0001 \
+  --task rest
 ```
 
 Write BIDS-compatible trigger-derived `events.tsv` files:
@@ -1317,8 +1451,8 @@ Write BIDS-compatible trigger-derived `events.tsv` files:
 ```bash
 meegpipe write-events \
   --config configs/local.yaml \
-  --subject 1409 \
-  --task chords
+  --subject 0001 \
+  --task rest
 ```
 
 The CLI is useful for quick checks and later batch/HPC workflows. Interactive QC
@@ -1329,38 +1463,47 @@ is better handled in notebooks.
 Before converting to BIDS, place the original files under the configured
 `sourcedata_root`.
 
-For one participant with one session and two tasks:
+For one participant with acquisition-date source folders and two tasks:
 
 ```bash
 cd ~/MEEG/my-meeg-project
 
-mkdir -p sourcedata/sub-0001/ses-yyyymmdd/meg/task-chords
-mkdir -p sourcedata/sub-0001/ses-yyyymmdd/meg/task-nochords
+mkdir -p sourcedata/sub-0001/ses-20260523/meg/task-rest
+mkdir -p sourcedata/sub-0001/ses-20260523/meg/task-auditory
 ```
 
 Copy the original FIF files into the corresponding `sourcedata/` task folders:
 
 ```text
-sourcedata/sub-0001/ses-yyyymmdd/meg/task-chords/<original_chords_file>.fif
-sourcedata/sub-0001/ses-yyyymmdd/meg/task-nochords/<original_nochords_file>.fif
+sourcedata/sub-0001/ses-20260523/meg/task-rest/<original_rest_file>.fif
+sourcedata/sub-0001/ses-20260523/meg/task-auditory/<original_auditory_file>.fif
 ```
 
-For projects without sessions, use:
+For projects without source session folders, use:
 
 ```text
-sourcedata/sub-0001/meg/task-chords/<original_chords_file>.fif
-sourcedata/sub-0001/meg/task-nochords/<original_nochords_file>.fif
+sourcedata/sub-0001/meg/task-rest/<original_rest_file>.fif
+sourcedata/sub-0001/meg/task-auditory/<original_auditory_file>.fif
 ```
 
 Do not modify these source files.
 
-The corresponding BIDS raw files will later be generated under:
+If `sourcedata.sessions` is `include`, the corresponding raw BIDS files will be
+generated under:
 
 ```text
-sub-0001/ses-yyyymmdd/meg/
+sub-0001/ses-20260523/meg/
 ```
 
-or, if no session level is used:
+with filenames such as:
+
+```text
+sub-0001_ses-20260523_task-rest_meg.fif
+sub-0001_ses-20260523_task-auditory_meg.fif
+```
+
+If `sourcedata.sessions` is `ignore`, the same source folders generate raw BIDS
+files without a session level:
 
 ```text
 sub-0001/meg/
@@ -1369,22 +1512,15 @@ sub-0001/meg/
 with filenames such as:
 
 ```text
-sub-0001_ses-yyyymmdd_task-chords_meg.fif
-sub-0001_ses-yyyymmdd_task-nochords_meg.fif
-```
-
-or, without sessions:
-
-```text
-sub-0001_task-chords_meg.fif
-sub-0001_task-nochords_meg.fif
+sub-0001_task-rest_meg.fif
+sub-0001_task-auditory_meg.fif
 ```
 
 ## Checking expected BIDS paths
 
 The CLI can construct expected BIDS paths.
 
-Example:
+With sessions:
 
 ```bash
 cd ~/MEEG/my-meeg-project
@@ -1392,32 +1528,31 @@ cd ~/MEEG/my-meeg-project
 meegpipe bids-path \
   --config configs/local.yaml \
   --subject 0001 \
-  --session 001 \
-  --task chords \
+  --session 20260523 \
+  --task rest \
   --extension .fif
 ```
 
 Expected output path:
 
 ```text
-sub-0001/ses-yyyymmdd/meg/sub-0001_ses-yyyymmdd_task-chords_meg.fif
+sub-0001/ses-20260523/meg/sub-0001_ses-20260523_task-rest_meg.fif
 ```
 
-For the no-chords recording:
+Without sessions:
 
 ```bash
 meegpipe bids-path \
   --config configs/local.yaml \
   --subject 0001 \
-  --session 001 \
-  --task nochords \
+  --task rest \
   --extension .fif
 ```
 
 Expected output path:
 
 ```text
-sub-0001/ses-yyyymmdd/meg/sub-0001_ses-yyyymmdd_task-nochords_meg.fif
+sub-0001/meg/sub-0001_task-rest_meg.fif
 ```
 
 ## Development status
@@ -1431,6 +1566,7 @@ Currently implemented:
 - project scaffold creation with `meegpipe init-project`
 - project config loading
 - configurable `sourcedata_root`
+- configurable source-data session handling via `sourcedata.sessions`
 - runtime and analysis defaults in `configs/local.yaml`
 - basic BIDS dataset inspection
 - participants.tsv inspection

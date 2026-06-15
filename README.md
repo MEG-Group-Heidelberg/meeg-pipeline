@@ -468,6 +468,8 @@ sourcedata/
 
 With acquisition-date folders:
 
+Here, `ses-20260523` follows the `ses-<YYYYMMDD>` convention and denotes the acquisition date of the original recording.
+
 ```text
 sourcedata/
   sub-0001/
@@ -662,16 +664,16 @@ If a project is known to contain only one analysis session per participant, the
 `ses-...` level can be omitted from BIDS even if `sourcedata/` contains
 acquisition-date folders for source-data organization.
 
-Recommended session naming for acquisition-date folders:
+Recommended date-like session labels use the pattern `ses-<YYYYMMDD>`, where `YYYY` is the four-digit year, `MM` is the two-digit month, and `DD` is the two-digit day.
+
+For example, recordings acquired on May 23, 2026 and June 2, 2026 should use:
 
 ```text
 ses-20260523
 ses-20260602
 ```
 
-Date-like labels such as `ses-20260523` are valid because the label part is
-alphanumeric. Avoid hyphens or underscores inside BIDS labels; use
-`ses-20260523` rather than `ses-2026-05-23`.
+Date-like labels such as `ses-20260523` are valid because the label part is alphanumeric. Avoid hyphens or underscores inside BIDS labels; use `ses-20260523` rather than `ses-2026-05-23` or `ses-2026_05_23`.
 
 The `sourcedata.sessions` config decides whether source-data session folders are
 included in BIDS output:

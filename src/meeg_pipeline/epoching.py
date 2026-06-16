@@ -1,9 +1,9 @@
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
-import warnings
 
 import mne
 import numpy as np

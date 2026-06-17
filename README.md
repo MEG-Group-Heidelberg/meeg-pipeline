@@ -4,9 +4,9 @@ A modular, BIDS-compatible M/EEG analysis pipeline built on top of
 [MNE-Python](https://mne.tools/stable/index.html) and
 [MNE-BIDS](https://mne.tools/mne-bids/stable/index.html).
 
-The goal of this project is to provide a transparent and extensible pipeline
-for MEG and EEG data analysis. The pipeline is developed step by step, with a
-strong focus on understanding each processing stage.
+The goal of this project is to provide a transparent and extensible pipeline for
+MEG and EEG data analysis. The pipeline is developed step by step, with a strong
+focus on understanding each processing stage.
 
 The package contains reusable pipeline code. Concrete research projects should
 live in separate project folders and use this package as a library.
@@ -18,16 +18,18 @@ live in separate project folders and use this package as a library.
 - Original source data are preserved unchanged
 - Raw BIDS FIF files are treated as immutable analysis inputs
 - BIDS sidecar metadata such as `channels.tsv` may be updated when appropriate
-- Processed outputs are written to `derivatives/meeg-pipeline/`
+- Processed M/EEG outputs are written to `derivatives/meeg-pipeline/`
+- FreeSurfer outputs are written to a separate `derivatives/freesurfer/` tree
 - Intermediate preprocessing steps are saved as separate files
 - Existing output files are not overwritten by default
 - Missing inputs are reported as status values instead of interrupting batch workflows
 - Manual QC decisions are stored explicitly
 - Event handling is table-based and metadata-friendly
+- Anatomy preparation and MEG preprocessing are separate, partly independent workflows
 - Notebook-friendly interactive workflow
 - CLI-friendly batch workflow
 - Local and HPC-compatible execution
-- Built on MNE-Python and MNE-BIDS
+- Built on MNE-Python, MNE-BIDS, MNE-Coregistration, and FreeSurfer-compatible anatomy workflows
 
 ## Repository structure
 
@@ -41,6 +43,7 @@ meeg-pipeline/
     meeg_pipeline/
       __init__.py
       annotations.py
+      anatomy.py
       bids.py
       channels.py
       cleaning.py
@@ -106,6 +109,10 @@ pip install -e ".[dev,qt,autoreject]"
 The `qt` extra installs the packages needed for interactive MNE browser windows,
 including `mne-qt-browser`, `pyqt6`, and `pyqtgraph`.
 
+For anatomy preparation and source modeling, install FreeSurfer separately and
+make sure that `FREESURFER_HOME` points to the FreeSurfer installation, or set
+`freesurfer.home` in the project config.
+
 Test the installation:
 
 ```bash
@@ -156,7 +163,7 @@ Alternatively, pass the target directory explicitly:
 meegpipe init-project my-meeg-project --base-dir /Volumes/YourDrive/MEEG
 ```
 
-This creates:
+A project should then be organized like this:
 
 ```text
 my-meeg-project/
@@ -169,13 +176,27 @@ my-meeg-project/
 
   notebooks/
     00_project_summary.ipynb
-    01_raw_bids_and_events.ipynb
-    02_project_specific_events.ipynb
-    03_preprocessing.ipynb
-    04_artifact_annotation.ipynb
-    05_ica_cleaning.ipynb
-    06_epoching.ipynb
-    07_evokeds.ipynb
+
+    1A_anatomy/
+      01_convert_mri.ipynb
+      02_recon.ipynb
+      03_anatomy_setup.ipynb
+      04_coregistration.ipynb
+
+    1B_meg_preprocessing/
+      01_raw_bids_and_events.ipynb
+      02_project_specific_events.ipynb
+      03_preprocessing.ipynb
+      04_artifact_annotation.ipynb
+      05_ica_cleaning.ipynb
+      06_epoching.ipynb
+      07_evokeds.ipynb
+
+    2_source_modeling/
+      # Forward/inverse/source-estimate notebooks will live here.
+
+    3_analysis/
+      # Project-specific analysis notebooks will live here.
 
   sourcedata/
     sub-0001/
@@ -187,8 +208,22 @@ my-meeg-project/
           task-example/
             README.md
 
+    mri_raw/
+      sub-0001/
+        T1/
+          README.md
+        T2/
+          README.md
+
+    mri/
+      sub-0001/
+        anat/
+          README.md
+
   derivatives/
     meeg-pipeline/
+    freesurfer/
+      subjects/
 ```
 
 Existing files are not overwritten by default. To recreate template files, use:
@@ -219,18 +254,19 @@ paths:
   bids_root: "."
   sourcedata_root: "./sourcedata"
   derivatives_root: "./derivatives/meeg-pipeline"
+  mri_raw_root: "./sourcedata/mri_raw"
+  mri_root: "./sourcedata/mri"
+
+freesurfer:
+  home: "/Applications/freesurfer"
+  subjects_dir: "./derivatives/freesurfer/subjects"
 
 sourcedata:
   sessions: "ignore"  # "ignore" | "include" | "auto"
 ```
 
 If original source files live on an external drive or outside the project folder,
-set `sourcedata_root` accordingly:
-
-```yaml
-paths:
-  sourcedata_root: "/Volumes/YourDrive/source-data/my-meeg-project"
-```
+set `sourcedata_root`, `mri_raw_root`, or `mri_root` accordingly.
 
 Relative paths are resolved relative to the project root.
 
@@ -271,6 +307,7 @@ Interactive plots such as the following should then open in separate windows:
 ```python
 raw.plot(block=True)
 ica.plot_sources(raw_for_ica, block=True)
+mne.gui.coregistration(...)
 ```
 
 If plots do not open in an external window, restart the notebook kernel, run the
@@ -289,20 +326,23 @@ The project folder contains:
 - workflow notebooks in `notebooks/`
 - original source files in `sourcedata/`
 - raw BIDS files at the BIDS root
-- processed outputs in `derivatives/meeg-pipeline/`
+- M/EEG processed outputs in `derivatives/meeg-pipeline/`
+- FreeSurfer anatomy outputs in `derivatives/freesurfer/subjects/`
 
-Example source-data organization with acquisition-date folders:
+The current notebook workflow is divided into independent or partly independent
+blocks:
 
 ```text
-my-meeg-project/
-  dataset_description.json
-  participants.tsv
+notebooks/
+  00_project_summary.ipynb
 
-  configs/
-    local.yaml
+  1A_anatomy/
+    01_convert_mri.ipynb
+    02_recon.ipynb
+    03_anatomy_setup.ipynb
+    04_coregistration.ipynb
 
-  notebooks/
-    00_project_summary.ipynb
+  1B_meg_preprocessing/
     01_raw_bids_and_events.ipynb
     02_project_specific_events.ipynb
     03_preprocessing.ipynb
@@ -311,106 +351,17 @@ my-meeg-project/
     06_epoching.ipynb
     07_evokeds.ipynb
 
-  sourcedata/
-    sub-0001/
-      ses-20260523/
-        meg/
-          task-rest/
-            original_rest_file.fif
-          task-auditory/
-            original_auditory_file.fif
+  2_source_modeling/
+    # Forward solution, noise covariance, inverse operator, source estimates,
+    # morphing, and label time courses.
+
+  3_analysis/
+    # Project-specific sensor-level, source-level, statistical, and figure notebooks.
 ```
 
-If `sourcedata.sessions` is set to `include`, the date-like source session is
-written as a BIDS session:
-
-```text
-sub-0001/
-  ses-20260523/
-    meg/
-      sub-0001_ses-20260523_task-rest_meg.fif
-      sub-0001_ses-20260523_task-rest_meg.json
-      sub-0001_ses-20260523_task-rest_channels.tsv
-      sub-0001_ses-20260523_task-rest_events.tsv
-
-      sub-0001_ses-20260523_task-auditory_meg.fif
-      sub-0001_ses-20260523_task-auditory_meg.json
-      sub-0001_ses-20260523_task-auditory_channels.tsv
-      sub-0001_ses-20260523_task-auditory_events.tsv
-```
-
-If `sourcedata.sessions` is set to `ignore`, source session folders may still be
-used for organization, but BIDS output omits the session level:
-
-```text
-sub-0001/
-  meg/
-    sub-0001_task-rest_meg.fif
-    sub-0001_task-rest_meg.json
-    sub-0001_task-rest_channels.tsv
-    sub-0001_task-rest_events.tsv
-
-    sub-0001_task-auditory_meg.fif
-    sub-0001_task-auditory_meg.json
-    sub-0001_task-auditory_channels.tsv
-    sub-0001_task-auditory_events.tsv
-```
-
-Processed outputs are written to step-specific subfolders under
-`derivatives/meeg-pipeline/`.
-
-With BIDS sessions:
-
-```text
-derivatives/
-  meeg-pipeline/
-    sub-0001/
-      ses-20260523/
-        meg/
-          qc/
-            sub-0001_ses-20260523_task-rest_desc-badchannels.json
-          preprocessing/
-            sub-0001_ses-20260523_task-rest_desc-filtered_meg.fif
-          events/
-            sub-0001_ses-20260523_task-rest_desc-analysis_events.tsv
-            sub-0001_ses-20260523_task-rest_desc-analysis_events.json
-          cleaning/
-            sub-0001_ses-20260523_task-rest_desc-ica_ica.fif
-            sub-0001_ses-20260523_task-rest_desc-icadecision.json
-            sub-0001_ses-20260523_task-rest_desc-cleaned_meg.fif
-          annotations/
-            sub-0001_ses-20260523_task-rest_desc-badsegments_annotations.fif
-          epochs/
-            sub-0001_ses-20260523_task-rest_desc-cleaned_epo.fif
-          evokeds/
-            sub-0001_ses-20260523_task-rest_desc-evoked_ave.fif
-```
-
-Without BIDS sessions:
-
-```text
-derivatives/
-  meeg-pipeline/
-    sub-0001/
-      meg/
-        qc/
-          sub-0001_task-rest_desc-badchannels.json
-        preprocessing/
-          sub-0001_task-rest_desc-filtered_meg.fif
-        events/
-          sub-0001_task-rest_desc-analysis_events.tsv
-          sub-0001_task-rest_desc-analysis_events.json
-        cleaning/
-          sub-0001_task-rest_desc-ica_ica.fif
-          sub-0001_task-rest_desc-icadecision.json
-          sub-0001_task-rest_desc-cleaned_meg.fif
-        annotations/
-          sub-0001_task-rest_desc-badsegments_annotations.fif
-        epochs/
-          sub-0001_task-rest_desc-cleaned_epo.fif
-        evokeds/
-          sub-0001_task-rest_desc-evoked_ave.fif
-```
+`1A_anatomy` and `1B_meg_preprocessing` can often be run independently. They come
+together later in `2_source_modeling`, where MEG/EEG recordings need anatomical
+source spaces, BEM solutions, and coregistration transforms.
 
 ## Data organization
 
@@ -468,7 +419,8 @@ sourcedata/
 
 With acquisition-date folders:
 
-Here, `ses-20260523` follows the `ses-<YYYYMMDD>` convention and denotes the acquisition date of the original recording.
+Here, `ses-20260523` follows the `ses-<YYYYMMDD>` convention and denotes the
+acquisition date of the original recording.
 
 ```text
 sourcedata/
@@ -510,9 +462,66 @@ source session, task, and run. If `sourcedata.sessions` is `ignore`, the source
 session is retained in source-discovery summaries but not written to raw BIDS
 filenames.
 
+### MRI inputs
+
+MRI inputs are handled separately from MEG/EEG source FIF files.
+
+Raw MRI exports from the MRI lab often arrive as DICOM series consisting of many
+individual files. These raw exports should be stored separately from converted
+NIfTI/MGZ files:
+
+```text
+sourcedata/
+  mri_raw/
+    sub-0001/
+      T1/
+        <many DICOM files>
+      T2/
+        <many DICOM files>
+```
+
+The `1A_anatomy/01_convert_mri.ipynb` notebook converts these raw MRI inputs into
+a predictable project layout:
+
+```text
+sourcedata/
+  mri/
+    sub-0001/
+      anat/
+        sub-0001_T1w.nii.gz
+        sub-0001_T1w.json
+        sub-0001_T2w.nii.gz
+        sub-0001_T2w.json
+        T1.mgz
+        T2.mgz
+```
+
+`T1` is the required input for the standard `recon-all` workflow. `T2` is
+optional and can be used as an additional input for pial-surface refinement when
+configured. A subject with only T2 and no T1 is reported as an unsupported or
+missing-input case in the standard workflow.
+
+These MRI paths are configured with:
+
+```yaml
+paths:
+  mri_raw_root: "./sourcedata/mri_raw"
+  mri_root: "./sourcedata/mri"
+
+anatomy:
+  t1_pattern: "{subject}/anat/*T1w*.nii*"
+  t2_pattern: "{subject}/anat/*T2w*.nii*"
+  conversion:
+    converter: "dcm2niix"
+    t1_source_pattern: "{subject}/T1"
+    t2_source_pattern: "{subject}/T2"
+    make_mgz: true
+```
+
 ### Raw BIDS data
 
-The BIDS-formatted raw data are stored outside `sourcedata/`, using BIDS naming.
+The BIDS-formatted raw MEG/EEG data are stored outside `sourcedata/`, using BIDS
+naming.
 
 With BIDS sessions:
 
@@ -568,9 +577,9 @@ status_description
 
 The raw FIF file itself should remain unchanged.
 
-### Derivatives
+### M/EEG derivatives
 
-All processed outputs and explicit pipeline decisions are written to:
+All M/EEG processed outputs and explicit pipeline decisions are written to:
 
 ```text
 derivatives/meeg-pipeline/
@@ -587,6 +596,7 @@ derivatives/meeg-pipeline/sub-0001/meg/cleaning/
 derivatives/meeg-pipeline/sub-0001/meg/events/
 derivatives/meeg-pipeline/sub-0001/meg/epochs/
 derivatives/meeg-pipeline/sub-0001/meg/evokeds/
+derivatives/meeg-pipeline/sub-0001/meg/coregistration/
 ```
 
 With BIDS sessions, the same step folders live under the session level:
@@ -599,6 +609,7 @@ derivatives/meeg-pipeline/sub-0001/ses-20260523/meg/cleaning/
 derivatives/meeg-pipeline/sub-0001/ses-20260523/meg/events/
 derivatives/meeg-pipeline/sub-0001/ses-20260523/meg/epochs/
 derivatives/meeg-pipeline/sub-0001/ses-20260523/meg/evokeds/
+derivatives/meeg-pipeline/sub-0001/ses-20260523/meg/coregistration/
 ```
 
 Examples:
@@ -627,12 +638,50 @@ derivatives/meeg-pipeline/sub-0001/meg/epochs/
 
 derivatives/meeg-pipeline/sub-0001/meg/evokeds/
   sub-0001_task-rest_desc-evoked_ave.fif
+
+derivatives/meeg-pipeline/sub-0001/meg/coregistration/
+  sub-0001_task-rest_desc-coreg_trans.fif
 ```
 
 The raw BIDS FIF files should not be modified during preprocessing.
 
 Raw outputs are intended to be BIDS-compliant. Derivative outputs follow a
 BIDS-Derivatives-style organization and MNE naming conventions.
+
+### FreeSurfer derivatives
+
+FreeSurfer outputs should not be stored inside the FreeSurfer installation
+folder. Keep software and project outputs separate:
+
+```text
+/Applications/freesurfer/
+  # FreeSurfer software installation
+
+my-meeg-project/
+  derivatives/
+    freesurfer/
+      subjects/
+        sub-0001/
+          mri/
+          surf/
+          bem/
+          label/
+        fsaverage/
+          mri/
+          surf/
+          label/
+```
+
+The project config should point to this project-specific `SUBJECTS_DIR`:
+
+```yaml
+freesurfer:
+  home: "/Applications/freesurfer"
+  subjects_dir: "./derivatives/freesurfer/subjects"
+```
+
+`FREESURFER_HOME` identifies the FreeSurfer software installation.
+`SUBJECTS_DIR` identifies the project-specific FreeSurfer subject database.
 
 ## Subject, session, task, and run naming
 
@@ -653,6 +702,24 @@ without the `sub-` prefix:
 meegpipe bids-path --config configs/local.yaml --subject 0001
 ```
 
+For anatomy notebooks, use the same subject labels consistently in `sourcedata/`,
+`sourcedata/mri`, raw BIDS, and FreeSurfer. If your project uses `sub-0001` in
+folder names, set the anatomy patterns accordingly, for example:
+
+```yaml
+anatomy:
+  t1_pattern: "sub-{subject}/anat/*T1w*.nii*"
+  t2_pattern: "sub-{subject}/anat/*T2w*.nii*"
+```
+
+If your project uses bare subject labels such as `0001`, use:
+
+```yaml
+anatomy:
+  t1_pattern: "{subject}/anat/*T1w*.nii*"
+  t2_pattern: "{subject}/anat/*T2w*.nii*"
+```
+
 ### Sessions
 
 Sessions are optional in BIDS.
@@ -664,7 +731,9 @@ If a project is known to contain only one analysis session per participant, the
 `ses-...` level can be omitted from BIDS even if `sourcedata/` contains
 acquisition-date folders for source-data organization.
 
-Recommended date-like session labels use the pattern `ses-<YYYYMMDD>`, where `YYYY` is the four-digit year, `MM` is the two-digit month, and `DD` is the two-digit day.
+Recommended date-like session labels use the pattern `ses-<YYYYMMDD>`, where
+`YYYY` is the four-digit year, `MM` is the two-digit month, and `DD` is the
+two-digit day.
 
 For example, recordings acquired on May 23, 2026 and June 2, 2026 should use:
 
@@ -673,7 +742,9 @@ ses-20260523
 ses-20260602
 ```
 
-Date-like labels such as `ses-20260523` are valid because the label part is alphanumeric. Avoid hyphens or underscores inside BIDS labels; use `ses-20260523` rather than `ses-2026-05-23` or `ses-2026_05_23`.
+Date-like labels such as `ses-20260523` are valid because the label part is
+alphanumeric. Avoid hyphens or underscores inside BIDS labels; use
+`ses-20260523` rather than `ses-2026-05-23` or `ses-2026_05_23`.
 
 The `sourcedata.sessions` config decides whether source-data session folders are
 included in BIDS output:
@@ -767,6 +838,41 @@ paths:
   bids_root: "."
   sourcedata_root: "./sourcedata"
   derivatives_root: "./derivatives/meeg-pipeline"
+  mri_raw_root: "./sourcedata/mri_raw"
+  mri_root: "./sourcedata/mri"
+
+freesurfer:
+  home: "/Applications/freesurfer"
+  subjects_dir: "./derivatives/freesurfer/subjects"
+
+anatomy:
+  t1_pattern: "{subject}/anat/*T1w*.nii*"
+  t2_pattern: "{subject}/anat/*T2w*.nii*"
+  conversion:
+    converter: "dcm2niix"
+    t1_source_pattern: "{subject}/T1"
+    t2_source_pattern: "{subject}/T2"
+    make_mgz: true
+  recon:
+    use_t1: true
+    use_t2: false
+  watershed:
+    volume: "T1"
+  bem:
+    method: "watershed"
+    conductivity: [0.3]
+    ico: 4
+  source_space:
+    spacing: "ico5"
+    surface: "white"
+    add_dist: false
+  volume_source_space:
+    enabled: false
+    spacing: 5.0
+  labels:
+    morph_from: "fsaverage"
+    parcellations:
+      - "aparc_sub"
 
 sourcedata:
   sessions: "ignore"  # "ignore" | "include" | "auto"
@@ -870,6 +976,22 @@ cleaning:
     fit_resample_sfreq: null
 ```
 
+For MEG-only source modeling, a one-layer BEM is usually sufficient:
+
+```yaml
+anatomy:
+  bem:
+    conductivity: [0.3]
+```
+
+For EEG or combined MEG+EEG source modeling, use a three-layer BEM:
+
+```yaml
+anatomy:
+  bem:
+    conductivity: [0.3, 0.006, 0.3]
+```
+
 From the project root, test the config:
 
 ```bash
@@ -895,6 +1017,8 @@ Common status values include:
 
 ```text
 missing_input
+missing_t1
+unsupported_t2_only
 skipped_existing
 loaded
 loaded_existing
@@ -908,6 +1032,91 @@ other subjects.
 
 Exceptions are reserved for actual programming or configuration errors, such as
 invalid policy values or malformed input files.
+
+## Anatomy preparation workflow
+
+The anatomy workflow lives in `notebooks/1A_anatomy/` and is separate from the
+MEG preprocessing workflow.
+
+### `01_convert_mri.ipynb`
+
+This notebook prepares MRI inputs.
+
+Typical input:
+
+```text
+sourcedata/mri_raw/sub-0001/T1/
+sourcedata/mri_raw/sub-0001/T2/
+```
+
+Typical output:
+
+```text
+sourcedata/mri/sub-0001/anat/sub-0001_T1w.nii.gz
+sourcedata/mri/sub-0001/anat/sub-0001_T2w.nii.gz
+sourcedata/mri/sub-0001/anat/T1.mgz
+sourcedata/mri/sub-0001/anat/T2.mgz
+```
+
+The T2 input is optional. The standard pipeline requires T1 for `recon-all`.
+
+### `02_recon.ipynb`
+
+This notebook runs FreeSurfer `recon-all`.
+
+Supported input scenarios:
+
+```text
+T1 only:
+  Standard T1-based recon-all.
+
+T1 + T2 with anatomy.recon.use_t2: false:
+  T2 exists but is ignored.
+
+T1 + T2 with anatomy.recon.use_t2: true:
+  T1-based recon-all with T2 pial refinement.
+
+T2 only:
+  Reported as unsupported for the standard recon-all workflow.
+```
+
+FreeSurfer subject outputs are written to:
+
+```text
+derivatives/freesurfer/subjects/sub-0001/
+```
+
+### `03_anatomy_setup.ipynb`
+
+This notebook prepares geometry files required for source modeling:
+
+- watershed BEM surfaces
+- dense scalp surfaces for coregistration support
+- BEM model and BEM solution
+- surface source space
+- optional source-space distances
+- optional volume source space
+- parcellation labels morphed from `fsaverage`
+
+### `04_coregistration.ipynb`
+
+This notebook opens the interactive MNE coregistration GUI for selected subjects
+or recordings.
+
+The notebook uses a raw BIDS recording as `inst` and the matching FreeSurfer
+subject as the MRI subject. It expects the user to save the transform to the
+printed derivative path.
+
+Example output:
+
+```text
+derivatives/meeg-pipeline/sub-0001/meg/coregistration/
+  sub-0001_task-rest_desc-coreg_trans.fif
+```
+
+By default, the GUI is opened only when the expected `trans.fif` file does not
+exist. Add `"coregistration"` to `OVERWRITE_STEPS` to rerun coregistration for
+existing transforms.
 
 ## Event extraction and event derivation
 
@@ -1066,7 +1275,7 @@ Example bad-channel JSON:
   "run": null,
   "bads": ["MEG0112"],
   "method": "manual_mne_gui_with_maxwell_candidates",
-  "notes": "Automatic bad-channel candidates were pre-marked and manually reviewed with raw.plot(block=True)."
+  "notes": "Automatic Maxwell bad-channel candidates were pre-marked and manually reviewed with raw.plot(block=True)."
 }
 ```
 
@@ -1074,7 +1283,7 @@ Example `channels.tsv` rows after manual QC:
 
 ```text
 name       type     units   status   status_description
-MEG0112    MEGGRAD  T/m     bad      manual_mne_gui_with_maxwell_candidates: Automatic bad-channel candidates were pre-marked and manually reviewed with raw.plot(block=True).
+MEG0112    MEGGRAD  T/m     bad      manual_mne_gui_with_maxwell_candidates: Automatic Maxwell bad-channel candidates were pre-marked and manually reviewed with raw.plot(block=True).
 MEG0113    MEGGRAD  T/m     good
 ```
 
@@ -1121,8 +1330,8 @@ derivatives/meeg-pipeline/sub-0001/meg/annotations/
 ```
 
 These annotations can later be applied to filtered or cleaned data. Downstream
-MNE steps can use the standard `reject_by_annotation=True` behavior to ignore
-bad spans.
+MNE steps can use the standard `reject_by_annotation=True` behavior to ignore bad
+spans.
 
 ## ICA cleaning
 
@@ -1172,7 +1381,8 @@ Recommended workflow:
 3. Otherwise load the raw BIDS `events.tsv`.
 4. Create MNE `Epochs`.
 5. Keep the full events table as `epochs.metadata`.
-6. Save `desc-cleaned_epo.fif`.
+6. Optionally apply autoreject-based cleaning.
+7. Save `desc-cleaned_epo.fif`.
 
 Evokeds are created from saved epochs using project-specific condition
 definitions.
@@ -1215,13 +1425,28 @@ A project may contain notebooks such as:
 ```text
 notebooks/
   00_project_summary.ipynb
-  01_raw_bids_and_events.ipynb
-  02_project_specific_events.ipynb
-  03_preprocessing.ipynb
-  04_artifact_annotation.ipynb
-  05_ica_cleaning.ipynb
-  06_epoching.ipynb
-  07_evokeds.ipynb
+
+  1A_anatomy/
+    01_convert_mri.ipynb
+    02_recon.ipynb
+    03_anatomy_setup.ipynb
+    04_coregistration.ipynb
+
+  1B_meg_preprocessing/
+    01_raw_bids_and_events.ipynb
+    02_project_specific_events.ipynb
+    03_preprocessing.ipynb
+    04_artifact_annotation.ipynb
+    05_ica_cleaning.ipynb
+    06_epoching.ipynb
+    07_evokeds.ipynb
+
+  2_source_modeling/
+    # Forward solution, noise covariance, inverse operator, source estimates,
+    # morphing, and label time courses.
+
+  3_analysis/
+    # Project-specific analyses and figures.
 ```
 
 Suggested roles:
@@ -1231,44 +1456,72 @@ Suggested roles:
   Read-only dashboard.
   Shows what data exist, what has been computed, event status, bad-channel status,
   filtered-derivative status, bad-segment annotation status, ICA status, cleaned-
-  raw status, epoch status, and evoked status.
+  raw status, epoch status, evoked status, and anatomy/source-preparation status.
 
-01_raw_bids_and_events.ipynb
+1A_anatomy/01_convert_mri.ipynb
+  Optional MRI conversion notebook.
+  Converts raw MRI lab exports such as DICOM series into project-standard T1/T2
+  NIfTI and optional MGZ files.
+
+1A_anatomy/02_recon.ipynb
+  FreeSurfer reconstruction notebook.
+  Runs T1-based recon-all and optionally uses T2 for pial-surface refinement.
+
+1A_anatomy/03_anatomy_setup.ipynb
+  Anatomy setup notebook.
+  Creates BEM surfaces, BEM model/solution, source spaces, optional source
+  distances, optional volume source space, and morphed labels.
+
+1A_anatomy/04_coregistration.ipynb
+  Coregistration notebook.
+  Opens the interactive MNE coregistration GUI and stores trans.fif derivatives.
+
+1B_meg_preprocessing/01_raw_bids_and_events.ipynb
   Active raw-data and bad-channel notebook.
   Discovers sourcedata, converts to raw BIDS, extracts trigger-derived events,
   inspects channels, performs manual bad-channel QC, and updates channels.tsv.
 
-02_project_specific_events.ipynb
+1B_meg_preprocessing/02_project_specific_events.ipynb
   Optional event-derivation notebook.
   Reads trigger-derived events.tsv files and derives project-specific analysis-
   ready event tables from trigger anchors and stimulus/task metadata. This
   notebook can be skipped when trigger-derived events are already the analysis
   events.
 
-03_preprocessing.ipynb
+1B_meg_preprocessing/03_preprocessing.ipynb
   Preprocessing notebook.
   Applies saved bad-channel decisions, filters data, and writes filtered raw
   derivatives.
 
-04_artifact_annotation.ipynb
+1B_meg_preprocessing/04_artifact_annotation.ipynb
   Bad-segment annotation notebook.
   Loads filtered data, interactively marks BAD_* time spans, and writes bad-
   segment annotation derivatives.
 
-05_ica_cleaning.ipynb
+1B_meg_preprocessing/05_ica_cleaning.ipynb
   ICA cleaning notebook.
   Fits ICA models, saves ICA component-exclusion decisions, and writes cleaned
   raw derivatives.
 
-06_epoching.ipynb
+1B_meg_preprocessing/06_epoching.ipynb
   Epoching notebook.
   Creates epochs from cleaned raw data and either analysis-event derivatives or
   raw BIDS events.
 
-07_evokeds.ipynb
+1B_meg_preprocessing/07_evokeds.ipynb
   Evoked-response notebook.
   Defines project-specific conditions from epoch metadata and writes evoked
   response files.
+
+2_source_modeling/
+  Future source-modeling notebooks.
+  These will combine outputs from 1A and 1B: coregistration transforms, BEM
+  solutions, source spaces, cleaned data, epochs, evokeds, and noise covariance.
+
+3_analysis/
+  Project-specific analysis notebooks.
+  These should contain study-specific statistics, plotting, reports, and final
+  figures rather than reusable pipeline infrastructure.
 ```
 
 Notebook steps should call reusable library functions rather than implementing
@@ -1281,6 +1534,36 @@ By default, pipeline steps should not silently overwrite existing files.
 Different steps can use different existing-output policies:
 
 ```text
+mri_conversion:
+  skip / overwrite
+
+recon:
+  skip / overwrite
+
+watershed:
+  skip / overwrite
+
+dense_scalp:
+  skip / overwrite
+
+bem:
+  skip / overwrite
+
+source_space:
+  skip / overwrite
+
+source_distances:
+  skip / overwrite
+
+volume_source_space:
+  skip / overwrite
+
+morph_labels:
+  skip / overwrite
+
+coregistration:
+  skip / overwrite
+
 convert_to_bids:
   skip / overwrite
 
@@ -1319,6 +1602,10 @@ For notebooks, a central variable can be used:
 
 ```python
 OVERWRITE_STEPS = []
+OVERWRITE_STEPS = ["mri_conversion"]
+OVERWRITE_STEPS = ["recon"]
+OVERWRITE_STEPS = ["watershed", "bem"]
+OVERWRITE_STEPS = ["coregistration"]
 OVERWRITE_STEPS = ["events"]
 OVERWRITE_STEPS = ["analysis_events"]
 OVERWRITE_STEPS = ["bad_channels"]
@@ -1342,17 +1629,27 @@ OVERWRITE_STEPS = []
 This means:
 
 ```text
-convert_to_bids  -> skip existing raw BIDS files
-events           -> skip existing events.tsv files
-analysis_events  -> skip existing derivative analysis-event files
-bad_channels     -> load existing bad-channel decisions
-annotations      -> load existing bad-segment annotations
-filtering        -> skip existing filtered derivatives
-ica              -> skip existing ICA files
-ica_decision     -> load existing ICA decisions
-cleaned_raw      -> skip existing cleaned raw derivatives
-epochs           -> skip existing epochs
-evokeds          -> skip existing evoked files
+mri_conversion  -> skip existing converted MRI files
+recon           -> skip existing FreeSurfer subjects
+watershed       -> skip existing watershed/BEM surfaces
+dense_scalp     -> skip existing dense scalp surfaces
+bem             -> skip existing BEM model/solution
+source_space    -> skip existing source spaces
+source_distances-> skip existing source spaces with distances
+volume_source_space -> skip existing volume source spaces
+morph_labels    -> skip existing morphed labels/parcellations
+coregistration  -> skip existing trans.fif files
+convert_to_bids -> skip existing raw BIDS files
+events          -> skip existing events.tsv files
+analysis_events -> skip existing derivative analysis-event files
+bad_channels    -> load existing bad-channel decisions
+annotations     -> load existing bad-segment annotations
+filtering       -> skip existing filtered derivatives
+ica             -> skip existing ICA files
+ica_decision    -> load existing ICA decisions
+cleaned_raw     -> skip existing cleaned raw derivatives
+epochs          -> skip existing epochs
+evokeds         -> skip existing evoked files
 ```
 
 To recompute a specific step, either delete the corresponding output file
@@ -1457,8 +1754,9 @@ meegpipe write-events \
   --task rest
 ```
 
-The CLI is useful for quick checks and later batch/HPC workflows. Interactive QC
-is better handled in notebooks.
+The CLI is useful for quick checks and later batch/HPC workflows. Interactive QC,
+MRI conversion, FreeSurfer reconstruction, and MNE coregistration are currently
+better handled in notebooks.
 
 ## Recommended first data import step
 
@@ -1486,6 +1784,13 @@ For projects without source session folders, use:
 ```text
 sourcedata/sub-0001/meg/task-rest/<original_rest_file>.fif
 sourcedata/sub-0001/meg/task-auditory/<original_auditory_file>.fif
+```
+
+Place raw MRI exports separately, for example:
+
+```text
+sourcedata/mri_raw/sub-0001/T1/<many DICOM files>
+sourcedata/mri_raw/sub-0001/T2/<many DICOM files>
 ```
 
 Do not modify these source files.
@@ -1569,12 +1874,21 @@ Currently implemented:
 - project config loading
 - configurable `sourcedata_root`
 - configurable source-data session handling via `sourcedata.sessions`
+- configurable MRI raw/input roots via `paths.mri_raw_root` and `paths.mri_root`
+- configurable FreeSurfer paths via `freesurfer.home` and `freesurfer.subjects_dir`
 - runtime and analysis defaults in `configs/local.yaml`
 - basic BIDS dataset inspection
 - participants.tsv inspection
 - BIDSPath construction
 - sourcedata discovery
 - conversion from `sourcedata_root` to raw BIDS
+- MRI conversion helpers for DICOM/NIfTI/MGZ preparation
+- FreeSurfer recon-all helpers
+- watershed BEM and dense scalp surface helpers
+- BEM model and BEM solution helpers
+- surface and volume source-space helpers
+- label morphing helpers
+- MNE coregistration helper/status utilities
 - raw data loading via MNE-BIDS
 - status-oriented batch behavior for missing inputs and existing outputs
 - channel summaries
@@ -1593,13 +1907,21 @@ Currently implemented:
 - ICA decision JSON derivatives
 - cleaned raw derivatives
 - epoching utilities
+- optional autoreject-based epoch cleaning with training subsets
 - evoked-response utilities
-- existing-output policies for conversion, events, analysis events, bad-channel QC, filtering, annotations, ICA, ICA decisions, cleaned raw derivatives, epochs, and evokeds
+- existing-output policies for anatomy preparation, conversion, events,
+  analysis events, bad-channel QC, filtering, annotations, ICA, ICA decisions,
+  cleaned raw derivatives, epochs, and evokeds
 
 Not yet implemented:
 
 - SSP / empty-room based cleaning
-- source analysis
+- forward solution workflow
+- noise covariance workflow
+- inverse operator workflow
+- source estimates
+- source morphing to fsaverage
+- label time courses
 - reports
 - HPC/Slurm execution
 - automated tests

@@ -202,23 +202,24 @@ my-meeg-project/
     sub-0001/
       meg/
         task-example/
-          README.md
+          <original_file>.fif
       ses-20260523/
         meg/
           task-example/
-            README.md
+            <original_file>.fif
 
     mri_raw/
       sub-0001/
         T1/
-          README.md
+          <many DICOM files>
         T2/
-          README.md
+          <many DICOM files>
 
     mri/
       sub-0001/
         anat/
-          README.md
+          sub-0001_T1w.nii.gz
+          sub-0001_T2w.nii.gz
 
   derivatives/
     meeg-pipeline/

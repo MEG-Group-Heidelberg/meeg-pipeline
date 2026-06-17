@@ -78,7 +78,8 @@ def resolve_entity_values(
 
     Allowed selections are:
     - ``None``: entity is not used, returns ``[None]``
-    - ``"all"``: all detected values for the entity
+    - ``"all"``: all detected values for the entity, or ``[None]`` if the
+      entity is not present in the dataset
     - ``["all"]``: same as ``"all"``
     - one value, e.g. ``"01"``
     - multiple values, e.g. ``["01", "02"]``
@@ -109,11 +110,16 @@ def iter_recordings(
     config: PipelineConfig,
     *,
     subjects: EntitySelection,
-    sessions: EntitySelection = None,
-    tasks: EntitySelection = None,
-    runs: EntitySelection = None,
+    sessions: EntitySelection = "all",
+    tasks: EntitySelection = "all",
+    runs: EntitySelection = "all",
 ) -> Iterable[Recording]:
     """Yield concrete subject/session/task/run combinations.
+
+    Notebook defaults should normally use ``"all"`` for optional entities.
+    For an entity that is not used in a project, ``"all"`` resolves to
+    ``[None]``. This keeps the same notebook usable for projects with and
+    without sessions, tasks, or runs.
 
     The yielded dictionaries are accepted by high-level pipeline functions that
     expect ``subject``, ``session``, ``task``, and ``run`` keys.

@@ -14,6 +14,16 @@ import pandas as pd
 from mne import bem as mne_bem
 
 ExistingOutputPolicy = Literal["skip", "overwrite"]
+PatternLike = str | Sequence[str]
+
+DEFAULT_T1_PATTERNS: tuple[str, ...] = (
+    "{subject}/anat/T1.mgz",
+    "{subject}/anat/*T1w*.nii*",
+)
+DEFAULT_T2_PATTERNS: tuple[str, ...] = (
+    "{subject}/anat/T2.mgz",
+    "{subject}/anat/*T2w*.nii*",
+)
 
 
 @dataclass(frozen=True)
@@ -73,13 +83,21 @@ def subject_dir(subjects_dir: str | Path, subject: str) -> Path:
     return Path(subjects_dir).expanduser().resolve() / _subject_label(subject)
 
 
-def _glob_one(root: Path, pattern: str, subject: str) -> Path | None:
-    """Find one path matching a pattern that contains ``{subject}``."""
-    for subject_variant in _subject_variants(subject):
-        resolved_pattern = pattern.format(subject=subject_variant)
-        matches = sorted(root.glob(resolved_pattern))
-        if matches:
-            return matches[0].expanduser().resolve()
+def _as_patterns(patterns: PatternLike) -> tuple[str, ...]:
+    """Normalize one or more glob patterns while preserving strings."""
+    if isinstance(patterns, str):
+        return (patterns,)
+    return tuple(str(pattern) for pattern in patterns)
+
+
+def _glob_one(root: Path, patterns: PatternLike, subject: str) -> Path | None:
+    """Find one path matching one of the patterns that contain ``{subject}``."""
+    for pattern in _as_patterns(patterns):
+        for subject_variant in _subject_variants(subject):
+            resolved_pattern = pattern.format(subject=subject_variant)
+            matches = sorted(root.glob(resolved_pattern))
+            if matches:
+                return matches[0].expanduser().resolve()
     return None
 
 
@@ -87,26 +105,31 @@ def find_anatomical_image(
     mri_root: str | Path,
     subject: str,
     *,
-    pattern: str,
+    patterns: PatternLike,
 ) -> Path | None:
-    """Find a T1/T2 image for one subject using a configurable glob pattern."""
+    """Find a T1/T2 image for one subject using configurable glob patterns."""
     root = Path(mri_root).expanduser().resolve()
     if not root.exists():
         return None
-    return _glob_one(root, pattern, subject)
+    return _glob_one(root, patterns, subject)
 
 
 def find_anatomical_images(
     mri_root: str | Path,
     subject: str,
     *,
-    t1_pattern: str = "{subject}/anat/*T1w*.nii*",
-    t2_pattern: str = "{subject}/anat/*T2w*.nii*",
+    t1_patterns: PatternLike = DEFAULT_T1_PATTERNS,
+    t2_patterns: PatternLike = DEFAULT_T2_PATTERNS,
 ) -> tuple[Path | None, Path | None]:
-    """Find T1 and T2 images for one subject."""
+    """Find T1 and T2 images for one subject.
+
+    Multiple patterns are tried in order. This allows subject-specific mixes of
+    already prepared ``T1.mgz`` files and converted BIDS-like ``*T1w*.nii*``
+    files inside the same project.
+    """
     return (
-        find_anatomical_image(mri_root, subject, pattern=t1_pattern),
-        find_anatomical_image(mri_root, subject, pattern=t2_pattern),
+        find_anatomical_image(mri_root, subject, patterns=t1_patterns),
+        find_anatomical_image(mri_root, subject, patterns=t2_patterns),
     )
 
 
@@ -119,8 +142,8 @@ def _discover_subject_dirs(root: Path) -> set[str]:
 def discover_mri_subjects(
     mri_root: str | Path,
     *,
-    t1_pattern: str = "{subject}/anat/*T1w*.nii*",
-    t2_pattern: str = "{subject}/anat/*T2w*.nii*",
+    t1_patterns: PatternLike = DEFAULT_T1_PATTERNS,
+    t2_patterns: PatternLike = DEFAULT_T2_PATTERNS,
     include_t2_only: bool = True,
 ) -> list[str]:
     """Discover subjects with converted anatomical images."""
@@ -131,8 +154,8 @@ def discover_mri_subjects(
         t1, t2 = find_anatomical_images(
             root,
             subject,
-            t1_pattern=t1_pattern,
-            t2_pattern=t2_pattern,
+            t1_patterns=t1_patterns,
+            t2_patterns=t2_patterns,
         )
         if t1 is not None or (include_t2_only and t2 is not None):
             discovered.append(subject)
@@ -150,36 +173,46 @@ def resolve_subjects(
     mri_root: str | Path | None = None,
     mri_raw_root: str | Path | None = None,
     subjects_dir: str | Path | None = None,
-    t1_pattern: str = "{subject}/anat/*T1w*.nii*",
-    t2_pattern: str = "{subject}/anat/*T2w*.nii*",
+    t1_patterns: PatternLike = DEFAULT_T1_PATTERNS,
+    t2_patterns: PatternLike = DEFAULT_T2_PATTERNS,
 ) -> list[str]:
-    """Resolve notebook-style subject selections."""
+    """Resolve notebook-style subject selections.
+
+    With ``subjects="all"``, subjects are discovered from all supplied roots and
+    combined. This supports mixed projects where some subjects already have a
+    prepared ``T1.mgz`` under ``mri_root`` while other subjects only have raw
+    DICOM folders under ``mri_raw_root``.
+    """
     if subjects != "all":
         if isinstance(subjects, str):
             return [_subject_label(subjects)]
         return [_subject_label(subject) for subject in subjects]
 
+    found: set[str] = set()
+
     if mri_root is not None:
-        found = discover_mri_subjects(
-            mri_root,
-            t1_pattern=t1_pattern,
-            t2_pattern=t2_pattern,
-            include_t2_only=True,
+        found.update(
+            discover_mri_subjects(
+                mri_root,
+                t1_patterns=t1_patterns,
+                t2_patterns=t2_patterns,
+                include_t2_only=True,
+            )
         )
-        if found:
-            return found
 
     if mri_raw_root is not None:
-        found = discover_raw_mri_subjects(mri_raw_root)
-        if found:
-            return found
+        found.update(discover_raw_mri_subjects(mri_raw_root))
 
     if subjects_dir is not None:
         root = Path(subjects_dir).expanduser().resolve()
         if root.exists():
-            return sorted(path.name for path in root.iterdir() if path.is_dir())
+            found.update(
+                path.name
+                for path in root.iterdir()
+                if path.is_dir() and path.name != "fsaverage"
+            )
 
-    return []
+    return sorted(_subject_label(subject) for subject in found)
 
 
 def make_freesurfer_env(
@@ -325,12 +358,13 @@ def convert_raw_mri_modality(
     mgz_path = converted_mgz_path(mri_root, subject, modality)
 
     if source is None:
+        status = "missing_t1_source" if modality == "T1" else "missing_optional_t2_source"
         return [
             AnatomyFileResult(
                 subject=subject,
                 step=f"convert_{modality.lower()}",
                 path=str(Path(mri_raw_root).expanduser().resolve()),
-                status="missing_source",
+                status=status,
                 message=f"No raw {modality} source matched pattern {source_pattern!r}.",
             )
         ]
@@ -464,6 +498,22 @@ def convert_raw_mri_modality(
     return results
 
 
+def _skip_existing_anatomical_input_result(
+    subject: str,
+    *,
+    modality: Literal["T1", "T2"],
+    path: Path,
+) -> AnatomyFileResult:
+    """Return a result row for an already prepared anatomical input."""
+    return AnatomyFileResult(
+        subject=_subject_label(subject),
+        step=f"prepare_{modality.lower()}_input",
+        path=str(path),
+        status="skipped_existing",
+        message=f"Standardized {modality} input already exists.",
+    )
+
+
 def prepare_anatomical_inputs_for_subject(
     subject: str,
     *,
@@ -471,39 +521,80 @@ def prepare_anatomical_inputs_for_subject(
     mri_root: str | Path,
     t1_source_pattern: str = "{subject}/T1",
     t2_source_pattern: str = "{subject}/T2",
+    t1_patterns: PatternLike = DEFAULT_T1_PATTERNS,
+    t2_patterns: PatternLike = DEFAULT_T2_PATTERNS,
     freesurfer_home: str | Path | None = None,
     make_mgz: bool = True,
     on_existing: ExistingOutputPolicy = "skip",
     dry_run: bool = False,
 ) -> list[AnatomyCommandResult | AnatomyFileResult]:
-    """Convert available T1 and T2 raw MRI inputs for one subject."""
+    """Prepare standardized T1/T2 inputs for one subject.
+
+    The function first checks whether a standardized anatomical input already
+    exists under ``mri_root``. If so, conversion is skipped for that modality.
+    Otherwise it attempts to create the input from raw MRI data under
+    ``mri_raw_root``. T1 is required for the standard recon-all workflow; T2 is
+    optional and may be missing for some subjects.
+    """
+    subject = _subject_label(subject)
     results: list[AnatomyCommandResult | AnatomyFileResult] = []
-    results.extend(
-        convert_raw_mri_modality(
-            subject,
-            mri_raw_root=mri_raw_root,
-            mri_root=mri_root,
-            source_pattern=t1_source_pattern,
-            modality="T1",
-            freesurfer_home=freesurfer_home,
-            make_mgz=make_mgz,
-            on_existing=on_existing,
-            dry_run=dry_run,
-        )
+
+    existing_t1 = find_anatomical_image(
+        mri_root,
+        subject,
+        patterns=t1_patterns,
     )
-    results.extend(
-        convert_raw_mri_modality(
-            subject,
-            mri_raw_root=mri_raw_root,
-            mri_root=mri_root,
-            source_pattern=t2_source_pattern,
-            modality="T2",
-            freesurfer_home=freesurfer_home,
-            make_mgz=make_mgz,
-            on_existing=on_existing,
-            dry_run=dry_run,
+    if existing_t1 is not None and on_existing == "skip":
+        results.append(
+            _skip_existing_anatomical_input_result(
+                subject,
+                modality="T1",
+                path=existing_t1,
+            )
         )
+    else:
+        results.extend(
+            convert_raw_mri_modality(
+                subject,
+                mri_raw_root=mri_raw_root,
+                mri_root=mri_root,
+                source_pattern=t1_source_pattern,
+                modality="T1",
+                freesurfer_home=freesurfer_home,
+                make_mgz=make_mgz,
+                on_existing=on_existing,
+                dry_run=dry_run,
+            )
+        )
+
+    existing_t2 = find_anatomical_image(
+        mri_root,
+        subject,
+        patterns=t2_patterns,
     )
+    if existing_t2 is not None and on_existing == "skip":
+        results.append(
+            _skip_existing_anatomical_input_result(
+                subject,
+                modality="T2",
+                path=existing_t2,
+            )
+        )
+    else:
+        results.extend(
+            convert_raw_mri_modality(
+                subject,
+                mri_raw_root=mri_raw_root,
+                mri_root=mri_root,
+                source_pattern=t2_source_pattern,
+                modality="T2",
+                freesurfer_home=freesurfer_home,
+                make_mgz=make_mgz,
+                on_existing=on_existing,
+                dry_run=dry_run,
+            )
+        )
+
     return results
 
 
@@ -514,12 +605,14 @@ def prepare_anatomical_inputs_for_subjects(
     mri_root: str | Path,
     t1_source_pattern: str = "{subject}/T1",
     t2_source_pattern: str = "{subject}/T2",
+    t1_patterns: PatternLike = DEFAULT_T1_PATTERNS,
+    t2_patterns: PatternLike = DEFAULT_T2_PATTERNS,
     freesurfer_home: str | Path | None = None,
     make_mgz: bool = True,
     on_existing: ExistingOutputPolicy = "skip",
     dry_run: bool = False,
 ) -> list[AnatomyCommandResult | AnatomyFileResult]:
-    """Convert available T1/T2 raw MRI inputs for multiple subjects."""
+    """Prepare standardized T1/T2 inputs for multiple subjects."""
     results: list[AnatomyCommandResult | AnatomyFileResult] = []
     for subject in subjects:
         results.extend(
@@ -529,6 +622,8 @@ def prepare_anatomical_inputs_for_subjects(
                 mri_root=mri_root,
                 t1_source_pattern=t1_source_pattern,
                 t2_source_pattern=t2_source_pattern,
+                t1_patterns=t1_patterns,
+                t2_patterns=t2_patterns,
                 freesurfer_home=freesurfer_home,
                 make_mgz=make_mgz,
                 on_existing=on_existing,
@@ -545,13 +640,22 @@ def mri_conversion_status_to_dataframe(
     mri_root: str | Path,
     t1_source_pattern: str = "{subject}/T1",
     t2_source_pattern: str = "{subject}/T2",
+    t1_patterns: PatternLike = DEFAULT_T1_PATTERNS,
+    t2_patterns: PatternLike = DEFAULT_T2_PATTERNS,
 ) -> pd.DataFrame:
-    """Summarize raw and converted MRI inputs."""
+    """Summarize raw and standardized MRI inputs.
+
+    A subject can already have standardized inputs under ``mri_root`` even when
+    no raw DICOM folder exists. In that case ``01_convert_mri`` can skip that
+    subject while ``02_recon`` can still use the existing T1/T2 input.
+    """
     rows = []
     for subject in subjects:
         subject = _subject_label(subject)
         t1_source = _source_path_for_modality(mri_raw_root, subject, pattern=t1_source_pattern)
         t2_source = _source_path_for_modality(mri_raw_root, subject, pattern=t2_source_pattern)
+        existing_t1 = find_anatomical_image(mri_root, subject, patterns=t1_patterns)
+        existing_t2 = find_anatomical_image(mri_root, subject, patterns=t2_patterns)
         t1_nifti = converted_nifti_path(mri_root, subject, "T1w")
         t2_nifti = converted_nifti_path(mri_root, subject, "T2w")
         t1_mgz = converted_mgz_path(mri_root, subject, "T1")
@@ -559,6 +663,10 @@ def mri_conversion_status_to_dataframe(
         rows.append(
             {
                 "subject": subject,
+                "t1_ready": existing_t1 is not None,
+                "t1_ready_path": "" if existing_t1 is None else str(existing_t1),
+                "t2_ready": existing_t2 is not None,
+                "t2_ready_path": "" if existing_t2 is None else str(existing_t2),
                 "t1_source_exists": t1_source is not None,
                 "t1_source_path": "" if t1_source is None else str(t1_source),
                 "t2_source_exists": t2_source is not None,
@@ -588,8 +696,8 @@ def run_recon_all(
     subjects_dir: str | Path,
     t1_path: str | Path | None = None,
     t2_path: str | Path | None = None,
-    t1_pattern: str = "{subject}/anat/*T1w*.nii*",
-    t2_pattern: str = "{subject}/anat/*T2w*.nii*",
+    t1_patterns: PatternLike = DEFAULT_T1_PATTERNS,
+    t2_patterns: PatternLike = DEFAULT_T2_PATTERNS,
     use_t2: bool = False,
     freesurfer_home: str | Path | None = None,
     on_existing: ExistingOutputPolicy = "skip",
@@ -609,8 +717,8 @@ def run_recon_all(
         discovered_t1, discovered_t2 = find_anatomical_images(
             mri_root,
             subject,
-            t1_pattern=t1_pattern,
-            t2_pattern=t2_pattern,
+            t1_patterns=t1_patterns,
+            t2_patterns=t2_patterns,
         )
         if t1_path is None:
             t1_path = discovered_t1
@@ -692,8 +800,8 @@ def run_recon_all_for_subjects(
     *,
     mri_root: str | Path,
     subjects_dir: str | Path,
-    t1_pattern: str = "{subject}/anat/*T1w*.nii*",
-    t2_pattern: str = "{subject}/anat/*T2w*.nii*",
+    t1_patterns: PatternLike = DEFAULT_T1_PATTERNS,
+    t2_patterns: PatternLike = DEFAULT_T2_PATTERNS,
     use_t2: bool = False,
     freesurfer_home: str | Path | None = None,
     on_existing: ExistingOutputPolicy = "skip",
@@ -705,8 +813,8 @@ def run_recon_all_for_subjects(
             subject,
             mri_root=mri_root,
             subjects_dir=subjects_dir,
-            t1_pattern=t1_pattern,
-            t2_pattern=t2_pattern,
+            t1_patterns=t1_patterns,
+            t2_patterns=t2_patterns,
             use_t2=use_t2,
             freesurfer_home=freesurfer_home,
             on_existing=on_existing,
@@ -1077,8 +1185,8 @@ def anatomy_status_to_dataframe(
     *,
     subjects_dir: str | Path,
     mri_root: str | Path | None = None,
-    t1_pattern: str = "{subject}/anat/*T1w*.nii*",
-    t2_pattern: str = "{subject}/anat/*T2w*.nii*",
+    t1_patterns: PatternLike = DEFAULT_T1_PATTERNS,
+    t2_patterns: PatternLike = DEFAULT_T2_PATTERNS,
     spacing: str = "ico5",
     bem_ico: int = 4,
     bem_conductivity: Sequence[float] = (0.3,),
@@ -1095,8 +1203,8 @@ def anatomy_status_to_dataframe(
             t1_path, t2_path = find_anatomical_images(
                 mri_root,
                 subject,
-                t1_pattern=t1_pattern,
-                t2_pattern=t2_pattern,
+                t1_patterns=t1_patterns,
+                t2_patterns=t2_patterns,
             )
         bem_sol = bem_solution_path(
             subjects_dir,

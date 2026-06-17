@@ -157,8 +157,14 @@ class AnatomyLabelsConfig:
 
 @dataclass(frozen=True)
 class AnatomyConfig:
-    t1_pattern: str = "{subject}/anat/*T1w*.nii*"
-    t2_pattern: str = "{subject}/anat/*T2w*.nii*"
+    t1_patterns: tuple[str, ...] = (
+        "{subject}/anat/T1.mgz",
+        "{subject}/anat/*T1w*.nii*",
+    )
+    t2_patterns: tuple[str, ...] = (
+        "{subject}/anat/T2.mgz",
+        "{subject}/anat/*T2w*.nii*",
+    )
     conversion: AnatomyConversionConfig = AnatomyConversionConfig()
     recon: AnatomyReconConfig = AnatomyReconConfig()
     watershed: AnatomyWatershedConfig = AnatomyWatershedConfig()
@@ -166,6 +172,16 @@ class AnatomyConfig:
     source_space: AnatomySourceSpaceConfig = AnatomySourceSpaceConfig()
     volume_source_space: AnatomyVolumeSourceSpaceConfig = AnatomyVolumeSourceSpaceConfig()
     labels: AnatomyLabelsConfig = AnatomyLabelsConfig()
+
+    @property
+    def t1_pattern(self) -> str:
+        """Backward-compatible first T1 pattern."""
+        return self.t1_patterns[0]
+
+    @property
+    def t2_pattern(self) -> str:
+        """Backward-compatible first T2 pattern."""
+        return self.t2_patterns[0]
 
 
 @dataclass(frozen=True)
@@ -246,6 +262,34 @@ def _optional_str_tuple(value: Any) -> tuple[str, ...] | None:
         return (value,)
 
     return tuple(str(item) for item in value)
+
+
+def _str_tuple(value: Any, default: tuple[str, ...]) -> tuple[str, ...]:
+    """Return a string tuple from a scalar/list config value."""
+    if value is None:
+        return default
+
+    if isinstance(value, str):
+        return (value,)
+
+    return tuple(str(item) for item in value)
+
+
+def _anatomy_patterns(
+    raw: dict[str, Any],
+    *,
+    plural_key: str,
+    singular_key: str,
+    default: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Read anatomy image patterns with singular-key backward compatibility."""
+    if plural_key in raw:
+        return _str_tuple(raw.get(plural_key), default)
+
+    if singular_key in raw:
+        return _str_tuple(raw.get(singular_key), default)
+
+    return default
 
 
 def _optional_baseline(
@@ -355,8 +399,18 @@ def load_config(config_path: str | Path) -> PipelineConfig:
         )
 
     anatomy = AnatomyConfig(
-        t1_pattern=anatomy_raw.get("t1_pattern", "{subject}/anat/*T1w*.nii*"),
-        t2_pattern=anatomy_raw.get("t2_pattern", "{subject}/anat/*T2w*.nii*"),
+        t1_patterns=_anatomy_patterns(
+            anatomy_raw,
+            plural_key="t1_patterns",
+            singular_key="t1_pattern",
+            default=("{subject}/anat/T1.mgz", "{subject}/anat/*T1w*.nii*"),
+        ),
+        t2_patterns=_anatomy_patterns(
+            anatomy_raw,
+            plural_key="t2_patterns",
+            singular_key="t2_pattern",
+            default=("{subject}/anat/T2.mgz", "{subject}/anat/*T2w*.nii*"),
+        ),
         conversion=AnatomyConversionConfig(
             converter=anatomy_converter,
             t1_source_pattern=anatomy_conversion_raw.get(

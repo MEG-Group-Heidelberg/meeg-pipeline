@@ -202,24 +202,23 @@ my-meeg-project/
     sub-0001/
       meg/
         task-example/
-          <original_file>.fif
+          README.md
       ses-20260523/
         meg/
           task-example/
-            <original_file>.fif
+            README.md
 
     mri_raw/
       sub-0001/
         T1/
-          <many DICOM files>
+          README.md
         T2/
-          <many DICOM files>
+          README.md
 
     mri/
       sub-0001/
         anat/
-          sub-0001_T1w.nii.gz
-          sub-0001_T2w.nii.gz
+          README.md
 
   derivatives/
     meeg-pipeline/
@@ -481,26 +480,37 @@ sourcedata/
         <many DICOM files>
 ```
 
-The `1A_anatomy/01_convert_mri.ipynb` notebook converts these raw MRI inputs into
-a predictable project layout:
+The `1A_anatomy/01_convert_mri.ipynb` notebook prepares a predictable project
+layout. It converts raw MRI inputs when needed, but it also skips subjects that
+already have a standardized anatomical input such as `T1.mgz` or a BIDS-like
+`*T1w*.nii.gz` file under `paths.mri_root`:
 
 ```text
 sourcedata/
   mri/
     sub-0001/
       anat/
+        T1.mgz
+        T2.mgz
         sub-0001_T1w.nii.gz
         sub-0001_T1w.json
         sub-0001_T2w.nii.gz
         sub-0001_T2w.json
-        T1.mgz
-        T2.mgz
 ```
 
 `T1` is the required input for the standard `recon-all` workflow. `T2` is
 optional and can be used as an additional input for pial-surface refinement when
 configured. A subject with only T2 and no T1 is reported as an unsupported or
 missing-input case in the standard workflow.
+
+Projects can mix both input styles across subjects. For example, `sub-0001` may
+already have `sourcedata/mri/sub-0001/anat/T1.mgz` supplied by another lab,
+whereas `sub-0002` may only have raw DICOM folders under
+`sourcedata/mri_raw/sub-0002/T1/`. The conversion notebook first checks for a
+standardized input under `mri_root`; if it exists, conversion is skipped for that
+subject/modality. Otherwise it attempts to create the standardized input from
+`mri_raw_root`. The recon notebook only requires a usable T1 input under
+`mri_root` and does not depend on how that file was created.
 
 These MRI paths are configured with:
 
@@ -510,8 +520,12 @@ paths:
   mri_root: "./sourcedata/mri"
 
 anatomy:
-  t1_pattern: "{subject}/anat/*T1w*.nii*"
-  t2_pattern: "{subject}/anat/*T2w*.nii*"
+  t1_patterns:
+    - "{subject}/anat/T1.mgz"
+    - "{subject}/anat/*T1w*.nii*"
+  t2_patterns:
+    - "{subject}/anat/T2.mgz"
+    - "{subject}/anat/*T2w*.nii*"
   conversion:
     converter: "dcm2niix"
     t1_source_pattern: "{subject}/T1"
@@ -709,16 +723,24 @@ folder names, set the anatomy patterns accordingly, for example:
 
 ```yaml
 anatomy:
-  t1_pattern: "sub-{subject}/anat/*T1w*.nii*"
-  t2_pattern: "sub-{subject}/anat/*T2w*.nii*"
+  t1_patterns:
+    - "sub-{subject}/anat/T1.mgz"
+    - "sub-{subject}/anat/*T1w*.nii*"
+  t2_patterns:
+    - "sub-{subject}/anat/T2.mgz"
+    - "sub-{subject}/anat/*T2w*.nii*"
 ```
 
 If your project uses bare subject labels such as `0001`, use:
 
 ```yaml
 anatomy:
-  t1_pattern: "{subject}/anat/*T1w*.nii*"
-  t2_pattern: "{subject}/anat/*T2w*.nii*"
+  t1_patterns:
+    - "{subject}/anat/T1.mgz"
+    - "{subject}/anat/*T1w*.nii*"
+  t2_patterns:
+    - "{subject}/anat/T2.mgz"
+    - "{subject}/anat/*T2w*.nii*"
 ```
 
 ### Sessions
@@ -847,8 +869,12 @@ freesurfer:
   subjects_dir: "./derivatives/freesurfer/subjects"
 
 anatomy:
-  t1_pattern: "{subject}/anat/*T1w*.nii*"
-  t2_pattern: "{subject}/anat/*T2w*.nii*"
+  t1_patterns:
+    - "{subject}/anat/T1.mgz"
+    - "{subject}/anat/*T1w*.nii*"
+  t2_patterns:
+    - "{subject}/anat/T2.mgz"
+    - "{subject}/anat/*T2w*.nii*"
   conversion:
     converter: "dcm2niix"
     t1_source_pattern: "{subject}/T1"
@@ -1019,6 +1045,8 @@ Common status values include:
 ```text
 missing_input
 missing_t1
+missing_t1_source
+missing_optional_t2_source
 unsupported_t2_only
 skipped_existing
 loaded
@@ -1041,23 +1069,27 @@ MEG preprocessing workflow.
 
 ### `01_convert_mri.ipynb`
 
-This notebook prepares MRI inputs.
+This notebook prepares MRI inputs. It can be skipped or partially skipped for
+subjects that already have standardized MRI inputs under `paths.mri_root`.
 
-Typical input:
+Typical raw input:
 
 ```text
 sourcedata/mri_raw/sub-0001/T1/
 sourcedata/mri_raw/sub-0001/T2/
 ```
 
-Typical output:
+Typical standardized input/output:
 
 ```text
-sourcedata/mri/sub-0001/anat/sub-0001_T1w.nii.gz
-sourcedata/mri/sub-0001/anat/sub-0001_T2w.nii.gz
 sourcedata/mri/sub-0001/anat/T1.mgz
 sourcedata/mri/sub-0001/anat/T2.mgz
+sourcedata/mri/sub-0001/anat/sub-0001_T1w.nii.gz
+sourcedata/mri/sub-0001/anat/sub-0001_T2w.nii.gz
 ```
+
+The standardized files may be created by this notebook or placed there manually
+when another lab has already prepared them.
 
 The T2 input is optional. The standard pipeline requires T1 for `recon-all`.
 
@@ -1460,13 +1492,15 @@ Suggested roles:
   raw status, epoch status, evoked status, and anatomy/source-preparation status.
 
 1A_anatomy/01_convert_mri.ipynb
-  Optional MRI conversion notebook.
+  Optional MRI input-preparation notebook.
   Converts raw MRI lab exports such as DICOM series into project-standard T1/T2
-  NIfTI and optional MGZ files.
+  NIfTI and optional MGZ files, while skipping subjects that already have
+  standardized inputs such as T1.mgz under paths.mri_root.
 
 1A_anatomy/02_recon.ipynb
   FreeSurfer reconstruction notebook.
-  Runs T1-based recon-all and optionally uses T2 for pial-surface refinement.
+  Runs T1-based recon-all from whichever standardized T1 input is available
+  under paths.mri_root and optionally uses T2 for pial-surface refinement.
 
 1A_anatomy/03_anatomy_setup.ipynb
   Anatomy setup notebook.

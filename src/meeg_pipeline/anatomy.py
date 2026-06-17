@@ -7,7 +7,7 @@ import sys
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import mne
 import pandas as pd
@@ -31,7 +31,7 @@ class AnatomyCommandResult:
 
 @dataclass(frozen=True)
 class AnatomyFileResult:
-    """Status object for MNE anatomy files created inside SUBJECTS_DIR."""
+    """Status object for anatomy files created inside the project."""
 
     subject: str
     step: str
@@ -56,25 +56,44 @@ def _subject_label(subject: str) -> str:
     return subject.removeprefix("sub-") if subject.startswith("sub-") else subject
 
 
+def _subject_variants(subject: str) -> list[str]:
+    """Return possible subject folder labels with and without ``sub-``."""
+    stripped = _subject_label(subject)
+    prefixed = f"sub-{stripped}"
+    variants = [str(subject), stripped, prefixed]
+    result: list[str] = []
+    for variant in variants:
+        if variant not in result:
+            result.append(variant)
+    return result
+
+
 def subject_dir(subjects_dir: str | Path, subject: str) -> Path:
     """Return the FreeSurfer subject directory for one subject."""
     return Path(subjects_dir).expanduser().resolve() / _subject_label(subject)
 
 
-def _format_anatomy_pattern(pattern: str, subject: str) -> str:
-    """Format an anatomy glob pattern for a subject.
+def _glob_one(root: Path, pattern: str, subject: str) -> Path | None:
+    """Find one path matching a pattern that contains ``{subject}``."""
+    for subject_variant in _subject_variants(subject):
+        resolved_pattern = pattern.format(subject=subject_variant)
+        matches = sorted(root.glob(resolved_pattern))
+        if matches:
+            return matches[0].expanduser().resolve()
+    return None
 
-    Patterns can use ``{subject}`` for the plain subject label, for example
-    ``1409``, and ``{bids_subject}`` for the BIDS-style label, for example
-    ``sub-1409``.
-    """
-    subject = _subject_label(subject)
-    return pattern.format(subject=subject, bids_subject=f"sub-{subject}")
 
-
-def _first_existing_glob(root: Path, pattern: str) -> Path | None:
-    matches = sorted(root.glob(pattern))
-    return matches[0] if matches else None
+def find_anatomical_image(
+    mri_root: str | Path,
+    subject: str,
+    *,
+    pattern: str,
+) -> Path | None:
+    """Find a T1/T2 image for one subject using a configurable glob pattern."""
+    root = Path(mri_root).expanduser().resolve()
+    if not root.exists():
+        return None
+    return _glob_one(root, pattern, subject)
 
 
 def find_anatomical_images(
@@ -83,37 +102,18 @@ def find_anatomical_images(
     *,
     t1_pattern: str = "{subject}/anat/*T1w*.nii*",
     t2_pattern: str = "{subject}/anat/*T2w*.nii*",
-) -> dict[str, Path | None]:
-    """Find T1/T2 images for one subject using configurable glob patterns.
-
-    The returned dictionary contains ``"t1"`` and ``"t2"`` keys. Missing files
-    are represented as ``None``. ``subject`` can be passed with or without the
-    ``sub-`` prefix.
-    """
-    mri_root = Path(mri_root).expanduser().resolve()
-    subject = _subject_label(subject)
-
-    return {
-        "t1": _first_existing_glob(
-            mri_root,
-            _format_anatomy_pattern(t1_pattern, subject),
-        ),
-        "t2": _first_existing_glob(
-            mri_root,
-            _format_anatomy_pattern(t2_pattern, subject),
-        ),
-    }
+) -> tuple[Path | None, Path | None]:
+    """Find T1 and T2 images for one subject."""
+    return (
+        find_anatomical_image(mri_root, subject, pattern=t1_pattern),
+        find_anatomical_image(mri_root, subject, pattern=t2_pattern),
+    )
 
 
-def default_t1_path(mri_root: str | Path, subject: str) -> Path:
-    """Return the legacy default T1 path used by older anatomy notebooks.
-
-    The legacy folder structure is ``<mri_root>/<subject>/mri/T1.mgz``. New
-    projects should prefer ``find_anatomical_images`` with configurable
-    ``t1_pattern`` and ``t2_pattern``.
-    """
-    subject = _subject_label(subject)
-    return Path(mri_root).expanduser().resolve() / subject / "mri" / "T1.mgz"
+def _discover_subject_dirs(root: Path) -> set[str]:
+    if not root.exists():
+        return set()
+    return {path.name for path in root.iterdir() if path.is_dir()}
 
 
 def discover_mri_subjects(
@@ -121,63 +121,66 @@ def discover_mri_subjects(
     *,
     t1_pattern: str = "{subject}/anat/*T1w*.nii*",
     t2_pattern: str = "{subject}/anat/*T2w*.nii*",
+    include_t2_only: bool = True,
 ) -> list[str]:
-    """Discover subjects with T1 or T2 images under ``mri_root``.
-
-    This discovery is intentionally permissive: subjects with only a T2 image
-    are reported in status tables, even though ``recon-all`` normally still
-    requires a T1 image.
-    """
-    mri_root = Path(mri_root).expanduser().resolve()
-
-    if not mri_root.exists():
-        return []
-
-    subjects: set[str] = set()
-    for candidate in sorted(path for path in mri_root.iterdir() if path.is_dir()):
-        subject = _subject_label(candidate.name)
-        images = find_anatomical_images(
-            mri_root,
+    """Discover subjects with converted anatomical images."""
+    root = Path(mri_root).expanduser().resolve()
+    subjects = _discover_subject_dirs(root)
+    discovered: list[str] = []
+    for subject in sorted(subjects):
+        t1, t2 = find_anatomical_images(
+            root,
             subject,
             t1_pattern=t1_pattern,
             t2_pattern=t2_pattern,
         )
-        if images["t1"] is not None or images["t2"] is not None:
-            subjects.add(subject)
+        if t1 is not None or (include_t2_only and t2 is not None):
+            discovered.append(subject)
+    return discovered
 
-    return sorted(subjects)
+
+def discover_raw_mri_subjects(mri_raw_root: str | Path) -> list[str]:
+    """Discover subjects with raw MRI folders."""
+    return sorted(_discover_subject_dirs(Path(mri_raw_root).expanduser().resolve()))
+
 
 def resolve_subjects(
     subjects: str | Sequence[str],
     *,
     mri_root: str | Path | None = None,
+    mri_raw_root: str | Path | None = None,
     subjects_dir: str | Path | None = None,
     t1_pattern: str = "{subject}/anat/*T1w*.nii*",
     t2_pattern: str = "{subject}/anat/*T2w*.nii*",
 ) -> list[str]:
-    """Resolve notebook-style subject selections.
-
-    ``subjects='all'`` discovers subjects from ``mri_root`` first, then from
-    ``subjects_dir`` if no MRI root was supplied.
-    """
+    """Resolve notebook-style subject selections."""
     if subjects != "all":
         if isinstance(subjects, str):
             return [_subject_label(subjects)]
         return [_subject_label(subject) for subject in subjects]
 
     if mri_root is not None:
-        return discover_mri_subjects(
+        found = discover_mri_subjects(
             mri_root,
             t1_pattern=t1_pattern,
             t2_pattern=t2_pattern,
+            include_t2_only=True,
         )
+        if found:
+            return found
+
+    if mri_raw_root is not None:
+        found = discover_raw_mri_subjects(mri_raw_root)
+        if found:
+            return found
 
     if subjects_dir is not None:
-        subjects_dir = Path(subjects_dir).expanduser().resolve()
-        if subjects_dir.exists():
-            return sorted(path.name for path in subjects_dir.iterdir() if path.is_dir())
+        root = Path(subjects_dir).expanduser().resolve()
+        if root.exists():
+            return sorted(path.name for path in root.iterdir() if path.is_dir())
 
     return []
+
 
 def make_freesurfer_env(
     *,
@@ -185,12 +188,7 @@ def make_freesurfer_env(
     freesurfer_home: str | Path | None = None,
     mne_path: str | Path | None = None,
 ) -> dict[str, str]:
-    """Create an environment for FreeSurfer/MNE command-line tools.
-
-    The function avoids shell-specific ``source SetUpFreeSurfer.sh`` calls and
-    instead sets the key environment variables directly. This works well for
-    subprocess-based notebook workflows on macOS and Linux.
-    """
+    """Create an environment for FreeSurfer/MNE command-line tools."""
     subjects_dir = Path(subjects_dir).expanduser().resolve()
     freesurfer_home = _path_or_none(
         freesurfer_home or os.environ.get("FREESURFER_HOME") or "/Applications/freesurfer"
@@ -262,6 +260,327 @@ def run_streamed_subprocess(
     return process.wait()
 
 
+def _is_nifti(path: Path) -> bool:
+    return path.name.endswith(".nii") or path.name.endswith(".nii.gz")
+
+
+def _is_mgz(path: Path) -> bool:
+    return path.suffix in {".mgz", ".mgh"}
+
+
+def _source_path_for_modality(
+    mri_raw_root: str | Path,
+    subject: str,
+    *,
+    pattern: str,
+) -> Path | None:
+    root = Path(mri_raw_root).expanduser().resolve()
+    if not root.exists():
+        return None
+    return _glob_one(root, pattern, subject)
+
+
+def _converted_anat_dir(mri_root: str | Path, subject: str) -> Path:
+    return Path(mri_root).expanduser().resolve() / _subject_label(subject) / "anat"
+
+
+def converted_nifti_path(mri_root: str | Path, subject: str, modality: Literal["T1w", "T2w"]) -> Path:
+    subject = _subject_label(subject)
+    return _converted_anat_dir(mri_root, subject) / f"{subject}_{modality}.nii.gz"
+
+
+def converted_mgz_path(mri_root: str | Path, subject: str, modality: Literal["T1", "T2"]) -> Path:
+    subject = _subject_label(subject)
+    return _converted_anat_dir(mri_root, subject) / f"{modality}.mgz"
+
+
+def _find_dcm2niix_output(output_dir: Path, output_stem: str) -> Path | None:
+    candidates = sorted(output_dir.glob(f"{output_stem}*.nii.gz"))
+    if candidates:
+        return candidates[0]
+    candidates = sorted(output_dir.glob(f"{output_stem}*.nii"))
+    if candidates:
+        return candidates[0]
+    return None
+
+
+def convert_raw_mri_modality(
+    subject: str,
+    *,
+    mri_raw_root: str | Path,
+    mri_root: str | Path,
+    source_pattern: str,
+    modality: Literal["T1", "T2"],
+    freesurfer_home: str | Path | None = None,
+    make_mgz: bool = True,
+    on_existing: ExistingOutputPolicy = "skip",
+    dry_run: bool = False,
+) -> list[AnatomyCommandResult | AnatomyFileResult]:
+    """Convert one raw MRI modality to standardized NIfTI and optional MGZ."""
+    subject = _subject_label(subject)
+    results: list[AnatomyCommandResult | AnatomyFileResult] = []
+    source = _source_path_for_modality(mri_raw_root, subject, pattern=source_pattern)
+    modality_bids = "T1w" if modality == "T1" else "T2w"
+    nifti_path = converted_nifti_path(mri_root, subject, modality_bids)
+    mgz_path = converted_mgz_path(mri_root, subject, modality)
+
+    if source is None:
+        return [
+            AnatomyFileResult(
+                subject=subject,
+                step=f"convert_{modality.lower()}",
+                path=str(Path(mri_raw_root).expanduser().resolve()),
+                status="missing_source",
+                message=f"No raw {modality} source matched pattern {source_pattern!r}.",
+            )
+        ]
+
+    nifti_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if nifti_path.exists() and on_existing == "skip":
+        results.append(
+            AnatomyFileResult(
+                subject=subject,
+                step=f"convert_{modality.lower()}_nifti",
+                path=str(nifti_path),
+                status="skipped_existing",
+                message="Converted NIfTI already exists.",
+            )
+        )
+    elif source.is_dir():
+        output_stem = f"{subject}_{modality_bids}"
+        dcm2niix = shutil.which("dcm2niix") or "dcm2niix"
+        command = [
+            dcm2niix,
+            "-z",
+            "y",
+            "-f",
+            output_stem,
+            "-o",
+            nifti_path.parent,
+            source,
+        ]
+        returncode = run_streamed_subprocess(command, dry_run=dry_run)
+        generated = _find_dcm2niix_output(nifti_path.parent, output_stem)
+        if returncode != 0:
+            return [
+                AnatomyCommandResult(
+                    subject=subject,
+                    step=f"convert_{modality.lower()}_nifti",
+                    status="failed",
+                    path=str(nifti_path),
+                    returncode=returncode,
+                    message=f"dcm2niix failed for {source}.",
+                    command=_stringify_command(command),
+                )
+            ]
+        if generated is not None and generated != nifti_path and not dry_run:
+            if nifti_path.exists():
+                nifti_path.unlink()
+            generated.rename(nifti_path)
+        results.append(
+            AnatomyCommandResult(
+                subject=subject,
+                step=f"convert_{modality.lower()}_nifti",
+                status="written",
+                path=str(nifti_path),
+                returncode=returncode,
+                command=_stringify_command(command),
+            )
+        )
+    elif _is_nifti(source):
+        if not dry_run:
+            shutil.copy2(source, nifti_path)
+        results.append(
+            AnatomyFileResult(
+                subject=subject,
+                step=f"convert_{modality.lower()}_nifti",
+                path=str(nifti_path),
+                status="written",
+                message=f"Copied from {source}.",
+            )
+        )
+    elif _is_mgz(source):
+        env = make_freesurfer_env(
+            subjects_dir=Path(mri_root).expanduser().resolve(),
+            freesurfer_home=freesurfer_home,
+        )
+        mri_convert = shutil.which("mri_convert", path=env.get("PATH")) or "mri_convert"
+        command = [mri_convert, source, nifti_path]
+        returncode = run_streamed_subprocess(command, env=env, dry_run=dry_run)
+        results.append(
+            AnatomyCommandResult(
+                subject=subject,
+                step=f"convert_{modality.lower()}_nifti",
+                status="written" if returncode == 0 else "failed",
+                path=str(nifti_path),
+                returncode=returncode,
+                command=_stringify_command(command),
+            )
+        )
+        if returncode != 0:
+            return results
+    else:
+        return [
+            AnatomyFileResult(
+                subject=subject,
+                step=f"convert_{modality.lower()}_nifti",
+                path=str(source),
+                status="unsupported_source",
+                message="Source must be a DICOM directory, NIfTI file, or MGZ/MGH file.",
+            )
+        ]
+
+    if make_mgz:
+        if mgz_path.exists() and on_existing == "skip":
+            results.append(
+                AnatomyFileResult(
+                    subject=subject,
+                    step=f"convert_{modality.lower()}_mgz",
+                    path=str(mgz_path),
+                    status="skipped_existing",
+                    message="Converted MGZ already exists.",
+                )
+            )
+        else:
+            env = make_freesurfer_env(
+                subjects_dir=Path(mri_root).expanduser().resolve(),
+                freesurfer_home=freesurfer_home,
+            )
+            mri_convert = shutil.which("mri_convert", path=env.get("PATH")) or "mri_convert"
+            command = [mri_convert, nifti_path, mgz_path]
+            returncode = run_streamed_subprocess(command, env=env, dry_run=dry_run)
+            results.append(
+                AnatomyCommandResult(
+                    subject=subject,
+                    step=f"convert_{modality.lower()}_mgz",
+                    status="written" if returncode == 0 else "failed",
+                    path=str(mgz_path),
+                    returncode=returncode,
+                    command=_stringify_command(command),
+                )
+            )
+
+    return results
+
+
+def prepare_anatomical_inputs_for_subject(
+    subject: str,
+    *,
+    mri_raw_root: str | Path,
+    mri_root: str | Path,
+    t1_source_pattern: str = "{subject}/T1",
+    t2_source_pattern: str = "{subject}/T2",
+    freesurfer_home: str | Path | None = None,
+    make_mgz: bool = True,
+    on_existing: ExistingOutputPolicy = "skip",
+    dry_run: bool = False,
+) -> list[AnatomyCommandResult | AnatomyFileResult]:
+    """Convert available T1 and T2 raw MRI inputs for one subject."""
+    results: list[AnatomyCommandResult | AnatomyFileResult] = []
+    results.extend(
+        convert_raw_mri_modality(
+            subject,
+            mri_raw_root=mri_raw_root,
+            mri_root=mri_root,
+            source_pattern=t1_source_pattern,
+            modality="T1",
+            freesurfer_home=freesurfer_home,
+            make_mgz=make_mgz,
+            on_existing=on_existing,
+            dry_run=dry_run,
+        )
+    )
+    results.extend(
+        convert_raw_mri_modality(
+            subject,
+            mri_raw_root=mri_raw_root,
+            mri_root=mri_root,
+            source_pattern=t2_source_pattern,
+            modality="T2",
+            freesurfer_home=freesurfer_home,
+            make_mgz=make_mgz,
+            on_existing=on_existing,
+            dry_run=dry_run,
+        )
+    )
+    return results
+
+
+def prepare_anatomical_inputs_for_subjects(
+    subjects: Iterable[str],
+    *,
+    mri_raw_root: str | Path,
+    mri_root: str | Path,
+    t1_source_pattern: str = "{subject}/T1",
+    t2_source_pattern: str = "{subject}/T2",
+    freesurfer_home: str | Path | None = None,
+    make_mgz: bool = True,
+    on_existing: ExistingOutputPolicy = "skip",
+    dry_run: bool = False,
+) -> list[AnatomyCommandResult | AnatomyFileResult]:
+    """Convert available T1/T2 raw MRI inputs for multiple subjects."""
+    results: list[AnatomyCommandResult | AnatomyFileResult] = []
+    for subject in subjects:
+        results.extend(
+            prepare_anatomical_inputs_for_subject(
+                subject,
+                mri_raw_root=mri_raw_root,
+                mri_root=mri_root,
+                t1_source_pattern=t1_source_pattern,
+                t2_source_pattern=t2_source_pattern,
+                freesurfer_home=freesurfer_home,
+                make_mgz=make_mgz,
+                on_existing=on_existing,
+                dry_run=dry_run,
+            )
+        )
+    return results
+
+
+def mri_conversion_status_to_dataframe(
+    subjects: Iterable[str],
+    *,
+    mri_raw_root: str | Path,
+    mri_root: str | Path,
+    t1_source_pattern: str = "{subject}/T1",
+    t2_source_pattern: str = "{subject}/T2",
+) -> pd.DataFrame:
+    """Summarize raw and converted MRI inputs."""
+    rows = []
+    for subject in subjects:
+        subject = _subject_label(subject)
+        t1_source = _source_path_for_modality(mri_raw_root, subject, pattern=t1_source_pattern)
+        t2_source = _source_path_for_modality(mri_raw_root, subject, pattern=t2_source_pattern)
+        t1_nifti = converted_nifti_path(mri_root, subject, "T1w")
+        t2_nifti = converted_nifti_path(mri_root, subject, "T2w")
+        t1_mgz = converted_mgz_path(mri_root, subject, "T1")
+        t2_mgz = converted_mgz_path(mri_root, subject, "T2")
+        rows.append(
+            {
+                "subject": subject,
+                "t1_source_exists": t1_source is not None,
+                "t1_source_path": "" if t1_source is None else str(t1_source),
+                "t2_source_exists": t2_source is not None,
+                "t2_source_path": "" if t2_source is None else str(t2_source),
+                "t1_nifti_exists": t1_nifti.exists(),
+                "t1_nifti_path": str(t1_nifti),
+                "t2_nifti_exists": t2_nifti.exists(),
+                "t2_nifti_path": str(t2_nifti),
+                "t1_mgz_exists": t1_mgz.exists(),
+                "t1_mgz_path": str(t1_mgz),
+                "t2_mgz_exists": t2_mgz.exists(),
+                "t2_mgz_path": str(t2_mgz),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def default_t1_path(mri_root: str | Path, subject: str) -> Path:
+    """Return the standardized T1 NIfTI path used by the anatomy notebooks."""
+    return converted_nifti_path(mri_root, subject, "T1w")
+
+
 def run_recon_all(
     subject: str,
     *,
@@ -271,7 +590,6 @@ def run_recon_all(
     t2_path: str | Path | None = None,
     t1_pattern: str = "{subject}/anat/*T1w*.nii*",
     t2_pattern: str = "{subject}/anat/*T2w*.nii*",
-    use_t1: bool = True,
     use_t2: bool = False,
     freesurfer_home: str | Path | None = None,
     on_existing: ExistingOutputPolicy = "skip",
@@ -279,22 +597,28 @@ def run_recon_all(
 ) -> AnatomyCommandResult:
     """Run FreeSurfer ``recon-all`` for one subject.
 
-    T1 is required for this workflow. If ``use_t2=True`` and a T2 image is
-    available, the command adds ``-T2 <path> -T2pial``. If no T2 image is found,
-    recon-all falls back to T1-only and reports this in the result message.
+    T1 is required. T2 is optional and only used when ``use_t2=True`` and a T2
+    image exists. T2-only subjects are reported as unsupported for this standard
+    recon-all workflow.
     """
     subject = _subject_label(subject)
     subjects_dir = Path(subjects_dir).expanduser().resolve()
     subject_path = subject_dir(subjects_dir, subject)
 
-    images = find_anatomical_images(
-        mri_root,
-        subject,
-        t1_pattern=t1_pattern,
-        t2_pattern=t2_pattern,
-    )
-    t1 = Path(t1_path).expanduser().resolve() if t1_path else images["t1"]
-    t2 = Path(t2_path).expanduser().resolve() if t2_path else images["t2"]
+    if t1_path is None or t2_path is None:
+        discovered_t1, discovered_t2 = find_anatomical_images(
+            mri_root,
+            subject,
+            t1_pattern=t1_pattern,
+            t2_pattern=t2_pattern,
+        )
+        if t1_path is None:
+            t1_path = discovered_t1
+        if t2_path is None:
+            t2_path = discovered_t2
+
+    t1_path = None if t1_path is None else Path(t1_path).expanduser().resolve()
+    t2_path = None if t2_path is None else Path(t2_path).expanduser().resolve()
 
     if subject_path.exists() and on_existing == "skip":
         return AnatomyCommandResult(
@@ -305,16 +629,14 @@ def run_recon_all(
             message=f"FreeSurfer subject already exists: {subject_path}",
         )
 
-    if use_t1 and (t1 is None or not t1.exists()):
+    if t1_path is None or not t1_path.exists():
+        status = "unsupported_t2_only" if t2_path is not None and t2_path.exists() else "missing_t1"
         return AnatomyCommandResult(
             subject=subject,
             step="recon_all",
-            status="missing_input",
-            path="" if t1 is None else str(t1),
-            message=(
-                "T1 image does not exist. recon-all currently requires a T1 "
-                "image; T2-only recon is not supported by this workflow."
-            ),
+            status=status,
+            path="" if t1_path is None else str(t1_path),
+            message="T1 image is required for the standard recon-all workflow.",
         )
 
     subjects_dir.mkdir(parents=True, exist_ok=True)
@@ -324,20 +646,21 @@ def run_recon_all(
     )
 
     recon = shutil.which("recon-all", path=env.get("PATH")) or "recon-all"
+    command: list[str | Path]
+    command = [recon, "-sd", subjects_dir, "-s", subject]
+
     orig_mgz = subject_path / "mri" / "orig.mgz"
-
-    command: list[str | Path] = [recon, "-sd", subjects_dir, "-s", subject]
-
     if not (subject_path.exists() and orig_mgz.exists()):
-        command.extend(["-i", t1])
+        command.extend(["-i", t1_path])
 
-    t2_message = ""
     if use_t2:
-        if t2 is not None and t2.exists():
-            command.extend(["-T2", t2, "-T2pial"])
-            t2_message = f" T2 pial refinement enabled using {t2}."
+        if t2_path is not None and t2_path.exists():
+            command.extend(["-T2", t2_path, "-T2pial"])
         else:
-            t2_message = " T2 requested but not found; running T1-only recon-all."
+            print(
+                f"T2 was requested for {subject}, but no T2 image was found. "
+                "Running T1-only recon-all."
+            )
 
     command.append("-all")
 
@@ -350,19 +673,19 @@ def run_recon_all(
             status="failed",
             path=str(subject_path),
             returncode=returncode,
-            message=f"recon-all failed with return code {returncode}.{t2_message}",
+            message=f"recon-all failed with code {returncode}.",
             command=_stringify_command(command),
         )
 
     return AnatomyCommandResult(
         subject=subject,
         step="recon_all",
-        status="written" if not dry_run else "dry_run",
+        status="written",
         path=str(subject_path),
         returncode=returncode,
-        message=f"recon-all finished for {subject}.{t2_message}",
         command=_stringify_command(command),
     )
+
 
 def run_recon_all_for_subjects(
     subjects: Iterable[str],
@@ -371,7 +694,6 @@ def run_recon_all_for_subjects(
     subjects_dir: str | Path,
     t1_pattern: str = "{subject}/anat/*T1w*.nii*",
     t2_pattern: str = "{subject}/anat/*T2w*.nii*",
-    use_t1: bool = True,
     use_t2: bool = False,
     freesurfer_home: str | Path | None = None,
     on_existing: ExistingOutputPolicy = "skip",
@@ -385,7 +707,6 @@ def run_recon_all_for_subjects(
             subjects_dir=subjects_dir,
             t1_pattern=t1_pattern,
             t2_pattern=t2_pattern,
-            use_t1=use_t1,
             use_t2=use_t2,
             freesurfer_home=freesurfer_home,
             on_existing=on_existing,
@@ -393,6 +714,7 @@ def run_recon_all_for_subjects(
         )
         for subject in subjects
     ]
+
 
 def apply_watershed_bem(
     subject: str,
@@ -768,18 +1090,14 @@ def anatomy_status_to_dataframe(
     for subject in subjects:
         subject = _subject_label(subject)
         fs_subject_dir = subject_dir(subjects_dir, subject)
-        images = (
-            find_anatomical_images(
+        t1_path, t2_path = (None, None)
+        if mri_root is not None:
+            t1_path, t2_path = find_anatomical_images(
                 mri_root,
                 subject,
                 t1_pattern=t1_pattern,
                 t2_pattern=t2_pattern,
             )
-            if mri_root is not None
-            else {"t1": None, "t2": None}
-        )
-        t1_path = images["t1"]
-        t2_path = images["t2"]
         bem_sol = bem_solution_path(
             subjects_dir,
             subject,
@@ -791,9 +1109,9 @@ def anatomy_status_to_dataframe(
         rows.append(
             {
                 "subject": subject,
-                "t1_exists": None if t1_path is None else t1_path.exists(),
+                "t1_exists": t1_path is not None and t1_path.exists(),
                 "t1_path": "" if t1_path is None else str(t1_path),
-                "t2_exists": None if t2_path is None else t2_path.exists(),
+                "t2_exists": t2_path is not None and t2_path.exists(),
                 "t2_path": "" if t2_path is None else str(t2_path),
                 "recon_exists": fs_subject_dir.exists(),
                 "bem_dir_exists": (fs_subject_dir / "bem").exists(),
@@ -807,13 +1125,14 @@ def anatomy_status_to_dataframe(
 
     return pd.DataFrame(rows)
 
+
 def results_to_dataframe(
     results: Iterable[AnatomyCommandResult | AnatomyFileResult],
 ) -> pd.DataFrame:
     """Convert anatomy result objects to a notebook-friendly table."""
     rows = []
     for result in results:
-        row = {
+        row: dict[str, Any] = {
             "subject": result.subject,
             "step": result.step,
             "status": result.status,

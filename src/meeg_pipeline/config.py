@@ -12,6 +12,7 @@ class ProjectPaths:
     bids_root: Path
     sourcedata_root: Path
     derivatives_root: Path
+    mri_raw_root: Path
     mri_root: Path
 
 
@@ -110,16 +111,22 @@ class FreeSurferConfig:
 
 
 @dataclass(frozen=True)
+class AnatomyConversionConfig:
+    converter: Literal["dcm2niix"] = "dcm2niix"
+    t1_source_pattern: str = "{subject}/T1"
+    t2_source_pattern: str = "{subject}/T2"
+    make_mgz: bool = True
+
+
+@dataclass(frozen=True)
 class AnatomyReconConfig:
     use_t1: bool = True
     use_t2: bool = False
-    overwrite: bool = False
 
 
 @dataclass(frozen=True)
 class AnatomyWatershedConfig:
     volume: str = "T1"
-    overwrite: bool = False
 
 
 @dataclass(frozen=True)
@@ -152,6 +159,7 @@ class AnatomyLabelsConfig:
 class AnatomyConfig:
     t1_pattern: str = "{subject}/anat/*T1w*.nii*"
     t2_pattern: str = "{subject}/anat/*T2w*.nii*"
+    conversion: AnatomyConversionConfig = AnatomyConversionConfig()
     recon: AnatomyReconConfig = AnatomyReconConfig()
     watershed: AnatomyWatershedConfig = AnatomyWatershedConfig()
     bem: AnatomyBEMConfig = AnatomyBEMConfig()
@@ -298,6 +306,10 @@ def load_config(config_path: str | Path) -> PipelineConfig:
             paths_raw["derivatives_root"],
             base_dir=project_root,
         ),
+        mri_raw_root=_resolve_path(
+            paths_raw.get("mri_raw_root", "./sourcedata/mri_raw"),
+            base_dir=project_root,
+        ),
         mri_root=_resolve_path(
             paths_raw.get("mri_root", "./sourcedata/mri"),
             base_dir=project_root,
@@ -320,6 +332,7 @@ def load_config(config_path: str | Path) -> PipelineConfig:
     )
 
     anatomy_raw = raw.get("anatomy", {})
+    anatomy_conversion_raw = anatomy_raw.get("conversion", {})
     anatomy_recon_raw = anatomy_raw.get("recon", {})
     anatomy_watershed_raw = anatomy_raw.get("watershed", {})
     anatomy_bem_raw = anatomy_raw.get("bem", {})
@@ -334,17 +347,34 @@ def load_config(config_path: str | Path) -> PipelineConfig:
             f"got {bem_method!r}."
         )
 
+    anatomy_converter = anatomy_conversion_raw.get("converter", "dcm2niix")
+    if anatomy_converter not in {"dcm2niix"}:
+        raise ValueError(
+            "anatomy.conversion.converter must currently be 'dcm2niix', "
+            f"got {anatomy_converter!r}."
+        )
+
     anatomy = AnatomyConfig(
         t1_pattern=anatomy_raw.get("t1_pattern", "{subject}/anat/*T1w*.nii*"),
         t2_pattern=anatomy_raw.get("t2_pattern", "{subject}/anat/*T2w*.nii*"),
+        conversion=AnatomyConversionConfig(
+            converter=anatomy_converter,
+            t1_source_pattern=anatomy_conversion_raw.get(
+                "t1_source_pattern",
+                "{subject}/T1",
+            ),
+            t2_source_pattern=anatomy_conversion_raw.get(
+                "t2_source_pattern",
+                "{subject}/T2",
+            ),
+            make_mgz=bool(anatomy_conversion_raw.get("make_mgz", True)),
+        ),
         recon=AnatomyReconConfig(
             use_t1=bool(anatomy_recon_raw.get("use_t1", True)),
             use_t2=bool(anatomy_recon_raw.get("use_t2", False)),
-            overwrite=bool(anatomy_recon_raw.get("overwrite", False)),
         ),
         watershed=AnatomyWatershedConfig(
             volume=str(anatomy_watershed_raw.get("volume", "T1")),
-            overwrite=bool(anatomy_watershed_raw.get("overwrite", False)),
         ),
         bem=AnatomyBEMConfig(
             method=bem_method,

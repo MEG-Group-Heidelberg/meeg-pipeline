@@ -1144,3 +1144,223 @@ def results_to_dataframe(
             row["command"] = " ".join(result.command)
         rows.append(row)
     return pd.DataFrame(rows)
+
+
+
+def coregistration_trans_path(
+    config: Any,
+    *,
+    subject: str,
+    session: str | None = None,
+    task: str | None = None,
+    run: str | None = None,
+    desc: str = "coreg",
+) -> Path:
+    """Return the expected derivative path for a coregistration transform.
+
+    The transform is stored as a pipeline derivative because it is a manual
+    analysis decision derived from the raw recording's digitization and the
+    subject's FreeSurfer anatomy.
+    """
+    subject = _subject_label(subject)
+    parts = [f"sub-{subject}"]
+    if session is not None:
+        parts.append(f"ses-{session}")
+    if task is not None:
+        parts.append(f"task-{task}")
+    if run is not None:
+        parts.append(f"run-{run}")
+
+    filename = "_".join(parts + [f"desc-{desc}_trans.fif"])
+
+    if session is None:
+        directory = (
+            config.paths.derivatives_root
+            / f"sub-{subject}"
+            / config.bids.datatype
+            / "coregistration"
+        )
+    else:
+        directory = (
+            config.paths.derivatives_root
+            / f"sub-{subject}"
+            / f"ses-{session}"
+            / config.bids.datatype
+            / "coregistration"
+        )
+
+    return directory / filename
+
+
+def coregistration_status_to_dataframe(
+    config: Any,
+    recordings: Iterable[dict[str, str | None]],
+    *,
+    trans_desc: str = "coreg",
+) -> pd.DataFrame:
+    """Summarize raw-BIDS, FreeSurfer, and trans-file status for coregistration."""
+    from meeg_pipeline.bids import make_bids_path
+    from meeg_pipeline.paths import bids_path_to_path
+
+    rows = []
+    subjects_dir = Path(config.freesurfer.subjects_dir).expanduser().resolve()
+
+    for recording in recordings:
+        subject = _subject_label(str(recording["subject"]))
+        session = recording.get("session")
+        task = recording.get("task")
+        run = recording.get("run")
+
+        raw_bids_path = make_bids_path(
+            config,
+            subject=subject,
+            session=session,
+            task=task,
+            run=run,
+            extension=".fif",
+        )
+        raw_path = bids_path_to_path(raw_bids_path)
+        fs_dir = subject_dir(subjects_dir, subject)
+        trans_path = coregistration_trans_path(
+            config,
+            subject=subject,
+            session=session,
+            task=task,
+            run=run,
+            desc=trans_desc,
+        )
+
+        rows.append(
+            {
+                "subject": subject,
+                "session": session,
+                "task": task,
+                "run": run,
+                "raw_exists": raw_path.exists(),
+                "raw_path": str(raw_path),
+                "freesurfer_subject_exists": fs_dir.exists(),
+                "freesurfer_subject_dir": str(fs_dir),
+                "trans_exists": trans_path.exists(),
+                "trans_path": str(trans_path),
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+def first_recording_per_subject(
+    recordings: Iterable[dict[str, str | None]],
+) -> list[dict[str, str | None]]:
+    """Return the first recording for each subject, preserving input order."""
+    selected: list[dict[str, str | None]] = []
+    seen: set[str] = set()
+
+    for recording in recordings:
+        subject = _subject_label(str(recording["subject"]))
+        if subject in seen:
+            continue
+        selected.append(recording)
+        seen.add(subject)
+
+    return selected
+
+
+def launch_coregistration_gui(
+    config: Any,
+    *,
+    subject: str,
+    session: str | None = None,
+    task: str | None = None,
+    run: str | None = None,
+    inst_path: str | Path | None = None,
+    trans_desc: str = "coreg",
+    block_with_input: bool = True,
+) -> AnatomyFileResult:
+    """Launch the MNE coregistration GUI for one recording.
+
+    The user should save the transform manually to the printed ``trans_path``.
+    The function reports whether the expected transform exists after the GUI is
+    closed and the user confirms in the notebook.
+    """
+    from meeg_pipeline.bids import make_bids_path
+    from meeg_pipeline.paths import bids_path_to_path
+
+    subject = _subject_label(subject)
+    subjects_dir = Path(config.freesurfer.subjects_dir).expanduser().resolve()
+
+    if inst_path is None:
+        inst_path = bids_path_to_path(
+            make_bids_path(
+                config,
+                subject=subject,
+                session=session,
+                task=task,
+                run=run,
+                extension=".fif",
+            )
+        )
+    else:
+        inst_path = Path(inst_path).expanduser().resolve()
+
+    trans_path = coregistration_trans_path(
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
+        desc=trans_desc,
+    )
+    trans_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not subjects_dir.exists():
+        return AnatomyFileResult(
+            subject=subject,
+            step="coregistration",
+            path=str(trans_path),
+            status="missing_subjects_dir",
+            message=f"FreeSurfer SUBJECTS_DIR does not exist: {subjects_dir}",
+        )
+
+    if not subject_dir(subjects_dir, subject).exists():
+        return AnatomyFileResult(
+            subject=subject,
+            step="coregistration",
+            path=str(trans_path),
+            status="missing_freesurfer_subject",
+            message=f"FreeSurfer subject does not exist: {subject_dir(subjects_dir, subject)}",
+        )
+
+    if inst_path is not None and not Path(inst_path).exists():
+        return AnatomyFileResult(
+            subject=subject,
+            step="coregistration",
+            path=str(trans_path),
+            status="missing_inst",
+            message=f"Raw BIDS inst file does not exist: {inst_path}",
+        )
+
+    print(f"Launching MNE coregistration GUI for subject {subject}.")
+    print(f"SUBJECTS_DIR: {subjects_dir}")
+    print(f"Inst file: {inst_path}")
+    print("Save the transform from the GUI to:")
+    print(trans_path)
+
+    mne.gui.coregistration(
+        subject=subject,
+        subjects_dir=str(subjects_dir),
+        inst=None if inst_path is None else str(inst_path),
+    )
+
+    if block_with_input:
+        input("After saving the trans file and closing the GUI, press Enter to continue...")
+
+    status = "saved" if trans_path.exists() else "not_saved"
+    message = "Transform file exists." if trans_path.exists() else "Expected transform file does not exist yet."
+
+    return AnatomyFileResult(
+        subject=subject,
+        step="coregistration",
+        path=str(trans_path),
+        status=status,
+        message=message,
+    )

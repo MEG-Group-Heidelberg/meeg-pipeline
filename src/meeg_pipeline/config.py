@@ -12,6 +12,7 @@ class ProjectPaths:
     bids_root: Path
     sourcedata_root: Path
     derivatives_root: Path
+    mri_root: Path
 
 
 @dataclass(frozen=True)
@@ -103,6 +104,63 @@ class SourcedataConfig:
 
 
 @dataclass(frozen=True)
+class FreeSurferConfig:
+    home: Path | None = None
+    subjects_dir: Path | None = None
+
+
+@dataclass(frozen=True)
+class AnatomyReconConfig:
+    use_t1: bool = True
+    use_t2: bool = False
+    overwrite: bool = False
+
+
+@dataclass(frozen=True)
+class AnatomyWatershedConfig:
+    volume: str = "T1"
+    overwrite: bool = False
+
+
+@dataclass(frozen=True)
+class AnatomyBEMConfig:
+    method: Literal["watershed", "flash"] = "watershed"
+    conductivity: tuple[float, ...] = (0.3,)
+    ico: int = 4
+
+
+@dataclass(frozen=True)
+class AnatomySourceSpaceConfig:
+    spacing: str = "ico5"
+    surface: str = "white"
+    add_dist: bool | str = False
+
+
+@dataclass(frozen=True)
+class AnatomyVolumeSourceSpaceConfig:
+    enabled: bool = False
+    spacing: float = 5.0
+
+
+@dataclass(frozen=True)
+class AnatomyLabelsConfig:
+    morph_from: str = "fsaverage"
+    parcellations: tuple[str, ...] = ("aparc_sub",)
+
+
+@dataclass(frozen=True)
+class AnatomyConfig:
+    t1_pattern: str = "{subject}/anat/*T1w*.nii*"
+    t2_pattern: str = "{subject}/anat/*T2w*.nii*"
+    recon: AnatomyReconConfig = AnatomyReconConfig()
+    watershed: AnatomyWatershedConfig = AnatomyWatershedConfig()
+    bem: AnatomyBEMConfig = AnatomyBEMConfig()
+    source_space: AnatomySourceSpaceConfig = AnatomySourceSpaceConfig()
+    volume_source_space: AnatomyVolumeSourceSpaceConfig = AnatomyVolumeSourceSpaceConfig()
+    labels: AnatomyLabelsConfig = AnatomyLabelsConfig()
+
+
+@dataclass(frozen=True)
 class SourceConfig:
     spacing: str = "ico5"
     noise_cov_mode: str = "erm"
@@ -119,6 +177,8 @@ class PipelineConfig:
     runtime: RuntimeConfig
     bids: BIDSConfig
     sourcedata: SourcedataConfig
+    freesurfer: FreeSurferConfig
+    anatomy: AnatomyConfig
     events: EventsConfig
     preprocessing: PreprocessingConfig
     cleaning: CleaningConfig
@@ -237,6 +297,78 @@ def load_config(config_path: str | Path) -> PipelineConfig:
         derivatives_root=_resolve_path(
             paths_raw["derivatives_root"],
             base_dir=project_root,
+        ),
+        mri_root=_resolve_path(
+            paths_raw.get("mri_root", "./sourcedata/mri"),
+            base_dir=project_root,
+        ),
+    )
+
+    freesurfer_raw = raw.get("freesurfer", {})
+    freesurfer_home_raw = freesurfer_raw.get("home", None)
+    freesurfer_subjects_dir_raw = freesurfer_raw.get(
+        "subjects_dir",
+        paths_raw.get("subjects_dir", "./derivatives/freesurfer/subjects"),
+    )
+    freesurfer = FreeSurferConfig(
+        home=None
+        if freesurfer_home_raw is None
+        else _resolve_path(freesurfer_home_raw, base_dir=project_root),
+        subjects_dir=None
+        if freesurfer_subjects_dir_raw is None
+        else _resolve_path(freesurfer_subjects_dir_raw, base_dir=project_root),
+    )
+
+    anatomy_raw = raw.get("anatomy", {})
+    anatomy_recon_raw = anatomy_raw.get("recon", {})
+    anatomy_watershed_raw = anatomy_raw.get("watershed", {})
+    anatomy_bem_raw = anatomy_raw.get("bem", {})
+    anatomy_source_space_raw = anatomy_raw.get("source_space", {})
+    anatomy_volume_source_space_raw = anatomy_raw.get("volume_source_space", {})
+    anatomy_labels_raw = anatomy_raw.get("labels", {})
+
+    bem_method = anatomy_bem_raw.get("method", "watershed")
+    if bem_method not in {"watershed", "flash"}:
+        raise ValueError(
+            "anatomy.bem.method must be one of 'watershed' or 'flash', "
+            f"got {bem_method!r}."
+        )
+
+    anatomy = AnatomyConfig(
+        t1_pattern=anatomy_raw.get("t1_pattern", "{subject}/anat/*T1w*.nii*"),
+        t2_pattern=anatomy_raw.get("t2_pattern", "{subject}/anat/*T2w*.nii*"),
+        recon=AnatomyReconConfig(
+            use_t1=bool(anatomy_recon_raw.get("use_t1", True)),
+            use_t2=bool(anatomy_recon_raw.get("use_t2", False)),
+            overwrite=bool(anatomy_recon_raw.get("overwrite", False)),
+        ),
+        watershed=AnatomyWatershedConfig(
+            volume=str(anatomy_watershed_raw.get("volume", "T1")),
+            overwrite=bool(anatomy_watershed_raw.get("overwrite", False)),
+        ),
+        bem=AnatomyBEMConfig(
+            method=bem_method,
+            conductivity=tuple(
+                float(value)
+                for value in anatomy_bem_raw.get("conductivity", [0.3])
+            ),
+            ico=int(anatomy_bem_raw.get("ico", 4)),
+        ),
+        source_space=AnatomySourceSpaceConfig(
+            spacing=str(anatomy_source_space_raw.get("spacing", "ico5")),
+            surface=str(anatomy_source_space_raw.get("surface", "white")),
+            add_dist=anatomy_source_space_raw.get("add_dist", False),
+        ),
+        volume_source_space=AnatomyVolumeSourceSpaceConfig(
+            enabled=bool(anatomy_volume_source_space_raw.get("enabled", False)),
+            spacing=float(anatomy_volume_source_space_raw.get("spacing", 5.0)),
+        ),
+        labels=AnatomyLabelsConfig(
+            morph_from=str(anatomy_labels_raw.get("morph_from", "fsaverage")),
+            parcellations=tuple(
+                str(value)
+                for value in anatomy_labels_raw.get("parcellations", ["aparc_sub"])
+            ),
         ),
     )
 
@@ -367,6 +499,8 @@ def load_config(config_path: str | Path) -> PipelineConfig:
         runtime=runtime,
         bids=bids,
         sourcedata=sourcedata,
+        freesurfer=freesurfer,
+        anatomy=anatomy,
         events=events,
         preprocessing=preprocessing,
         cleaning=cleaning,

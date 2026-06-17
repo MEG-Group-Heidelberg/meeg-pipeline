@@ -1527,6 +1527,56 @@ Suggested roles:
 Notebook steps should call reusable library functions rather than implementing
 large processing logic directly inside notebooks.
 
+
+## Notebook recording selection defaults
+
+Recording-based notebooks use the same selection variables by default:
+
+```python
+SUBJECTS = "all"
+SESSIONS = "all"
+TASKS = "all"
+RUNS = "all"
+```
+
+The value `"all"` means: use all values that exist in the current project. For
+optional BIDS entities such as `session` and `run`, `"all"` also works in
+projects that do not use that entity. In that case, the selection resolves to a
+single `None` value internally, so no `ses-...` or `run-...` entity is added to
+paths.
+
+This makes the same notebooks work for:
+
+```text
+single-session projects without run entities
+multi-session projects
+multi-run projects
+multi-task projects
+```
+
+Use explicit values only when you want to restrict processing:
+
+```python
+SUBJECTS = ["0001", "0002"]
+SESSIONS = "all"
+TASKS = ["rest"]
+RUNS = "all"
+```
+
+Use `None` only when you explicitly want to force a missing optional entity. For
+normal notebook use, prefer `"all"`.
+
+Anatomy-only notebooks such as `1A_anatomy/01_convert_mri.ipynb`,
+`1A_anatomy/02_recon.ipynb`, and `1A_anatomy/03_anatomy_setup.ipynb` operate at
+the subject level and therefore usually only need:
+
+```python
+SUBJECTS = "all"
+```
+
+Coregistration bridges anatomy and MEG recordings and therefore follows the
+recording-based selection pattern.
+
 ## Existing-output and overwrite policy
 
 By default, pipeline steps should not silently overwrite existing files.

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
 import os
+import platform
 import shutil
 import subprocess
 import sys
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -260,6 +263,154 @@ def make_freesurfer_env(
 
     return env
 
+
+
+def freesurfer_derivatives_dir(subjects_dir: str | Path) -> Path:
+    """Return the FreeSurfer derivatives root for a configured subjects_dir.
+
+    If ``subjects_dir`` points to ``derivatives/freesurfer/subjects``, this
+    returns ``derivatives/freesurfer``. Otherwise, the parent of subjects_dir is
+    used.
+    """
+    subjects_dir = Path(subjects_dir).expanduser().resolve()
+    if subjects_dir.name == "subjects":
+        return subjects_dir.parent
+    return subjects_dir.parent
+
+
+def freesurfer_provenance_path(subjects_dir: str | Path) -> Path:
+    """Return the project-level FreeSurfer provenance JSON path."""
+    return freesurfer_derivatives_dir(subjects_dir) / "freesurfer_provenance.json"
+
+
+def _capture_command_output(
+    command: Sequence[str | Path],
+    *,
+    env: dict[str, str] | None = None,
+) -> tuple[int | None, str]:
+    """Run a small version command and return return code plus output."""
+    try:
+        completed = subprocess.run(
+            _stringify_command(command),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError:
+        return None, ""
+
+    return completed.returncode, completed.stdout.strip()
+
+
+def freesurfer_version_info(
+    *,
+    subjects_dir: str | Path,
+    freesurfer_home: str | Path | None = None,
+) -> dict[str, Any]:
+    """Collect FreeSurfer/MNE environment information for documentation."""
+    subjects_dir = Path(subjects_dir).expanduser().resolve()
+    env = make_freesurfer_env(
+        subjects_dir=subjects_dir,
+        freesurfer_home=freesurfer_home,
+    )
+
+    recon_all = shutil.which("recon-all", path=env.get("PATH")) or "recon-all"
+    freeview = shutil.which("freeview", path=env.get("PATH")) or "freeview"
+    mri_convert = shutil.which("mri_convert", path=env.get("PATH")) or "mri_convert"
+
+    recon_code, recon_version = _capture_command_output(
+        [recon_all, "--version"],
+        env=env,
+    )
+    freeview_code, freeview_version = _capture_command_output(
+        [freeview, "--version"],
+        env=env,
+    )
+    mri_convert_code, mri_convert_version = _capture_command_output(
+        [mri_convert, "--version"],
+        env=env,
+    )
+
+    return {
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "freesurfer_home": env.get("FREESURFER_HOME", ""),
+        "subjects_dir": str(subjects_dir),
+        "commands": {
+            "recon_all": str(recon_all),
+            "freeview": str(freeview),
+            "mri_convert": str(mri_convert),
+        },
+        "versions": {
+            "recon_all": recon_version,
+            "freeview": freeview_version,
+            "mri_convert": mri_convert_version,
+            "mne": mne.__version__,
+            "python": sys.version.replace("\n", " "),
+        },
+        "returncodes": {
+            "recon_all_version": recon_code,
+            "freeview_version": freeview_code,
+            "mri_convert_version": mri_convert_code,
+        },
+        "platform": {
+            "system": platform.system(),
+            "release": platform.release(),
+            "machine": platform.machine(),
+            "processor": platform.processor(),
+        },
+    }
+
+
+def write_freesurfer_provenance(
+    *,
+    subjects_dir: str | Path,
+    freesurfer_home: str | Path | None = None,
+    path: str | Path | None = None,
+    on_existing: ExistingOutputPolicy = "overwrite",
+) -> AnatomyFileResult:
+    """Write project-level FreeSurfer software provenance.
+
+    This documents the FreeSurfer installation used by the anatomy notebooks. It
+    is intentionally project-level rather than subject-level; FreeSurfer itself
+    also writes detailed per-subject logs inside each subject's ``scripts``
+    directory during ``recon-all``.
+    """
+    subjects_dir = Path(subjects_dir).expanduser().resolve()
+    output_path = (
+        freesurfer_provenance_path(subjects_dir)
+        if path is None
+        else Path(path).expanduser().resolve()
+    )
+
+    if output_path.exists() and on_existing == "skip":
+        return AnatomyFileResult(
+            subject="project",
+            step="freesurfer_provenance",
+            path=str(output_path),
+            status="skipped_existing",
+            message="FreeSurfer provenance file already exists.",
+        )
+
+    info = freesurfer_version_info(
+        subjects_dir=subjects_dir,
+        freesurfer_home=freesurfer_home,
+    )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(info, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    return AnatomyFileResult(
+        subject="project",
+        step="freesurfer_provenance",
+        path=str(output_path),
+        status="written",
+        message=info["versions"].get("recon_all", ""),
+    )
 
 def run_streamed_subprocess(
     command: Sequence[str | Path],

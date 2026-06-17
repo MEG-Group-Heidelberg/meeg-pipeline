@@ -675,6 +675,7 @@ folder. Keep software and project outputs separate:
 my-meeg-project/
   derivatives/
     freesurfer/
+      freesurfer_provenance.json
       subjects/
         sub-0001/
           mri/
@@ -1118,6 +1119,17 @@ FreeSurfer subject outputs are written to:
 ```text
 derivatives/freesurfer/subjects/sub-0001/
 ```
+
+The notebook also writes project-level FreeSurfer software provenance to:
+
+```text
+derivatives/freesurfer/freesurfer_provenance.json
+```
+
+This JSON file records the configured `FREESURFER_HOME`, `SUBJECTS_DIR`, command
+paths, `recon-all --version`, `freeview --version`, `mri_convert --version`, the
+MNE version, Python version, and platform information. FreeSurfer additionally
+writes detailed per-subject logs inside each subject's `scripts/` directory.
 
 ### `03_anatomy_setup.ipynb`
 
@@ -1649,6 +1661,9 @@ morph_labels:
 coregistration:
   skip / overwrite
 
+freesurfer_provenance:
+  skip / overwrite
+
 convert_to_bids:
   skip / overwrite
 
@@ -1691,6 +1706,7 @@ OVERWRITE_STEPS = ["mri_conversion"]
 OVERWRITE_STEPS = ["recon"]
 OVERWRITE_STEPS = ["watershed", "bem"]
 OVERWRITE_STEPS = ["coregistration"]
+OVERWRITE_STEPS = ["freesurfer_provenance"]
 OVERWRITE_STEPS = ["events"]
 OVERWRITE_STEPS = ["analysis_events"]
 OVERWRITE_STEPS = ["bad_channels"]
@@ -1724,6 +1740,7 @@ source_distances-> skip existing source spaces with distances
 volume_source_space -> skip existing volume source spaces
 morph_labels    -> skip existing morphed labels/parcellations
 coregistration  -> skip existing trans.fif files
+freesurfer_provenance -> skip existing software-provenance JSON
 convert_to_bids -> skip existing raw BIDS files
 events          -> skip existing events.tsv files
 analysis_events -> skip existing derivative analysis-event files
@@ -1969,6 +1986,7 @@ Currently implemented:
 - conversion from `sourcedata_root` to raw BIDS
 - MRI conversion helpers for DICOM/NIfTI/MGZ preparation
 - FreeSurfer recon-all helpers
+- FreeSurfer software provenance documentation
 - watershed BEM and dense scalp surface helpers
 - BEM model and BEM solution helpers
 - surface and volume source-space helpers

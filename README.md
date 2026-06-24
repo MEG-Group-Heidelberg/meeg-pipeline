@@ -115,12 +115,25 @@ The Python package does not install large external neuroimaging command-line
 tools automatically. Anatomy preparation requires FreeSurfer, and DICOM-based
 MRI conversion additionally requires `dcm2niix`.
 
-Install FreeSurfer separately, for example from the official FreeSurfer
-installer. For this project we recommend pinning the FreeSurfer installation to a
-versioned directory. On macOS, for FreeSurfer 8.2.0 this is for example:
+Install FreeSurfer separately from the official FreeSurfer download page. A
+registration key is not needed to download the installer, but FreeSurfer commands
+require a `license.txt` file before the software is fully operational. The
+license is free and is requested through the official FreeSurfer registration
+form.
+
+For this project we recommend pinning the FreeSurfer installation to a versioned
+directory. On macOS, for FreeSurfer 8.2.0 this is for example:
 
 ```text
 /Applications/freesurfer/8.2.0
+```
+
+Store the license outside the application directory and point FreeSurfer to it
+with `FS_LICENSE`. For example, after downloading the emailed `license.txt` file:
+
+```bash
+mkdir -p ~/.freesurfer
+cp ~/Downloads/license.txt ~/.freesurfer/license.txt
 ```
 
 In project configs, point `freesurfer.home` to the versioned FreeSurfer
@@ -135,26 +148,38 @@ freesurfer:
 
 `freesurfer.home` is the software installation. It is not where project anatomy
 outputs should be written. Project-specific FreeSurfer outputs go into
-`freesurfer.subjects_dir`.
+`freesurfer.subjects_dir`. Do not use the default
+`/Applications/freesurfer/8.2.0/subjects` directory for project outputs.
 
-The pipeline sets `FREESURFER_HOME` and `SUBJECTS_DIR` for the commands it runs
-from the config. For manual terminal use of FreeSurfer commands, and for checking
+The pipeline sets `FREESURFER_HOME`, `FS_LICENSE`, and project-specific
+`SUBJECTS_DIR` values for the commands it runs from the config and current
+environment. For manual terminal use of FreeSurfer commands, and for checking
 that the installation works, set up the shell environment explicitly:
 
 ```bash
 export FREESURFER_HOME=/Applications/freesurfer/8.2.0
+export FS_LICENSE=$HOME/.freesurfer/license.txt
 source "$FREESURFER_HOME/SetUpFreeSurfer.sh"
 
 echo "$FREESURFER_HOME"
+echo "$FS_LICENSE"
+test -f "$FS_LICENSE" && echo "FreeSurfer license found"
 which recon-all
+which mri_convert
+which freeview
 recon-all --version
 mri_convert --version
-freeview --version
+freeview -h | head
 ```
+
+Some FreeSurfer versions do not support `freeview --version`; use `which
+freeview` or `freeview -h | head` as a basic check instead.
 
 If `FREESURFER_HOME` is not set, FreeSurfer wrappers can fail even when the
 binaries exist, for example with messages such as `FREESURFER_HOME: Undefined
-variable` or by looking for `Freeview.app` in the wrong location.
+variable` or by looking for `Freeview.app` in the wrong location. If `FS_LICENSE`
+is not set or does not point to an existing file, FreeSurfer commands can fail
+with messages such as `FreeSurfer license file ... not found`.
 
 To make FreeSurfer available in new terminal sessions, add the setup to your
 shell startup file, for example on macOS with zsh:
@@ -162,6 +187,7 @@ shell startup file, for example on macOS with zsh:
 ```bash
 cat >> ~/.zshrc <<'EOF'
 export FREESURFER_HOME=/Applications/freesurfer/8.2.0
+export FS_LICENSE=$HOME/.freesurfer/license.txt
 source "$FREESURFER_HOME/SetUpFreeSurfer.sh"
 EOF
 ```
@@ -170,6 +196,20 @@ Then open a new terminal or run:
 
 ```bash
 source ~/.zshrc
+```
+
+After changing shell setup, restart VS Code or Jupyter so notebook kernels inherit
+the updated environment. Inside a notebook, check:
+
+```python
+import os
+import shutil
+
+print(os.environ.get("FREESURFER_HOME"))
+print(os.environ.get("FS_LICENSE"))
+print(shutil.which("recon-all"))
+print(shutil.which("mri_convert"))
+print(shutil.which("dcm2niix"))
 ```
 
 If `1A_anatomy/01_convert_mri.ipynb` should convert raw DICOM folders into
@@ -184,6 +224,13 @@ notebooks:
 
 ```bash
 dcm2niix --version
+```
+
+`dcm2niix` may recommend installing `pigz` for faster compression. This is
+optional; the conversion works without it. To install it with Homebrew:
+
+```bash
+brew install pigz
 ```
 
 If you already place standardized MRI inputs such as `T1.mgz` or

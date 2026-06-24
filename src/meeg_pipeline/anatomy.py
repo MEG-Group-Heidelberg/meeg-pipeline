@@ -59,21 +59,52 @@ def _path_or_none(path: str | Path | None) -> Path | None:
     return Path(path).expanduser().resolve()
 
 
+def _default_freesurfer_license() -> Path | None:
+    """Return a likely FreeSurfer license path, if one exists."""
+    candidates: list[Path] = []
+
+    fs_license = os.environ.get("FS_LICENSE")
+    if fs_license:
+        candidates.append(Path(fs_license).expanduser())
+
+    candidates.append(Path.home() / ".freesurfer" / "license.txt")
+
+    freesurfer_home = os.environ.get("FREESURFER_HOME")
+    if freesurfer_home:
+        candidates.extend(
+            [
+                Path(freesurfer_home).expanduser() / "license.txt",
+                Path(freesurfer_home).expanduser() / ".license",
+            ]
+        )
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+
+    return None
+
+
 def _stringify_command(command: Sequence[str | Path]) -> tuple[str, ...]:
     return tuple(str(item) for item in command)
 
 
-def _subject_label(subject: str) -> str:
-    """Return a FreeSurfer/MNE subject name without changing valid labels."""
+def _subject_id(subject: str) -> str:
+    """Return the bare subject label without the optional ``sub-`` prefix."""
     subject = str(subject)
     return subject.removeprefix("sub-") if subject.startswith("sub-") else subject
 
 
+def _subject_label(subject: str) -> str:
+    """Return the canonical project subject folder label with ``sub-`` prefix."""
+    return f"sub-{_subject_id(subject)}"
+
+
 def _subject_variants(subject: str) -> list[str]:
     """Return possible subject folder labels with and without ``sub-``."""
-    stripped = _subject_label(subject)
+    stripped = _subject_id(subject)
     prefixed = f"sub-{stripped}"
-    variants = [str(subject), stripped, prefixed]
+    variants = [str(subject), prefixed, stripped]
     result: list[str] = []
     for variant in variants:
         if variant not in result:
@@ -236,6 +267,10 @@ def make_freesurfer_env(
     env.setdefault("COPYFILE_DISABLE", "1")
     env.setdefault("TMPDIR", "/tmp")
 
+    fs_license = _default_freesurfer_license()
+    if fs_license is not None:
+        env["FS_LICENSE"] = str(fs_license)
+
     path_parts: list[str] = []
 
     if freesurfer_home is not None:
@@ -325,7 +360,7 @@ def freesurfer_version_info(
         env=env,
     )
     freeview_code, freeview_version = _capture_command_output(
-        [freeview, "--version"],
+        [freeview, "-h"],
         env=env,
     )
     mri_convert_code, mri_convert_version = _capture_command_output(
@@ -344,14 +379,14 @@ def freesurfer_version_info(
         },
         "versions": {
             "recon_all": recon_version,
-            "freeview": freeview_version,
+            "freeview_help": freeview_version,
             "mri_convert": mri_convert_version,
             "mne": mne.__version__,
             "python": sys.version.replace("\n", " "),
         },
         "returncodes": {
             "recon_all_version": recon_code,
-            "freeview_version": freeview_code,
+            "freeview_help": freeview_code,
             "mri_convert_version": mri_convert_code,
         },
         "platform": {

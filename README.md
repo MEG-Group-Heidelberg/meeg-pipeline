@@ -116,28 +116,60 @@ tools automatically. Anatomy preparation requires FreeSurfer, and DICOM-based
 MRI conversion additionally requires `dcm2niix`.
 
 Install FreeSurfer separately, for example from the official FreeSurfer
-installer. On macOS, a typical installation location is:
+installer. For this project we recommend pinning the FreeSurfer installation to a
+versioned directory. On macOS, for FreeSurfer 8.2.0 this is for example:
 
 ```text
-/Applications/freesurfer
+/Applications/freesurfer/8.2.0
 ```
 
-In project configs, point `freesurfer.home` to the FreeSurfer installation and
-`freesurfer.subjects_dir` to the project-specific FreeSurfer output directory:
+In project configs, point `freesurfer.home` to the versioned FreeSurfer
+installation and `freesurfer.subjects_dir` to the project-specific FreeSurfer
+output directory:
 
 ```yaml
 freesurfer:
-  home: "/Applications/freesurfer"
+  home: "/Applications/freesurfer/8.2.0"
   subjects_dir: "./derivatives/freesurfer/subjects"
 ```
 
+`freesurfer.home` is the software installation. It is not where project anatomy
+outputs should be written. Project-specific FreeSurfer outputs go into
+`freesurfer.subjects_dir`.
+
 The pipeline sets `FREESURFER_HOME` and `SUBJECTS_DIR` for the commands it runs
-from the config. For manual terminal use of FreeSurfer commands, you may also set
-up the shell environment explicitly:
+from the config. For manual terminal use of FreeSurfer commands, and for checking
+that the installation works, set up the shell environment explicitly:
 
 ```bash
-export FREESURFER_HOME=/Applications/freesurfer
+export FREESURFER_HOME=/Applications/freesurfer/8.2.0
 source "$FREESURFER_HOME/SetUpFreeSurfer.sh"
+
+echo "$FREESURFER_HOME"
+which recon-all
+recon-all --version
+mri_convert --version
+freeview --version
+```
+
+If `FREESURFER_HOME` is not set, FreeSurfer wrappers can fail even when the
+binaries exist, for example with messages such as `FREESURFER_HOME: Undefined
+variable` or by looking for `Freeview.app` in the wrong location.
+
+To make FreeSurfer available in new terminal sessions, add the setup to your
+shell startup file, for example on macOS with zsh:
+
+```bash
+cat >> ~/.zshrc <<'EOF'
+export FREESURFER_HOME=/Applications/freesurfer/8.2.0
+source "$FREESURFER_HOME/SetUpFreeSurfer.sh"
+EOF
+```
+
+Then open a new terminal or run:
+
+```bash
+source ~/.zshrc
 ```
 
 If `1A_anatomy/01_convert_mri.ipynb` should convert raw DICOM folders into
@@ -147,14 +179,11 @@ NIfTI/MGZ inputs, install `dcm2niix`. On macOS with Homebrew:
 brew install dcm2niix
 ```
 
-Check the external tools from the same terminal or Jupyter environment that will
-run the notebooks:
+Check `dcm2niix` from the same terminal or Jupyter environment that will run the
+notebooks:
 
 ```bash
 dcm2niix --version
-/Applications/freesurfer/bin/recon-all --version
-/Applications/freesurfer/bin/mri_convert --version
-/Applications/freesurfer/bin/freeview --version
 ```
 
 If you already place standardized MRI inputs such as `T1.mgz` or
@@ -307,7 +336,7 @@ paths:
   mri_root: "./sourcedata/mri"
 
 freesurfer:
-  home: "/Applications/freesurfer"
+  home: "/Applications/freesurfer/8.2.0"
   subjects_dir: "./derivatives/freesurfer/subjects"
 
 sourcedata:
@@ -718,7 +747,7 @@ FreeSurfer outputs should not be stored inside the FreeSurfer installation
 folder. Keep software and project outputs separate:
 
 ```text
-/Applications/freesurfer/
+/Applications/freesurfer/8.2.0/
   # FreeSurfer software installation
 
 my-meeg-project/
@@ -741,7 +770,7 @@ The project config should point to this project-specific `SUBJECTS_DIR`:
 
 ```yaml
 freesurfer:
-  home: "/Applications/freesurfer"
+  home: "/Applications/freesurfer/8.2.0"
   subjects_dir: "./derivatives/freesurfer/subjects"
 ```
 
@@ -915,7 +944,7 @@ paths:
   mri_root: "./sourcedata/mri"
 
 freesurfer:
-  home: "/Applications/freesurfer"
+  home: "/Applications/freesurfer/8.2.0"
   subjects_dir: "./derivatives/freesurfer/subjects"
 
 anatomy:

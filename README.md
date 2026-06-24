@@ -109,9 +109,58 @@ pip install -e ".[dev,qt,autoreject]"
 The `qt` extra installs the packages needed for interactive MNE browser windows,
 including `mne-qt-browser`, `pyqt6`, and `pyqtgraph`.
 
-For anatomy preparation and source modeling, install FreeSurfer separately and
-make sure that `FREESURFER_HOME` points to the FreeSurfer installation, or set
-`freesurfer.home` in the project config.
+### External anatomy tools
+
+The Python package does not install large external neuroimaging command-line
+tools automatically. Anatomy preparation requires FreeSurfer, and DICOM-based
+MRI conversion additionally requires `dcm2niix`.
+
+Install FreeSurfer separately, for example from the official FreeSurfer
+installer. On macOS, a typical installation location is:
+
+```text
+/Applications/freesurfer
+```
+
+In project configs, point `freesurfer.home` to the FreeSurfer installation and
+`freesurfer.subjects_dir` to the project-specific FreeSurfer output directory:
+
+```yaml
+freesurfer:
+  home: "/Applications/freesurfer"
+  subjects_dir: "./derivatives/freesurfer/subjects"
+```
+
+The pipeline sets `FREESURFER_HOME` and `SUBJECTS_DIR` for the commands it runs
+from the config. For manual terminal use of FreeSurfer commands, you may also set
+up the shell environment explicitly:
+
+```bash
+export FREESURFER_HOME=/Applications/freesurfer
+source "$FREESURFER_HOME/SetUpFreeSurfer.sh"
+```
+
+If `1A_anatomy/01_convert_mri.ipynb` should convert raw DICOM folders into
+NIfTI/MGZ inputs, install `dcm2niix`. On macOS with Homebrew:
+
+```bash
+brew install dcm2niix
+```
+
+Check the external tools from the same terminal or Jupyter environment that will
+run the notebooks:
+
+```bash
+dcm2niix --version
+/Applications/freesurfer/bin/recon-all --version
+/Applications/freesurfer/bin/mri_convert --version
+/Applications/freesurfer/bin/freeview --version
+```
+
+If you already place standardized MRI inputs such as `T1.mgz` or
+`*T1w*.nii.gz` under `paths.mri_root` for all subjects, `dcm2niix` is not needed
+for those subjects. It is only required for subjects where raw DICOM folders need
+to be converted.
 
 Test the installation:
 
@@ -1093,6 +1142,10 @@ The standardized files may be created by this notebook or placed there manually
 when another lab has already prepared them.
 
 The T2 input is optional. The standard pipeline requires T1 for `recon-all`.
+If raw DICOM folders need to be converted, `dcm2niix` must be installed and
+available on `PATH`. If `dcm2niix` is missing, the notebook reports
+`missing_converter` for those subjects instead of treating this as a valid MRI
+input state.
 
 ### `02_recon.ipynb`
 

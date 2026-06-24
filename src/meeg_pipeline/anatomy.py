@@ -534,9 +534,26 @@ def convert_raw_mri_modality(
         )
     elif source.is_dir():
         output_stem = f"{subject}_{modality_bids}"
-        dcm2niix = shutil.which("dcm2niix") or "dcm2niix"
+        dcm2niix = shutil.which("dcm2niix")
+        if dcm2niix is None and not dry_run:
+            return [
+                AnatomyCommandResult(
+                    subject=subject,
+                    step=f"convert_{modality.lower()}_nifti",
+                    status="missing_converter",
+                    path=str(nifti_path),
+                    returncode=None,
+                    message=(
+                        "dcm2niix is required for DICOM-to-NIfTI conversion but "
+                        "was not found on PATH. Install it, for example with "
+                        "'brew install dcm2niix', or provide an already converted "
+                        f"{modality} input under mri_root."
+                    ),
+                    command=("dcm2niix",),
+                )
+            ]
         command = [
-            dcm2niix,
+            dcm2niix or "dcm2niix",
             "-z",
             "y",
             "-f",

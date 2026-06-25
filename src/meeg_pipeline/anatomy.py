@@ -1784,29 +1784,33 @@ def coregistration_trans_path(
     analysis decision derived from the raw recording's digitization and the
     subject's FreeSurfer anatomy.
     """
-    subject = _subject_label(subject)
-    parts = [f"sub-{subject}"]
+    subject_label = _subject_label(subject)
+
+    parts = [subject_label]
     if session is not None:
-        parts.append(f"ses-{session}")
+        session_label = str(session) if str(session).startswith("ses-") else f"ses-{session}"
+        parts.append(session_label)
     if task is not None:
-        parts.append(f"task-{task}")
+        task_label = str(task) if str(task).startswith("task-") else f"task-{task}"
+        parts.append(task_label)
     if run is not None:
-        parts.append(f"run-{run}")
+        run_label = str(run) if str(run).startswith("run-") else f"run-{run}"
+        parts.append(run_label)
 
     filename = "_".join(parts + [f"desc-{desc}_trans.fif"])
 
     if session is None:
         directory = (
             config.paths.derivatives_root
-            / f"sub-{subject}"
+            / subject_label
             / config.bids.datatype
             / "coregistration"
         )
     else:
         directory = (
             config.paths.derivatives_root
-            / f"sub-{subject}"
-            / f"ses-{session}"
+            / subject_label
+            / session_label
             / config.bids.datatype
             / "coregistration"
         )

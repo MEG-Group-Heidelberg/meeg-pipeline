@@ -60,6 +60,29 @@ def _path_or_none(path: str | Path | None) -> Path | None:
     return Path(path).expanduser().resolve()
 
 
+def _default_freesurfer_home() -> Path | None:
+    """Return a likely FreeSurfer installation path, if one can be found."""
+    candidates: list[Path] = []
+
+    freesurfer_home = os.environ.get("FREESURFER_HOME")
+    if freesurfer_home:
+        candidates.append(Path(freesurfer_home).expanduser())
+
+    candidates.extend(
+        [
+            Path("/Applications/freesurfer/8.2.0"),
+            Path("/Applications/freesurfer"),
+            Path.home() / "freesurfer",
+        ]
+    )
+
+    for candidate in candidates:
+        if (candidate / "bin" / "recon-all").exists():
+            return candidate.resolve()
+
+    return None
+
+
 def _default_freesurfer_license() -> Path | None:
     """Return a likely FreeSurfer license path, if one exists."""
     candidates: list[Path] = []
@@ -258,9 +281,7 @@ def make_freesurfer_env(
 ) -> dict[str, str]:
     """Create an environment for FreeSurfer/MNE command-line tools."""
     subjects_dir = Path(subjects_dir).expanduser().resolve()
-    freesurfer_home = _path_or_none(
-        freesurfer_home or os.environ.get("FREESURFER_HOME") or "/Applications/freesurfer"
-    )
+    freesurfer_home = _path_or_none(freesurfer_home) or _default_freesurfer_home()
     mne_path = _path_or_none(mne_path)
 
     env = os.environ.copy()
@@ -1037,31 +1058,15 @@ def apply_watershed_bem(
     overwrite: bool = True,
     verbose: bool | str | int | None = True,
 ) -> AnatomyFileResult:
-    """Create watershed BEM surfaces for one FreeSurfer subject.
-
-    Existing watershed outputs are handled before calling MNE. This keeps
-    notebook batch runs status-oriented: ``overwrite=False`` reports
-    ``skipped_existing`` instead of raising MNE's ``already exists`` error,
-    while ``overwrite=True`` recreates the watershed directory.
-    """
+    """Create watershed BEM surfaces for one FreeSurfer subject."""
     subject = _subject_label(subject)
     subjects_dir = Path(subjects_dir).expanduser().resolve()
     path = subjects_dir / subject / "bem"
-    watershed_dir = path / "watershed"
-
-    if watershed_dir.exists() and not overwrite:
-        return AnatomyFileResult(
-            subject=subject,
-            step="watershed",
-            path=str(watershed_dir),
-            status="skipped_existing",
-            message="Watershed BEM directory already exists.",
-        )
 
     if importlib.util.find_spec("nibabel") is None:
         return AnatomyFileResult(
             subject=subject,
-            step="watershed",
+            step="watershed_bem",
             path=str(path),
             status="missing_python_dependency",
             message=(
@@ -1080,32 +1085,20 @@ def apply_watershed_bem(
     old_env = os.environ.copy()
     os.environ.update(env)
     try:
-        try:
-            mne_bem.make_watershed_bem(
-                subject=subject,
-                subjects_dir=subjects_dir,
-                volume=volume,
-                overwrite=overwrite,
-                verbose=verbose,
-            )
-        except RuntimeError as exc:
-            message = str(exc)
-            if "already exists" in message and not overwrite:
-                return AnatomyFileResult(
-                    subject=subject,
-                    step="watershed",
-                    path=str(watershed_dir),
-                    status="skipped_existing",
-                    message=message,
-                )
-            raise
+        mne_bem.make_watershed_bem(
+            subject=subject,
+            subjects_dir=subjects_dir,
+            volume=volume,
+            overwrite=overwrite,
+            verbose=verbose,
+        )
     finally:
         os.environ.clear()
         os.environ.update(old_env)
 
     return AnatomyFileResult(
         subject=subject,
-        step="watershed",
+        step="watershed_bem",
         path=str(path),
         status="written",
     )
@@ -1115,6 +1108,7 @@ def make_dense_scalp_surfaces(
     subject: str,
     *,
     subjects_dir: str | Path,
+    freesurfer_home: str | Path | None = None,
     force: bool = True,
     overwrite: bool = True,
     verbose: bool | str | int | None = True,
@@ -1122,16 +1116,40 @@ def make_dense_scalp_surfaces(
     """Create dense scalp surfaces that help coregistration/QC."""
     subject = _subject_label(subject)
     subjects_dir = Path(subjects_dir).expanduser().resolve()
+    path = subjects_dir / subject / "bem"
 
-    mne_bem.make_scalp_surfaces(
-        subject=subject,
+    env = make_freesurfer_env(
         subjects_dir=subjects_dir,
-        force=force,
-        overwrite=overwrite,
-        verbose=verbose,
+        freesurfer_home=freesurfer_home,
     )
 
-    path = subjects_dir / subject / "bem"
+    if "FREESURFER_HOME" not in env:
+        return AnatomyFileResult(
+            subject=subject,
+            step="dense_scalp_surfaces",
+            path=str(path),
+            status="missing_freesurfer_home",
+            message=(
+                "FREESURFER_HOME is required for dense scalp surface creation. "
+                "Set freesurfer.home in the project config or export "
+                "FREESURFER_HOME before running this step."
+            ),
+        )
+
+    old_env = os.environ.copy()
+    os.environ.update(env)
+    try:
+        mne_bem.make_scalp_surfaces(
+            subject=subject,
+            subjects_dir=subjects_dir,
+            force=force,
+            overwrite=overwrite,
+            verbose=verbose,
+        )
+    finally:
+        os.environ.clear()
+        os.environ.update(old_env)
+
     return AnatomyFileResult(
         subject=subject,
         step="dense_scalp_surfaces",

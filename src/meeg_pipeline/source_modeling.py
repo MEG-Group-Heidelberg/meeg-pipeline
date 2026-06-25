@@ -838,7 +838,7 @@ def _compute_epochs_baseline_covariance(
     config: PipelineConfig,
     epochs_path: str | Path,
     *,
-    method: str | list[str] | None = "auto",
+    method: str | list[str] | None = "empirical",
     rank: str | dict[str, int] | None = None,
     verbose: bool | str | int | None = True,
 ) -> mne.Covariance:
@@ -876,7 +876,7 @@ def write_noise_covariance_for_recording(
     *,
     on_existing: ExistingOutputPolicy = "skip",
     mode: str | None = None,
-    method: str | list[str] | None = "auto",
+    method: str | list[str] | None = "empirical",
     rank: str | dict[str, int] | None = None,
     verbose: bool | str | int | None = True,
 ) -> NoiseCovarianceResult:
@@ -976,7 +976,7 @@ def write_noise_covariances_for_recordings(
     *,
     on_existing: ExistingOutputPolicy = "skip",
     mode: str | None = None,
-    method: str | list[str] | None = "auto",
+    method: str | list[str] | None = "empirical",
     rank: str | dict[str, int] | None = None,
     verbose: bool | str | int | None = True,
 ) -> list[NoiseCovarianceResult]:

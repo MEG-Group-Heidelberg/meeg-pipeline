@@ -1190,25 +1190,6 @@ def make_dense_scalp_surfaces(
             ),
         )
 
-    import importlib.util
-
-    if (
-        importlib.util.find_spec("vtkmodules") is None
-        and importlib.util.find_spec("vtk") is None
-    ):
-        return AnatomyFileResult(
-            subject=subject,
-            step="dense_scalp_surfaces",
-            path=str(bem_dir),
-            status="missing_python_dependency",
-            message=(
-                "Dense scalp surface creation requires VTK for surface "
-                "decimation. Install the anatomy extras with "
-                'pip install -e ".[dev,qt,autoreject,anatomy]" '
-                "or install VTK directly with pip install vtk."
-            ),
-        )
-
     command: list[str | Path] = [
         "mne",
         "make_scalp_surfaces",
@@ -1455,6 +1436,123 @@ def setup_volume_source_space(
     )
 
 
+def _chmod_user_rwX(path: Path) -> None:
+    """Make a copied tree writable by the current user where possible."""
+    for current in [path, *path.rglob("*")]:
+        try:
+            mode = current.stat().st_mode
+        except OSError:
+            continue
+
+        if current.is_dir():
+            current.chmod(mode | 0o700)
+        else:
+            current.chmod(mode | 0o600)
+
+
+def _can_write_to_directory(path: Path) -> bool:
+    """Return True if a temporary file can be created in a directory."""
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=path):
+            pass
+    except OSError:
+        return False
+    return True
+
+
+def _candidate_fsaverage_sources(
+    *,
+    subjects_dir: Path,
+    freesurfer_home: str | Path | None,
+) -> list[Path]:
+    """Return plausible source locations for a project-local fsaverage copy."""
+    candidates: list[Path] = []
+
+    fsaverage = subjects_dir / "fsaverage"
+    if fsaverage.is_symlink():
+        candidates.append(fsaverage.resolve())
+
+    homes: list[Path] = []
+    if freesurfer_home is not None:
+        homes.append(Path(freesurfer_home).expanduser().resolve())
+    if os.environ.get("FREESURFER_HOME"):
+        homes.append(Path(os.environ["FREESURFER_HOME"]).expanduser().resolve())
+
+    for home in homes:
+        candidates.append(home / "subjects" / "fsaverage")
+
+    # Keep order while removing duplicates.
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if candidate not in seen:
+            unique.append(candidate)
+            seen.add(candidate)
+    return unique
+
+
+def ensure_project_local_fsaverage(
+    *,
+    subjects_dir: str | Path,
+    freesurfer_home: str | Path | None = None,
+    require_writable_label_dir: bool = True,
+) -> Path:
+    """Ensure that fsaverage is project-local and writable when needed.
+
+    FreeSurfer installations often provide ``subjects/fsaverage`` as a
+    read-only, root-owned directory. A project ``SUBJECTS_DIR/fsaverage`` may
+    also be a symlink to that installation directory. This is fine for reading,
+    but MNE's parcellation fetchers need to write additional annotations into
+    ``fsaverage/label``. For project workflows, we therefore replace such
+    symlinks with a real project-local copy before fetching parcellations.
+    """
+    subjects_dir = Path(subjects_dir).expanduser().resolve()
+    subjects_dir.mkdir(parents=True, exist_ok=True)
+    fsaverage = subjects_dir / "fsaverage"
+
+    needs_copy = fsaverage.is_symlink() or not fsaverage.exists()
+    if needs_copy:
+        sources = _candidate_fsaverage_sources(
+            subjects_dir=subjects_dir,
+            freesurfer_home=freesurfer_home,
+        )
+        source = next((candidate for candidate in sources if candidate.is_dir()), None)
+        if source is None:
+            tried = ", ".join(str(candidate) for candidate in sources) or "no candidates"
+            raise FileNotFoundError(
+                "Could not find an fsaverage source to copy into the project "
+                f"SUBJECTS_DIR. Tried: {tried}. Set freesurfer.home in the "
+                "project config or set FREESURFER_HOME."
+            )
+
+        if fsaverage.is_symlink() or fsaverage.exists():
+            if fsaverage.is_dir() and not fsaverage.is_symlink():
+                shutil.rmtree(fsaverage)
+            else:
+                fsaverage.unlink()
+
+        shutil.copytree(source, fsaverage, symlinks=True)
+        _chmod_user_rwX(fsaverage)
+
+    label_dir = fsaverage / "label"
+    if require_writable_label_dir and not _can_write_to_directory(label_dir):
+        try:
+            _chmod_user_rwX(fsaverage)
+        except OSError:
+            pass
+
+    if require_writable_label_dir and not _can_write_to_directory(label_dir):
+        raise PermissionError(
+            "fsaverage exists but its label directory is not writable: "
+            f"{label_dir}. Make fsaverage project-local and writable, e.g. copy "
+            "it from $FREESURFER_HOME/subjects/fsaverage into the project "
+            "subjects_dir and chown it to the current user."
+        )
+
+    return fsaverage
+
+
 def fetch_fsaverage_parcellations(
     *,
     subjects_dir: str | Path,
@@ -1462,6 +1560,7 @@ def fetch_fsaverage_parcellations(
     fetch_hcp_mmp: bool | None = None,
     fetch_aparc_sub: bool | None = None,
     accept_hcp_mmp_license: bool = False,
+    freesurfer_home: str | Path | None = None,
 ) -> None:
     """Fetch optional fsaverage parcellations used by the notebooks.
 
@@ -1470,6 +1569,10 @@ def fetch_fsaverage_parcellations(
     project only asks for ``aparc_sub``. HCP-MMP requires explicit license
     acceptance; set ``accept_hcp_mmp_license=True`` only after reviewing and
     accepting the dataset license.
+
+    Parcellation fetchers write files into ``fsaverage/label``. If the project
+    ``fsaverage`` is a symlink to a read-only FreeSurfer installation, it is
+    replaced by a project-local writable copy first.
     """
     subjects_dir = Path(subjects_dir).expanduser().resolve()
 
@@ -1480,6 +1583,13 @@ def fetch_fsaverage_parcellations(
         fetch_hcp_mmp = any(
             parc in requested
             for parc in ("HCPMMP1", "HCPMMP1_combined", "HCPMMP1_sub")
+        )
+
+    if fetch_hcp_mmp or fetch_aparc_sub:
+        ensure_project_local_fsaverage(
+            subjects_dir=subjects_dir,
+            freesurfer_home=freesurfer_home,
+            require_writable_label_dir=True,
         )
 
     if fetch_hcp_mmp:

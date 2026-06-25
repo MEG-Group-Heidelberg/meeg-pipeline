@@ -203,6 +203,44 @@ def discover_raw_mri_subjects(mri_raw_root: str | Path) -> list[str]:
     return sorted(_discover_subject_dirs(Path(mri_raw_root).expanduser().resolve()))
 
 
+NON_SUBJECT_FREESURFER_DIR_NAMES = {
+    "fsaverage",
+    "morph-maps",
+    "bem",
+    "scripts",
+    "tmp",
+    "trash",
+}
+
+
+def is_freesurfer_subject_dir(path: str | Path) -> bool:
+    """Return whether a path looks like a real project subject in SUBJECTS_DIR.
+
+    FreeSurfer/MNE can create auxiliary folders inside ``SUBJECTS_DIR`` such as
+    ``fsaverage`` and ``morph-maps``. These are not study subjects and must not
+    be picked up by ``SUBJECTS = "all"``.
+    """
+    path = Path(path).expanduser()
+    name = path.name
+
+    if not path.is_dir():
+        return False
+    if name.startswith(".") or name in NON_SUBJECT_FREESURFER_DIR_NAMES:
+        return False
+    if not name.startswith("sub-"):
+        return False
+
+    return (path / "mri" / "T1.mgz").exists() and (path / "surf").is_dir()
+
+
+def discover_freesurfer_subjects(subjects_dir: str | Path) -> list[str]:
+    """Discover real subject folders in a project FreeSurfer SUBJECTS_DIR."""
+    root = Path(subjects_dir).expanduser().resolve()
+    if not root.exists():
+        return []
+    return sorted(path.name for path in root.iterdir() if is_freesurfer_subject_dir(path))
+
+
 def resolve_subjects(
     subjects: str | Sequence[str],
     *,
@@ -240,13 +278,7 @@ def resolve_subjects(
         found.update(discover_raw_mri_subjects(mri_raw_root))
 
     if subjects_dir is not None:
-        root = Path(subjects_dir).expanduser().resolve()
-        if root.exists():
-            found.update(
-                path.name
-                for path in root.iterdir()
-                if path.is_dir() and path.name != "fsaverage"
-            )
+        found.update(discover_freesurfer_subjects(subjects_dir))
 
     return sorted(_subject_label(subject) for subject in found)
 

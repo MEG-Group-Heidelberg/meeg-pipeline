@@ -7,6 +7,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -276,20 +277,43 @@ def make_freesurfer_env(
 
     if freesurfer_home is not None:
         env["FREESURFER_HOME"] = str(freesurfer_home)
-        path_parts.append(str(freesurfer_home / "bin"))
 
-        misc_bin = freesurfer_home / "lib" / "misc" / "bin"
+        # FreeSurfer command-line tools call a mixture of binaries and shell
+        # helper scripts. On macOS FreeSurfer 8.2.0, ``mkheadsurf`` can fail
+        # with ``getpwdcmd: Command not found`` when run from a Jupyter/MNE
+        # subprocess. Add all relevant FreeSurfer helper directories and provide
+        # a tiny fallback ``getpwdcmd`` if the installation does not expose one.
+        helper_dir = Path(tempfile.gettempdir()) / "meeg_pipeline_freesurfer_helpers"
+        helper_dir.mkdir(parents=True, exist_ok=True)
+        getpwdcmd = helper_dir / "getpwdcmd"
+        if not getpwdcmd.exists():
+            getpwdcmd.write_text("#!/bin/sh\necho /bin/pwd\n")
+            getpwdcmd.chmod(0o755)
+        path_parts.append(str(helper_dir))
+
+        for candidate in [
+            freesurfer_home / "bin",
+            freesurfer_home / "fsfast" / "bin",
+            freesurfer_home / "mni" / "bin",
+            freesurfer_home / "tktools",
+            freesurfer_home / "lib" / "misc" / "bin",
+            freesurfer_home / "lib" / "gcc" / "bin",
+        ]:
+            if candidate.exists():
+                path_parts.append(str(candidate))
+
         misc_lib = freesurfer_home / "lib" / "misc" / "lib"
         gcc_lib = freesurfer_home / "lib" / "gcc" / "lib"
 
-        if misc_bin.exists():
-            path_parts.append(str(misc_bin))
         if misc_lib.exists():
             env["MISC_LIB"] = str(misc_lib)
             env["LD_LIBRARY_PATH"] = str(misc_lib)
             env["DYLD_LIBRARY_PATH"] = str(misc_lib)
         if gcc_lib.exists():
-            env["DYLD_LIBRARY_PATH"] = str(gcc_lib)
+            existing_dyld = env.get("DYLD_LIBRARY_PATH")
+            env["DYLD_LIBRARY_PATH"] = (
+                f"{gcc_lib}{os.pathsep}{existing_dyld}" if existing_dyld else str(gcc_lib)
+            )
 
     if mne_path is not None:
         path_parts.append(str(mne_path / "bin"))
@@ -1415,14 +1439,36 @@ def setup_volume_source_space(
 def fetch_fsaverage_parcellations(
     *,
     subjects_dir: str | Path,
-    fetch_hcp_mmp: bool = True,
-    fetch_aparc_sub: bool = True,
+    parcellations: Sequence[str] | None = None,
+    fetch_hcp_mmp: bool | None = None,
+    fetch_aparc_sub: bool | None = None,
+    accept_hcp_mmp_license: bool = False,
 ) -> None:
-    """Fetch optional fsaverage parcellations used by the notebooks."""
+    """Fetch optional fsaverage parcellations used by the notebooks.
+
+    If ``parcellations`` is provided, only the requested parcellation families
+    are fetched. This prevents the HCP-MMP dataset from being requested when a
+    project only asks for ``aparc_sub``. HCP-MMP requires explicit license
+    acceptance; set ``accept_hcp_mmp_license=True`` only after reviewing and
+    accepting the dataset license.
+    """
     subjects_dir = Path(subjects_dir).expanduser().resolve()
 
+    requested = {str(parc) for parc in parcellations or ()}
+    if fetch_aparc_sub is None:
+        fetch_aparc_sub = not requested or "aparc_sub" in requested
+    if fetch_hcp_mmp is None:
+        fetch_hcp_mmp = any(
+            parc in requested
+            for parc in ("HCPMMP1", "HCPMMP1_combined", "HCPMMP1_sub")
+        )
+
     if fetch_hcp_mmp:
-        mne.datasets.fetch_hcp_mmp_parcellation(subjects_dir=subjects_dir, verbose=True)
+        mne.datasets.fetch_hcp_mmp_parcellation(
+            subjects_dir=subjects_dir,
+            accept=accept_hcp_mmp_license,
+            verbose=True,
+        )
 
     if fetch_aparc_sub:
         mne.datasets.fetch_aparc_sub_parcellation(subjects_dir=subjects_dir, verbose=True)

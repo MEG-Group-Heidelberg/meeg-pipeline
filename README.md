@@ -1272,6 +1272,32 @@ This notebook prepares geometry files required for source modeling:
 - optional volume source space
 - parcellation labels morphed from `fsaverage`
 
+
+### Project-local `fsaverage`
+
+Some anatomy steps fetch additional `fsaverage` parcellations, for example
+`aparc_sub`, and write them into `fsaverage/label/`. For this reason, the
+project `SUBJECTS_DIR` should contain a writable, project-local copy of
+`fsaverage`, not only a symlink to the read-only FreeSurfer installation.
+
+The pipeline checks this before fetching parcellations. If
+`derivatives/freesurfer/subjects/fsaverage` is a symlink to something like
+`/Applications/freesurfer/8.2.0/subjects/fsaverage`, it is replaced by a
+project-local copy. This keeps `/Applications/freesurfer/...` unchanged and
+allows MNE to write project-specific parcellation files.
+
+Manual equivalent:
+
+```bash
+cd /path/to/my-meeg-project
+rm derivatives/freesurfer/subjects/fsaverage
+cp -a /Applications/freesurfer/8.2.0/subjects/fsaverage derivatives/freesurfer/subjects/
+chown -R "$(id -un):$(id -gn)" derivatives/freesurfer/subjects/fsaverage
+chmod -R u+rwX derivatives/freesurfer/subjects/fsaverage
+```
+
+Use `sudo chown` only if the copied files are not owned by the current user.
+
 ### `04_coregistration.ipynb`
 
 This notebook opens the interactive MNE coregistration GUI for selected subjects

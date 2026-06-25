@@ -269,7 +269,10 @@ def find_recording(
     return None
 
 
-def should_overwrite(step_name: str, overwrite_steps: Sequence[str] | str) -> bool:
+def should_overwrite(
+    step_name: str,
+    overwrite_steps: Sequence[str] | str | None,
+) -> bool:
     """Return whether a workflow step should overwrite existing outputs.
 
     ``overwrite_steps`` is intended for notebook-level settings such as::
@@ -277,7 +280,14 @@ def should_overwrite(step_name: str, overwrite_steps: Sequence[str] | str) -> bo
         OVERWRITE_STEPS = []
         OVERWRITE_STEPS = ["events"]
         OVERWRITE_STEPS = "all"
+        OVERWRITE_STEPS = ["all"]
+
+    The string ``"all"`` and containers containing ``"all"`` are treated
+    equivalently. This makes notebook cells robust to both common spellings.
     """
+    if overwrite_steps is None:
+        return False
+
     if overwrite_steps == "all":
         return True
 
@@ -288,7 +298,7 @@ def should_overwrite(step_name: str, overwrite_steps: Sequence[str] | str) -> bo
         )
 
     if isinstance(overwrite_steps, (list, tuple, set)):
-        return step_name in overwrite_steps
+        return "all" in overwrite_steps or step_name in overwrite_steps
 
     raise ValueError(
         f"Invalid overwrite_steps value: {overwrite_steps!r}. "
@@ -298,7 +308,7 @@ def should_overwrite(step_name: str, overwrite_steps: Sequence[str] | str) -> bo
 
 def existing_output_policy_for_step(
     step_name: str,
-    overwrite_steps: Sequence[str] | str,
+    overwrite_steps: Sequence[str] | str | None,
 ) -> ExistingOutputPolicy:
     """Return ``'overwrite'`` or ``'skip'`` for file-producing steps."""
     return "overwrite" if should_overwrite(step_name, overwrite_steps) else "skip"
@@ -306,7 +316,7 @@ def existing_output_policy_for_step(
 
 def decision_policy_for_step(
     step_name: str,
-    overwrite_steps: Sequence[str] | str,
+    overwrite_steps: Sequence[str] | str | None,
 ) -> ManualDecisionPolicy:
     """Return ``'overwrite'`` or ``'load'`` for manual decision steps.
 
@@ -319,7 +329,7 @@ def decision_policy_for_step(
 
 def bad_channels_policy_for_step(
     step_name: str,
-    overwrite_steps: Sequence[str] | str,
+    overwrite_steps: Sequence[str] | str | None,
 ) -> ManualDecisionPolicy:
     """Return policy for manual bad-channel decisions.
 

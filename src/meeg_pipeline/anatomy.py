@@ -1037,15 +1037,31 @@ def apply_watershed_bem(
     overwrite: bool = True,
     verbose: bool | str | int | None = True,
 ) -> AnatomyFileResult:
-    """Create watershed BEM surfaces for one FreeSurfer subject."""
+    """Create watershed BEM surfaces for one FreeSurfer subject.
+
+    Existing watershed outputs are handled before calling MNE. This keeps
+    notebook batch runs status-oriented: ``overwrite=False`` reports
+    ``skipped_existing`` instead of raising MNE's ``already exists`` error,
+    while ``overwrite=True`` recreates the watershed directory.
+    """
     subject = _subject_label(subject)
     subjects_dir = Path(subjects_dir).expanduser().resolve()
     path = subjects_dir / subject / "bem"
+    watershed_dir = path / "watershed"
+
+    if watershed_dir.exists() and not overwrite:
+        return AnatomyFileResult(
+            subject=subject,
+            step="watershed",
+            path=str(watershed_dir),
+            status="skipped_existing",
+            message="Watershed BEM directory already exists.",
+        )
 
     if importlib.util.find_spec("nibabel") is None:
         return AnatomyFileResult(
             subject=subject,
-            step="watershed_bem",
+            step="watershed",
             path=str(path),
             status="missing_python_dependency",
             message=(
@@ -1064,20 +1080,32 @@ def apply_watershed_bem(
     old_env = os.environ.copy()
     os.environ.update(env)
     try:
-        mne_bem.make_watershed_bem(
-            subject=subject,
-            subjects_dir=subjects_dir,
-            volume=volume,
-            overwrite=overwrite,
-            verbose=verbose,
-        )
+        try:
+            mne_bem.make_watershed_bem(
+                subject=subject,
+                subjects_dir=subjects_dir,
+                volume=volume,
+                overwrite=overwrite,
+                verbose=verbose,
+            )
+        except RuntimeError as exc:
+            message = str(exc)
+            if "already exists" in message and not overwrite:
+                return AnatomyFileResult(
+                    subject=subject,
+                    step="watershed",
+                    path=str(watershed_dir),
+                    status="skipped_existing",
+                    message=message,
+                )
+            raise
     finally:
         os.environ.clear()
         os.environ.update(old_env)
 
     return AnatomyFileResult(
         subject=subject,
-        step="watershed_bem",
+        step="watershed",
         path=str(path),
         status="written",
     )

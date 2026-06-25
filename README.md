@@ -1839,6 +1839,8 @@ For notebooks, a central variable can be used:
 
 ```python
 OVERWRITE_STEPS = []
+OVERWRITE_STEPS = "all"
+OVERWRITE_STEPS = ["all"]
 OVERWRITE_STEPS = ["mri_conversion"]
 OVERWRITE_STEPS = ["recon"]
 OVERWRITE_STEPS = ["watershed", "bem"]
@@ -1857,6 +1859,8 @@ OVERWRITE_STEPS = ["evokeds"]
 OVERWRITE_STEPS = ["ica_decision", "cleaned_raw"]
 OVERWRITE_STEPS = "all"
 ```
+
+``"all"`` and ``["all"]`` are equivalent and overwrite all step outputs.
 
 Recommended default:
 

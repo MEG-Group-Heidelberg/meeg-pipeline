@@ -49,6 +49,21 @@ class ForwardSolutionResult:
     message: str = ""
 
 
+@dataclass(frozen=True)
+class NoiseCovarianceResult:
+    """Result row for one noise-covariance job."""
+
+    subject: str
+    session: str | None
+    task: str | None
+    run: str | None
+    path: str
+    status: str
+    mode: str = ""
+    data_input: str = ""
+    message: str = ""
+
+
 def _subject_label(subject: str) -> str:
     """Return a subject label with the ``sub-`` prefix."""
     return str(subject) if str(subject).startswith("sub-") else f"sub-{subject}"
@@ -630,3 +645,377 @@ def forward_results_to_dataframe(
 ) -> pd.DataFrame:
     """Convert forward-solution results to a status table."""
     return pd.DataFrame([result.__dict__ for result in results])
+
+
+def _noise_cov_mode(config: PipelineConfig, mode: str | None = None) -> str:
+    """Return the effective noise-covariance mode."""
+    return str(mode or config.source.noise_cov_mode)
+
+
+def _covariance_baseline(config: PipelineConfig) -> tuple[float | None, float | None]:
+    """Return the epoch baseline interval used for covariance estimation.
+
+    The current config does not yet expose a dedicated source.noise_cov baseline.
+    For now, use all pre-stimulus samples up to time zero.
+    """
+    return (None, 0.0)
+
+
+def find_epochs_baseline_noise_input_path(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    task: str | None = None,
+    session: str | None = None,
+    run: str | None = None,
+) -> SourceModelingPathResult:
+    """Find cleaned epochs for baseline covariance estimation."""
+    epochs_path = make_epochs_path(
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
+    )
+
+    if epochs_path.exists():
+        return SourceModelingPathResult(
+            path=str(epochs_path),
+            kind="epochs_baseline",
+            status="found",
+        )
+
+    return SourceModelingPathResult(
+        path="",
+        kind="epochs_baseline",
+        status="missing",
+        message="No cleaned epochs derivative was found for baseline covariance.",
+    )
+
+
+def find_empty_room_noise_input_path(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    task: str | None = None,
+    session: str | None = None,
+    run: str | None = None,
+) -> SourceModelingPathResult:
+    """Find an empty-room recording for covariance estimation.
+
+    Empty-room discovery is intentionally conservative for now. The project
+    convention is documented, but the BIDS matching logic will be added in a
+    dedicated patch. Until then, ERM mode reports a status value instead of
+    aborting source-modeling batches.
+    """
+    return SourceModelingPathResult(
+        path="",
+        kind="erm",
+        status="missing",
+        message=(
+            "Empty-room discovery is not implemented yet. "
+            "Use mode='epochs_baseline' to continue without ERM data."
+        ),
+    )
+
+
+def find_noise_input_path(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    task: str | None = None,
+    session: str | None = None,
+    run: str | None = None,
+    mode: str | None = None,
+) -> SourceModelingPathResult:
+    """Find the preferred input for one noise-covariance mode."""
+    mode = _noise_cov_mode(config, mode)
+
+    if mode == "epochs_baseline":
+        return find_epochs_baseline_noise_input_path(
+            config,
+            subject=subject,
+            session=session,
+            task=task,
+            run=run,
+        )
+
+    if mode == "erm":
+        return find_empty_room_noise_input_path(
+            config,
+            subject=subject,
+            session=session,
+            task=task,
+            run=run,
+        )
+
+    if mode == "adhoc":
+        info_input = find_info_input_path(
+            config,
+            subject=subject,
+            session=session,
+            task=task,
+            run=run,
+        )
+        if info_input.status == "found":
+            return SourceModelingPathResult(
+                path=info_input.path,
+                kind="adhoc",
+                status="found",
+                message="Using info input for ad-hoc covariance.",
+            )
+        return SourceModelingPathResult(
+            path="",
+            kind="adhoc",
+            status="missing",
+            message="No info input found for ad-hoc covariance.",
+        )
+
+    return SourceModelingPathResult(
+        path="",
+        kind=mode,
+        status="unsupported",
+        message=f"Unsupported noise covariance mode: {mode!r}.",
+    )
+
+
+def noise_covariance_input_overview_to_dataframe(
+    config: PipelineConfig,
+    recordings: Iterable[Recording],
+    *,
+    on_existing: ExistingOutputPolicy = "skip",
+    mode: str | None = None,
+) -> pd.DataFrame:
+    """Summarize noise-covariance inputs and output status for recordings."""
+    rows: list[dict[str, Any]] = []
+    mode = _noise_cov_mode(config, mode)
+
+    for recording in recordings:
+        entities = _recording_entities(recording)
+        subject = entities["subject"]
+        session = entities["session"]
+        task = entities["task"]
+        run = entities["run"]
+
+        noise_input = find_noise_input_path(config, **entities, mode=mode)
+        cov_path = make_noise_covariance_path(config, **entities, mode=mode)
+
+        if cov_path.exists() and on_existing == "skip":
+            status = "exists"
+            message = "Noise covariance already exists."
+        elif noise_input.status == "unsupported":
+            status = "unsupported_mode"
+            message = noise_input.message
+        elif noise_input.status != "found":
+            status = f"missing_{mode}"
+            message = noise_input.message
+        else:
+            status = "ready"
+            message = noise_input.message
+
+        rows.append(
+            {
+                "subject": _subject_label(subject),
+                "session": session,
+                "task": task,
+                "run": run,
+                "status": status,
+                "message": message,
+                "mode": mode,
+                "data_input_kind": noise_input.kind,
+                "data_input_exists": noise_input.status == "found",
+                "data_input": noise_input.path,
+                "cov_exists": cov_path.exists(),
+                "cov_path": str(cov_path),
+                "overwrite": on_existing == "overwrite",
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+def _compute_epochs_baseline_covariance(
+    config: PipelineConfig,
+    epochs_path: str | Path,
+    *,
+    method: str | list[str] | None = "auto",
+    rank: str | dict[str, int] | None = None,
+    verbose: bool | str | int | None = True,
+) -> mne.Covariance:
+    """Compute a noise covariance matrix from the pre-stimulus epoch baseline."""
+    epochs = mne.read_epochs(
+        epochs_path,
+        preload=True,
+        verbose=verbose,
+    )
+
+    tmin, tmax = _covariance_baseline(config)
+
+    return mne.compute_covariance(
+        epochs,
+        tmin=tmin,
+        tmax=tmax,
+        method=method,
+        rank=rank,
+        verbose=verbose,
+    )
+
+
+def _compute_ad_hoc_covariance(
+    info_path: str | Path,
+    info_kind: str,
+) -> mne.Covariance:
+    """Create an ad-hoc covariance matrix from recording info."""
+    info = _read_info_from_input(info_path, info_kind)
+    return mne.make_ad_hoc_cov(info)
+
+
+def write_noise_covariance_for_recording(
+    config: PipelineConfig,
+    recording: Recording,
+    *,
+    on_existing: ExistingOutputPolicy = "skip",
+    mode: str | None = None,
+    method: str | list[str] | None = "auto",
+    rank: str | dict[str, int] | None = None,
+    verbose: bool | str | int | None = True,
+) -> NoiseCovarianceResult:
+    """Create and write a noise covariance matrix for one recording.
+
+    Missing inputs are returned as status values instead of raising, so callers
+    can use this function safely in batch notebooks.
+    """
+    entities = _recording_entities(recording)
+    subject = entities["subject"]
+    session = entities["session"]
+    task = entities["task"]
+    run = entities["run"]
+    mode = _noise_cov_mode(config, mode)
+
+    cov_path = make_noise_covariance_path(config, **entities, mode=mode)
+
+    if cov_path.exists() and on_existing == "skip":
+        return NoiseCovarianceResult(
+            subject=_subject_label(subject),
+            session=session,
+            task=task,
+            run=run,
+            path=str(cov_path),
+            status="skipped_existing",
+            mode=mode,
+            message="Noise covariance already exists.",
+        )
+
+    overview = noise_covariance_input_overview_to_dataframe(
+        config,
+        [recording],
+        on_existing="overwrite",
+        mode=mode,
+    ).iloc[0]
+
+    if overview["status"] != "ready":
+        return NoiseCovarianceResult(
+            subject=_subject_label(subject),
+            session=session,
+            task=task,
+            run=run,
+            path=str(cov_path),
+            status=str(overview["status"]),
+            mode=mode,
+            data_input=str(overview["data_input"]),
+            message=str(overview["message"]),
+        )
+
+    if mode == "epochs_baseline":
+        cov = _compute_epochs_baseline_covariance(
+            config,
+            overview["data_input"],
+            method=method,
+            rank=rank,
+            verbose=verbose,
+        )
+    elif mode == "adhoc":
+        info_input = find_info_input_path(config, **entities)
+        cov = _compute_ad_hoc_covariance(info_input.path, info_input.kind)
+    else:
+        return NoiseCovarianceResult(
+            subject=_subject_label(subject),
+            session=session,
+            task=task,
+            run=run,
+            path=str(cov_path),
+            status=f"unsupported_mode_{mode}",
+            mode=mode,
+            data_input=str(overview["data_input"]),
+            message=f"Writing covariance for mode {mode!r} is not implemented yet.",
+        )
+
+    cov_path.parent.mkdir(parents=True, exist_ok=True)
+    mne.write_cov(
+        cov_path,
+        cov,
+        overwrite=on_existing == "overwrite",
+        verbose=verbose,
+    )
+
+    return NoiseCovarianceResult(
+        subject=_subject_label(subject),
+        session=session,
+        task=task,
+        run=run,
+        path=str(cov_path),
+        status="written",
+        mode=mode,
+        data_input=str(overview["data_input"]),
+    )
+
+
+def write_noise_covariances_for_recordings(
+    config: PipelineConfig,
+    recordings: Iterable[Recording],
+    *,
+    on_existing: ExistingOutputPolicy = "skip",
+    mode: str | None = None,
+    method: str | list[str] | None = "auto",
+    rank: str | dict[str, int] | None = None,
+    verbose: bool | str | int | None = True,
+) -> list[NoiseCovarianceResult]:
+    """Create noise covariance matrices for multiple recordings."""
+    results = []
+    mode = _noise_cov_mode(config, mode)
+
+    for recording in recordings:
+        try:
+            result = write_noise_covariance_for_recording(
+                config,
+                recording,
+                on_existing=on_existing,
+                mode=mode,
+                method=method,
+                rank=rank,
+                verbose=verbose,
+            )
+        except Exception as exc:  # noqa: BLE001 - batch notebooks should continue.
+            entities = _recording_entities(recording)
+            result = NoiseCovarianceResult(
+                subject=_subject_label(str(entities["subject"])),
+                session=entities["session"],
+                task=entities["task"],
+                run=entities["run"],
+                path=str(make_noise_covariance_path(config, **entities, mode=mode)),
+                status="failed",
+                mode=mode,
+                message=f"{type(exc).__name__}: {exc}",
+            )
+
+        results.append(result)
+
+    return results
+
+
+def noise_covariance_results_to_dataframe(
+    results: Iterable[NoiseCovarianceResult],
+) -> pd.DataFrame:
+    """Convert noise-covariance results to a status table."""
+    return pd.DataFrame([result.__dict__ for result in results])
+

@@ -106,6 +106,14 @@ If you also want to use optional autoreject-based epoch cleaning, install:
 pip install -e ".[dev,qt,autoreject]"
 ```
 
+For anatomy preparation and source-modeling workflows, install the anatomy extra.
+This includes Python packages needed by MNE to read MRI files, such as
+`nibabel`:
+
+```bash
+pip install -e ".[dev,qt,autoreject,anatomy]"
+```
+
 The `qt` extra installs the packages needed for interactive MNE browser windows,
 including `mne-qt-browser`, `pyqt6`, and `pyqtgraph`.
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import platform
@@ -1039,6 +1040,22 @@ def apply_watershed_bem(
     """Create watershed BEM surfaces for one FreeSurfer subject."""
     subject = _subject_label(subject)
     subjects_dir = Path(subjects_dir).expanduser().resolve()
+    path = subjects_dir / subject / "bem"
+
+    if importlib.util.find_spec("nibabel") is None:
+        return AnatomyFileResult(
+            subject=subject,
+            step="watershed_bem",
+            path=str(path),
+            status="missing_python_dependency",
+            message=(
+                "nibabel is required for MNE watershed BEM because MRI files "
+                "must be read. Install the anatomy dependencies with "
+                "pip install -e '.[dev,qt,autoreject,anatomy]' or install "
+                "nibabel directly with pip install nibabel."
+            ),
+        )
+
     env = make_freesurfer_env(
         subjects_dir=subjects_dir,
         freesurfer_home=freesurfer_home,
@@ -1058,7 +1075,6 @@ def apply_watershed_bem(
         os.environ.clear()
         os.environ.update(old_env)
 
-    path = subjects_dir / subject / "bem"
     return AnatomyFileResult(
         subject=subject,
         step="watershed_bem",

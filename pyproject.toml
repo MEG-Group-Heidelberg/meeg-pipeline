@@ -37,6 +37,10 @@ qt = [
     "pyqtgraph",
 ]
 
+anatomy = [
+    "nibabel",
+]
+
 autoreject = [
     "autoreject",
 ]

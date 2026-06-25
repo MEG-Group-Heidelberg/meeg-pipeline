@@ -106,14 +106,6 @@ If you also want to use optional autoreject-based epoch cleaning, install:
 pip install -e ".[dev,qt,autoreject]"
 ```
 
-For anatomy preparation and source-modeling workflows, install the anatomy extra.
-This includes Python packages needed by MNE to read MRI files, such as
-`nibabel`:
-
-```bash
-pip install -e ".[dev,qt,autoreject,anatomy]"
-```
-
 The `qt` extra installs the packages needed for interactive MNE browser windows,
 including `mne-qt-browser`, `pyqt6`, and `pyqtgraph`.
 
@@ -1839,8 +1831,6 @@ For notebooks, a central variable can be used:
 
 ```python
 OVERWRITE_STEPS = []
-OVERWRITE_STEPS = "all"
-OVERWRITE_STEPS = ["all"]
 OVERWRITE_STEPS = ["mri_conversion"]
 OVERWRITE_STEPS = ["recon"]
 OVERWRITE_STEPS = ["watershed", "bem"]
@@ -1859,8 +1849,6 @@ OVERWRITE_STEPS = ["evokeds"]
 OVERWRITE_STEPS = ["ica_decision", "cleaned_raw"]
 OVERWRITE_STEPS = "all"
 ```
-
-``"all"`` and ``["all"]`` are equivalent and overwrite all step outputs.
 
 Recommended default:
 
@@ -2169,3 +2157,15 @@ Not yet implemented:
 - reports
 - HPC/Slurm execution
 - automated tests
+
+## Dense scalp surface dependency
+
+For dense scalp surface creation, the anatomy extra also installs VTK. MNE uses
+VTK to decimate the dense head surface into medium and sparse scalp surfaces. If
+`mne make_scalp_surfaces` fails with `No module named 'vtkmodules'` or `This
+function requires the VTK package`, install or update the anatomy extra:
+
+```bash
+pip install -e ".[dev,qt,autoreject,anatomy]"
+python -c "import vtkmodules; print('VTK available')"
+```

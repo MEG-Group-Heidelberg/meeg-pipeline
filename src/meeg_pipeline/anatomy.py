@@ -1190,6 +1190,25 @@ def make_dense_scalp_surfaces(
             ),
         )
 
+    import importlib.util
+
+    if (
+        importlib.util.find_spec("vtkmodules") is None
+        and importlib.util.find_spec("vtk") is None
+    ):
+        return AnatomyFileResult(
+            subject=subject,
+            step="dense_scalp_surfaces",
+            path=str(bem_dir),
+            status="missing_python_dependency",
+            message=(
+                "Dense scalp surface creation requires VTK for surface "
+                "decimation. Install the anatomy extras with "
+                'pip install -e ".[dev,qt,autoreject,anatomy]" '
+                "or install VTK directly with pip install vtk."
+            ),
+        )
+
     command: list[str | Path] = [
         "mne",
         "make_scalp_surfaces",

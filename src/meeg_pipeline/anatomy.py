@@ -1037,16 +1037,32 @@ def apply_watershed_bem(
     overwrite: bool = True,
     verbose: bool | str | int | None = True,
 ) -> AnatomyFileResult:
-    """Create watershed BEM surfaces for one FreeSurfer subject."""
+    """Create watershed BEM surfaces for one FreeSurfer subject.
+
+    MNE raises a RuntimeError when the internal ``bem/watershed`` directory
+    already exists and ``overwrite`` is false. For notebook batch workflows this
+    should be reported as a normal ``skipped_existing`` status instead of
+    interrupting the entire batch.
+    """
     subject = _subject_label(subject)
     subjects_dir = Path(subjects_dir).expanduser().resolve()
-    path = subjects_dir / subject / "bem"
+    bem_dir = subjects_dir / subject / "bem"
+    watershed_dir = bem_dir / "watershed"
+
+    if watershed_dir.exists() and not overwrite:
+        return AnatomyFileResult(
+            subject=subject,
+            step="watershed_bem",
+            path=str(watershed_dir),
+            status="skipped_existing",
+            message="Watershed BEM directory already exists.",
+        )
 
     if importlib.util.find_spec("nibabel") is None:
         return AnatomyFileResult(
             subject=subject,
             step="watershed_bem",
-            path=str(path),
+            path=str(bem_dir),
             status="missing_python_dependency",
             message=(
                 "nibabel is required for MNE watershed BEM because MRI files "
@@ -1064,13 +1080,25 @@ def apply_watershed_bem(
     old_env = os.environ.copy()
     os.environ.update(env)
     try:
-        mne_bem.make_watershed_bem(
-            subject=subject,
-            subjects_dir=subjects_dir,
-            volume=volume,
-            overwrite=overwrite,
-            verbose=verbose,
-        )
+        try:
+            mne_bem.make_watershed_bem(
+                subject=subject,
+                subjects_dir=subjects_dir,
+                volume=volume,
+                overwrite=overwrite,
+                verbose=verbose,
+            )
+        except RuntimeError as exc:
+            message = str(exc)
+            if "already exists" in message and not overwrite:
+                return AnatomyFileResult(
+                    subject=subject,
+                    step="watershed_bem",
+                    path=str(watershed_dir),
+                    status="skipped_existing",
+                    message=message,
+                )
+            raise
     finally:
         os.environ.clear()
         os.environ.update(old_env)
@@ -1078,7 +1106,7 @@ def apply_watershed_bem(
     return AnatomyFileResult(
         subject=subject,
         step="watershed_bem",
-        path=str(path),
+        path=str(bem_dir),
         status="written",
     )
 

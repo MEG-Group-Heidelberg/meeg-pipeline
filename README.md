@@ -60,6 +60,7 @@ meeg-pipeline/
       project.py
       qc.py
       sourcedata.py
+      source_modeling.py
       workflow.py
 ```
 
@@ -315,13 +316,26 @@ my-meeg-project/
       04_artifact_annotation.ipynb
       05_ica_cleaning.ipynb
       06_epoching.ipynb
-      07_evokeds.ipynb
 
-    2_source_modeling/
-      # Forward/inverse/source-estimate notebooks will live here.
+    2_sensor_analysis/
+      01_evokeds.ipynb
+      02_time_frequency.ipynb
+      03_sensor_decoding.ipynb
 
-    3_analysis/
-      # Project-specific analysis notebooks will live here.
+    3_source_modeling/
+      01_forward_solution.ipynb
+      02_noise_covariance.ipynb
+      03_inverse_operator.ipynb
+      04_evoked_source_estimates.ipynb
+      05_evoked_label_time_courses.ipynb
+      06_epoch_label_time_courses.ipynb
+
+    4_connectivity/
+      01_label_connectivity.ipynb
+
+    5_decoding/
+      01_sensor_decoding.ipynb
+      02_label_time_course_decoding.ipynb
 
   sourcedata/
     sub-0001/
@@ -474,19 +488,130 @@ notebooks/
     04_artifact_annotation.ipynb
     05_ica_cleaning.ipynb
     06_epoching.ipynb
-    07_evokeds.ipynb
 
-  2_source_modeling/
-    # Forward solution, noise covariance, inverse operator, source estimates,
-    # morphing, and label time courses.
+  2_sensor_analysis/
+    01_evokeds.ipynb
+    02_time_frequency.ipynb
+    03_sensor_decoding.ipynb
 
-  3_analysis/
-    # Project-specific sensor-level, source-level, statistical, and figure notebooks.
+  3_source_modeling/
+    01_forward_solution.ipynb
+    02_noise_covariance.ipynb
+    03_inverse_operator.ipynb
+    04_evoked_source_estimates.ipynb
+    05_evoked_label_time_courses.ipynb
+    06_epoch_label_time_courses.ipynb
+
+  4_connectivity/
+    01_label_connectivity.ipynb
+
+  5_decoding/
+    01_sensor_decoding.ipynb
+    02_label_time_course_decoding.ipynb
 ```
 
-`1A_anatomy` and `1B_meg_preprocessing` can often be run independently. They come
-together later in `2_source_modeling`, where MEG/EEG recordings need anatomical
-source spaces, BEM solutions, and coregistration transforms.
+`1A_anatomy` and `1B_meg_preprocessing` can often be run independently.
+`1B_meg_preprocessing` ends with cleaned epochs. `2_sensor_analysis` derives
+sensor-level analysis products such as evoked responses. Anatomy, cleaned
+M/EEG derivatives, sensor-level evokeds, and empty-room or baseline noise data
+come together later in `3_source_modeling`, where MEG/EEG recordings need
+anatomical source spaces, BEM solutions, coregistration transforms, noise
+covariance matrices, inverse operators, source estimates, and label time
+courses.
+
+Downstream workflows should treat source modeling as a feature-generation layer:
+evoked source estimates support source visualization, while epoch-level label
+time courses provide the main bridge to later label-level connectivity and
+source/label-level decoding workflows.
+
+## Empty-room measurements
+
+For MEG source modeling, empty-room measurements are the preferred default input
+for the noise covariance matrix. If empty-room data are not available, projects
+may fall back to baseline covariance from cleaned epochs or, for technical tests
+only, an ad-hoc covariance matrix. Missing empty-room inputs should be reported
+as status values instead of aborting an entire batch workflow.
+
+Store empty-room recordings in the raw BIDS tree using a dedicated empty-room
+subject and acquisition-date session:
+
+```text
+rawdata/
+  sub-emptyroom/
+    ses-YYYYMMDD/
+      meg/
+        sub-emptyroom_ses-YYYYMMDD_task-noise_meg.fif
+        sub-emptyroom_ses-YYYYMMDD_task-noise_channels.tsv
+        sub-emptyroom_ses-YYYYMMDD_task-noise_meg.json
+```
+
+If multiple empty-room recordings exist for the same day, add runs:
+
+```text
+rawdata/
+  sub-emptyroom/
+    ses-YYYYMMDD/
+      meg/
+        sub-emptyroom_ses-YYYYMMDD_task-noise_run-01_meg.fif
+        sub-emptyroom_ses-YYYYMMDD_task-noise_run-02_meg.fif
+```
+
+Empty-room data should be processed with a strategy compatible with the analyzed
+MEG recordings, including comparable channel selection, filtering, bad-channel
+handling, and any project-specific preprocessing decisions that affect the data
+rank. Source-space workflows then match the covariance channels to the recording
+used for the forward and inverse operators.
+
+The source configuration controls how covariance inputs are selected:
+
+```yaml
+source:
+  noise_cov_mode: "erm"
+  # Optional future fallback:
+  # fallback_noise_cov_mode: "epochs_baseline"
+```
+
+## Source modeling derivatives
+
+Source-modeling derivatives are written under the regular pipeline derivatives
+tree, using BIDS-like entities and dedicated derivative folders:
+
+```text
+derivatives/meeg-pipeline/sub-0001/ses-01/meg/
+  forward/
+    sub-0001_ses-01_task-example_run-01_space-ico5_desc-meg-fwd.fif
+  cov/
+    sub-0001_ses-01_task-example_run-01_desc-erm-cov.fif
+  inverse/
+    sub-0001_ses-01_task-example_run-01_space-ico5_desc-ermDspm-inv.fif
+  source_estimates/
+    sub-0001_ses-01_task-example_run-01_space-source_desc-standardDspm-stc.h5
+  label_time_course/
+    sub-0001_ses-01_task-example_run-01_space-label_parc-aparcSub_desc-standardDspm-ltc.tsv
+    sub-0001_ses-01_task-example_run-01_space-label_parc-aparcSub_desc-epochDspm-ltc.h5
+```
+
+The default source-modeling prerequisites are:
+
+```text
+1A_anatomy:
+  derivatives/freesurfer/subjects/sub-*/bem/sub-*-ico5-src.fif
+  derivatives/freesurfer/subjects/sub-*/bem/sub-*-4-1layer-bem-sol.fif
+  derivatives/freesurfer/subjects/sub-*/label/lh.aparc_sub.annot
+  derivatives/freesurfer/subjects/sub-*/label/rh.aparc_sub.annot
+  derivatives/meeg-pipeline/.../coregistration/*_trans.fif
+
+1B_meg_preprocessing:
+  derivatives/meeg-pipeline/.../cleaning/*desc-cleaned_meg.fif
+  derivatives/meeg-pipeline/.../epochs/*desc-cleaned_epo.fif
+
+2_sensor_analysis:
+  derivatives/meeg-pipeline/.../evokeds/*desc-*_ave.fif
+```
+
+Existing source-modeling outputs are skipped by default unless the corresponding
+step name is included in notebook-level `OVERWRITE_STEPS`. Missing inputs are
+reported in status tables rather than interrupting the whole batch.
 
 ## Data organization
 

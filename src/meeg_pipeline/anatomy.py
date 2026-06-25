@@ -60,29 +60,6 @@ def _path_or_none(path: str | Path | None) -> Path | None:
     return Path(path).expanduser().resolve()
 
 
-def _default_freesurfer_home() -> Path | None:
-    """Return a likely FreeSurfer installation path, if one can be found."""
-    candidates: list[Path] = []
-
-    freesurfer_home = os.environ.get("FREESURFER_HOME")
-    if freesurfer_home:
-        candidates.append(Path(freesurfer_home).expanduser())
-
-    candidates.extend(
-        [
-            Path("/Applications/freesurfer/8.2.0"),
-            Path("/Applications/freesurfer"),
-            Path.home() / "freesurfer",
-        ]
-    )
-
-    for candidate in candidates:
-        if (candidate / "bin" / "recon-all").exists():
-            return candidate.resolve()
-
-    return None
-
-
 def _default_freesurfer_license() -> Path | None:
     """Return a likely FreeSurfer license path, if one exists."""
     candidates: list[Path] = []
@@ -281,7 +258,9 @@ def make_freesurfer_env(
 ) -> dict[str, str]:
     """Create an environment for FreeSurfer/MNE command-line tools."""
     subjects_dir = Path(subjects_dir).expanduser().resolve()
-    freesurfer_home = _path_or_none(freesurfer_home) or _default_freesurfer_home()
+    freesurfer_home = _path_or_none(
+        freesurfer_home or os.environ.get("FREESURFER_HOME") or "/Applications/freesurfer"
+    )
     mne_path = _path_or_none(mne_path)
 
     env = os.environ.copy()
@@ -1109,52 +1088,87 @@ def make_dense_scalp_surfaces(
     *,
     subjects_dir: str | Path,
     freesurfer_home: str | Path | None = None,
+    mne_path: str | Path | None = None,
     force: bool = True,
     overwrite: bool = True,
     verbose: bool | str | int | None = True,
-) -> AnatomyFileResult:
-    """Create dense scalp surfaces that help coregistration/QC."""
+) -> AnatomyFileResult | AnatomyCommandResult:
+    """Create dense scalp surfaces that help coregistration/QC.
+
+    This intentionally uses the ``mne make_scalp_surfaces`` command-line
+    wrapper instead of :func:`mne.bem.make_scalp_surfaces`. On macOS with
+    FreeSurfer 8.x, the Python call can fail inside ``mkheadsurf`` if
+    FreeSurfer helper binaries such as ``getpwdcmd`` are not present in the
+    subprocess environment. Running the MNE CLI with an explicit FreeSurfer
+    environment mirrors the older, proven project workflow and keeps the
+    notebook process environment untouched.
+    """
     subject = _subject_label(subject)
     subjects_dir = Path(subjects_dir).expanduser().resolve()
-    path = subjects_dir / subject / "bem"
+    bem_dir = subjects_dir / subject / "bem"
 
-    env = make_freesurfer_env(
-        subjects_dir=subjects_dir,
-        freesurfer_home=freesurfer_home,
-    )
+    expected_outputs = [
+        bem_dir / f"{subject}-head-dense.fif",
+        bem_dir / f"{subject}-head-medium.fif",
+        bem_dir / f"{subject}-head-sparse.fif",
+    ]
 
-    if "FREESURFER_HOME" not in env:
+    existing_outputs = [path for path in expected_outputs if path.exists()]
+    if existing_outputs and not overwrite:
         return AnatomyFileResult(
             subject=subject,
             step="dense_scalp_surfaces",
-            path=str(path),
+            path=str(existing_outputs[0]),
+            status="skipped_existing",
+            message="Dense scalp surfaces already exist.",
+        )
+
+    resolved_freesurfer_home = _path_or_none(
+        freesurfer_home or os.environ.get("FREESURFER_HOME") or "/Applications/freesurfer/8.2.0"
+    )
+    if resolved_freesurfer_home is None or not resolved_freesurfer_home.exists():
+        return AnatomyFileResult(
+            subject=subject,
+            step="dense_scalp_surfaces",
+            path=str(bem_dir),
             status="missing_freesurfer_home",
             message=(
                 "FREESURFER_HOME is required for dense scalp surface creation. "
-                "Set freesurfer.home in the project config or export "
-                "FREESURFER_HOME before running this step."
+                "Set freesurfer.home in the project config."
             ),
         )
 
-    old_env = os.environ.copy()
-    os.environ.update(env)
-    try:
-        mne_bem.make_scalp_surfaces(
-            subject=subject,
-            subjects_dir=subjects_dir,
-            force=force,
-            overwrite=overwrite,
-            verbose=verbose,
-        )
-    finally:
-        os.environ.clear()
-        os.environ.update(old_env)
+    command: list[str | Path] = [
+        "mne",
+        "make_scalp_surfaces",
+        f"--subject={subject}",
+    ]
+    if overwrite:
+        command.append("--overwrite")
+    if force:
+        command.append("--force")
 
-    return AnatomyFileResult(
+    env = make_freesurfer_env(
+        subjects_dir=subjects_dir,
+        freesurfer_home=resolved_freesurfer_home,
+        mne_path=mne_path,
+    )
+
+    returncode = run_streamed_subprocess(command, env=env)
+
+    existing_outputs = [path for path in expected_outputs if path.exists()]
+    output_path = existing_outputs[0] if existing_outputs else bem_dir
+    status = "written" if returncode == 0 else "failed"
+    message = None if returncode == 0 else "Dense scalp surface creation failed."
+
+    return AnatomyCommandResult(
         subject=subject,
         step="dense_scalp_surfaces",
-        path=str(path),
-        status="written",
+        path=str(output_path),
+        status=status,
+        message=message,
+        returncode=returncode,
+        command=_stringify_command(command),
     )
 
 

@@ -107,7 +107,7 @@ pip install -e ".[dev,qt,autoreject]"
 ```
 
 The `qt` extra installs the packages needed for interactive MNE browser windows,
-including `mne-qt-browser`, `pyqt6`, and `pyqtgraph`.
+including `mne-qt-browser`, `pyqt6`, `pyqtgraph`, and `pyvistaqt`.
 
 ### External anatomy tools
 
@@ -1300,23 +1300,96 @@ Use `sudo chown` only if the copied files are not owned by the current user.
 
 ### `04_coregistration.ipynb`
 
-This notebook opens the interactive MNE coregistration GUI for selected subjects
-or recordings.
+This notebook opens the interactive MNE coregistration GUI and creates one
+manual `*_trans.fif` transform per MEG/EEG recording. The transform links the
+digitized head points, HPI coils, and sensor geometry from the raw BIDS
+recording to the subject's FreeSurfer MRI anatomy.
 
-The notebook uses a raw BIDS recording as `inst` and the matching FreeSurfer
-subject as the MRI subject. It expects the user to save the transform to the
-printed derivative path.
+Coregistration is recording-based, not only subject-based. The raw BIDS file is
+passed to MNE as `inst`, so the matching digitization, head-shape, and HPI
+information are loaded automatically for each selected recording. For this
+reason, the notebook can run through pending recordings in a controlled batch
+mode, while still opening only one GUI window at a time.
 
-Example output:
+The GUI is opened with `block=True`. After the user closes the current GUI
+window, the notebook automatically writes the current transform to the printed
+`Transform target` path and then continues with the next pending recording. The
+user does not need to choose the output path manually in the GUI.
+
+Typical workflow:
+
+```text
+1. Keep MAX_COREGISTRATION_GUIS = 1 for the first test run.
+2. Open the GUI for the first pending recording.
+3. Perform the coregistration in the GUI.
+4. Do not use the GUI save button.
+5. Close the GUI window.
+6. If the GUI asks whether to save before closing, dismiss or ignore this warning.
+7. The notebook writes the transform automatically to the printed Transform target.
+8. Check that trans_exists_after is True.
+9. Set MAX_COREGISTRATION_GUIS = None to process all pending recordings.
+```
+
+The save warning from the GUI is expected in this workflow. MNE's GUI does not
+know that the notebook will write the transform after the window is closed. The
+notebook saves the transform explicitly with MNE after the GUI returns.
+
+Transforms are stored as pipeline derivatives:
 
 ```text
 derivatives/meeg-pipeline/sub-0001/meg/coregistration/
   sub-0001_task-rest_desc-coreg_trans.fif
 ```
 
-By default, the GUI is opened only when the expected `trans.fif` file does not
-exist. Add `"coregistration"` to `OVERWRITE_STEPS` to rerun coregistration for
-existing transforms.
+With sessions and runs, the corresponding entities are included:
+
+```text
+derivatives/meeg-pipeline/sub-0001/ses-20260523/meg/coregistration/
+  sub-0001_ses-20260523_task-rest_run-01_desc-coreg_trans.fif
+```
+
+FreeSurfer subjects should use a single `sub-...` prefix, for example
+`sub-0001`, not `sub-sub-0001`. The printed `Transform target` path should also
+contain only one `sub-...` prefix.
+
+Recommended quality guidelines:
+
+```text
+Fiducial distances:
+  Ideal: below 5 mm.
+  Acceptable: up to 10 mm if the head-shape fit is good.
+  If one fiducial is clearly higher than the others, adjust the fiducial point
+  in the MRI or digitized head shape if possible.
+
+HSP + HPI fit after ICP:
+  Mean below 2 mm is very good.
+  Example of an excellent fit: 1.4 ± 1.0 mm.
+
+HSP-to-MRI surface distance:
+  Mean below 2 mm is very good.
+  Maximum values below about 10 mm are usually acceptable when they represent
+  only a few outlier points.
+  Outlier points can often be deleted in the GUI before saving the transform.
+```
+
+Common troubleshooting:
+
+```text
+No valid 3D backend:
+  Install the qt extra and make sure pyvistaqt is available.
+
+No standard head model found:
+  Run the anatomy setup first and check that head-surface files exist under
+  derivatives/freesurfer/subjects/sub-*/bem/.
+
+GUI updates only after moving the camera:
+  This is usually a Qt/PyVista redraw issue. The selected point is updated
+  internally, but the 3D view may redraw only after a small camera movement.
+```
+
+By default, existing `trans.fif` files are skipped. Add `"coregistration"` to
+`OVERWRITE_STEPS` if you intentionally want to rerun and overwrite existing
+transforms.
 
 ## Event extraction and event derivation
 
@@ -2186,12 +2259,13 @@ Not yet implemented:
 
 ## Dense scalp surface dependency
 
-For dense scalp surface creation, the anatomy extra also installs VTK. MNE uses
-VTK to decimate the dense head surface into medium and sparse scalp surfaces. If
-`mne make_scalp_surfaces` fails with `No module named 'vtkmodules'` or `This
-function requires the VTK package`, install or update the anatomy extra:
+For dense scalp surface creation, the anatomy extra installs nibabel, VTK, and
+PyVista. MNE uses VTK/PyVista to decimate the dense head surface into medium and
+sparse scalp surfaces. If `mne make_scalp_surfaces` fails with `No module named 'vtkmodules'`,
+`No module named 'pyvista'`, or `This function requires the VTK package`, install
+or update the anatomy extra:
 
 ```bash
 pip install -e ".[dev,qt,autoreject,anatomy]"
-python -c "import vtkmodules; print('VTK available')"
+python -c "import nibabel, vtkmodules, pyvista; print('anatomy dependencies available')"
 ```

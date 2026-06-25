@@ -35,6 +35,7 @@ qt = [
     "mne-qt-browser",
     "pyqt6",
     "pyqtgraph",
+    "pyvistaqt",
 ]
 
 anatomy = [

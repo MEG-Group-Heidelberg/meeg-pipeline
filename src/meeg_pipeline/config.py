@@ -105,6 +105,35 @@ class SourcedataConfig:
 
 
 @dataclass(frozen=True)
+class EmptyRoomMatchingConfig:
+    strategy: Literal[
+        "auto",
+        "meas_date_nearest",
+        "session_exact",
+        "session_date_nearest",
+    ] = "meas_date_nearest"
+    max_time_diff_hours: float | None = None
+    allow_fallback: bool = True
+    fallback_strategy: Literal[
+        "meas_date_nearest",
+        "session_exact",
+        "session_date_nearest",
+    ] | None = "session_date_nearest"
+
+
+@dataclass(frozen=True)
+class EmptyRoomConfig:
+    enabled: bool = False
+    subject: str = "emptyroom"
+    task: str = "noise"
+    sourcedata_root: Path | None = None
+    sessions: Literal["from_folders"] = "from_folders"
+    session_pattern: str = "ses-*"
+    file_patterns: tuple[str, ...] = ("*.fif", "*.fif.gz")
+    matching: EmptyRoomMatchingConfig = EmptyRoomMatchingConfig()
+
+
+@dataclass(frozen=True)
 class FreeSurferConfig:
     home: Path | None = None
     subjects_dir: Path | None = None
@@ -201,6 +230,7 @@ class PipelineConfig:
     runtime: RuntimeConfig
     bids: BIDSConfig
     sourcedata: SourcedataConfig
+    empty_room: EmptyRoomConfig
     freesurfer: FreeSurferConfig
     anatomy: AnatomyConfig
     events: EventsConfig
@@ -481,6 +511,77 @@ def load_config(config_path: str | Path) -> PipelineConfig:
 
     sourcedata = SourcedataConfig(sessions=sourcedata_sessions)
 
+    empty_room_raw = raw.get("empty_room", {})
+    empty_room_matching_raw = empty_room_raw.get("matching", {})
+
+    empty_room_strategy = empty_room_matching_raw.get(
+        "strategy",
+        "meas_date_nearest",
+    )
+    if empty_room_strategy not in {
+        "auto",
+        "meas_date_nearest",
+        "session_exact",
+        "session_date_nearest",
+    }:
+        raise ValueError(
+            "empty_room.matching.strategy must be one of 'auto', "
+            "'meas_date_nearest', 'session_exact', or "
+            f"'session_date_nearest', got {empty_room_strategy!r}."
+        )
+
+    empty_room_fallback_strategy = empty_room_matching_raw.get(
+        "fallback_strategy",
+        "session_date_nearest",
+    )
+    if empty_room_fallback_strategy is not None and empty_room_fallback_strategy not in {
+        "meas_date_nearest",
+        "session_exact",
+        "session_date_nearest",
+    }:
+        raise ValueError(
+            "empty_room.matching.fallback_strategy must be null or one of "
+            "'meas_date_nearest', 'session_exact', or "
+            f"'session_date_nearest', got {empty_room_fallback_strategy!r}."
+        )
+
+    empty_room_sessions = empty_room_raw.get("sessions", "from_folders")
+    if empty_room_sessions not in {"from_folders"}:
+        raise ValueError(
+            "empty_room.sessions currently must be 'from_folders', "
+            f"got {empty_room_sessions!r}."
+        )
+
+    empty_room_sourcedata_root_raw = empty_room_raw.get(
+        "sourcedata_root",
+        "./sourcedata/emptyroom",
+    )
+    empty_room = EmptyRoomConfig(
+        enabled=bool(empty_room_raw.get("enabled", False)),
+        subject=str(empty_room_raw.get("subject", "emptyroom")).removeprefix("sub-"),
+        task=str(empty_room_raw.get("task", "noise")),
+        sourcedata_root=_resolve_path(
+            empty_room_sourcedata_root_raw,
+            base_dir=project_root,
+        ),
+        sessions=empty_room_sessions,
+        session_pattern=str(empty_room_raw.get("session_pattern", "ses-*")),
+        file_patterns=_str_tuple(
+            empty_room_raw.get("file_patterns", ["*.fif", "*.fif.gz"]),
+            ("*.fif", "*.fif.gz"),
+        ),
+        matching=EmptyRoomMatchingConfig(
+            strategy=empty_room_strategy,
+            max_time_diff_hours=_optional_float(
+                empty_room_matching_raw.get("max_time_diff_hours", None)
+            ),
+            allow_fallback=bool(
+                empty_room_matching_raw.get("allow_fallback", True)
+            ),
+            fallback_strategy=empty_room_fallback_strategy,
+        ),
+    )
+
     events_raw = raw.get("events", {})
     extraction_raw = events_raw.get("extraction", {})
 
@@ -583,6 +684,7 @@ def load_config(config_path: str | Path) -> PipelineConfig:
         runtime=runtime,
         bids=bids,
         sourcedata=sourcedata,
+        empty_room=empty_room,
         freesurfer=freesurfer,
         anatomy=anatomy,
         events=events,

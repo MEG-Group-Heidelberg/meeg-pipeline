@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
+import re
 from typing import Any, Iterable, Literal
 
 import mne
@@ -29,6 +31,7 @@ class SourceModelingPathResult:
     kind: str
     status: str
     message: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -693,6 +696,293 @@ def find_epochs_baseline_noise_input_path(
     )
 
 
+def _datetime_to_iso(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    return value.isoformat()
+
+
+def _datetime_from_info(info: mne.Info) -> datetime | None:
+    """Return measurement datetime from MNE info if available."""
+    meas_date = info.get("meas_date")
+    if meas_date is None:
+        return None
+    if isinstance(meas_date, datetime):
+        return meas_date if meas_date.tzinfo is not None else meas_date.replace(tzinfo=timezone.utc)
+    return None
+
+
+def _recording_datetime(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    task: str | None = None,
+    session: str | None = None,
+    run: str | None = None,
+) -> datetime | None:
+    """Read the measurement datetime from the preferred recording info input."""
+    info_input = find_info_input_path(
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
+    )
+    if info_input.status != "found":
+        return None
+    try:
+        info = _read_info_from_input(info_input.path, info_input.kind)
+    except Exception:  # noqa: BLE001 - matching should remain status-based.
+        return None
+    return _datetime_from_info(info)
+
+
+def _session_date(session: str | None) -> datetime | None:
+    """Parse BIDS session labels such as 20250313 or ses-20250313."""
+    if session is None:
+        return None
+    match = re.fullmatch(r"(?:ses-)?(\d{8})", str(session))
+    if match is None:
+        return None
+    try:
+        return datetime.strptime(match.group(1), "%Y%m%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _bids_empty_room_subject(config: PipelineConfig) -> str:
+    return str(getattr(config.empty_room, "subject", "emptyroom")).removeprefix("sub-")
+
+
+def _bids_empty_room_task(config: PipelineConfig) -> str:
+    return str(getattr(config.empty_room, "task", "noise"))
+
+
+def _parse_entity_from_filename(path: Path, entity: str) -> str | None:
+    prefix = f"{entity}-"
+    for part in path.name.split("_"):
+        if part.startswith(prefix):
+            value = part.removeprefix(prefix)
+            if entity == "run":
+                value = value.split("_")[0]
+            return value.split(".")[0]
+    return None
+
+
+def _parse_session_from_empty_room_path(path: Path) -> str | None:
+    for part in path.parts:
+        if part.startswith("ses-"):
+            return part.removeprefix("ses-")
+    return _parse_entity_from_filename(path, "ses")
+
+
+def _parse_run_from_empty_room_path(path: Path) -> str | None:
+    return _parse_entity_from_filename(path, "run")
+
+
+def _empty_room_bids_candidates(config: PipelineConfig) -> list[dict[str, Any]]:
+    """Find BIDS empty-room FIF candidates under the raw BIDS root."""
+    root = config.paths.bids_root
+    subject = _bids_empty_room_subject(config)
+    task = _bids_empty_room_task(config)
+    subject_dir = root / f"sub-{subject}"
+
+    if not subject_dir.exists():
+        return []
+
+    files = sorted(subject_dir.glob("**/meg/*.fif*"))
+    candidates: list[dict[str, Any]] = []
+
+    for path in files:
+        if not path.is_file():
+            continue
+        filename_task = _parse_entity_from_filename(path, "task")
+        if filename_task is not None and filename_task != task:
+            continue
+        if filename_task is None and f"task-{task}" not in path.name:
+            # Be tolerant but prefer task-noise files in BIDS-like trees.
+            continue
+
+        session = _parse_session_from_empty_room_path(path)
+        run = _parse_run_from_empty_room_path(path)
+        meas_date = None
+        try:
+            raw = mne.io.read_raw_fif(path, preload=False, verbose="error")
+            meas_date = _datetime_from_info(raw.info)
+        except Exception:  # noqa: BLE001 - candidate discovery should continue.
+            meas_date = None
+
+        candidates.append(
+            {
+                "path": path,
+                "subject": subject,
+                "session": session,
+                "task": task,
+                "run": run,
+                "meas_date": meas_date,
+                "session_date": _session_date(session),
+            }
+        )
+
+    return candidates
+
+
+def _candidate_date(candidate: dict[str, Any]) -> datetime | None:
+    return candidate.get("meas_date") or candidate.get("session_date")
+
+
+def _format_time_diff_hours(value: float | None) -> float | None:
+    if value is None:
+        return None
+    return round(float(value), 6)
+
+
+def _result_from_empty_room_candidate(
+    candidate: dict[str, Any],
+    *,
+    status: str,
+    message: str,
+    strategy: str,
+    recording_meas_date: datetime | None,
+    time_diff_hours: float | None,
+) -> SourceModelingPathResult:
+    return SourceModelingPathResult(
+        path=str(candidate["path"]),
+        kind="erm",
+        status=status,
+        message=message,
+        metadata={
+            "match_strategy": strategy,
+            "recording_meas_date": _datetime_to_iso(recording_meas_date),
+            "selected_erm_session": candidate.get("session"),
+            "selected_erm_run": candidate.get("run"),
+            "selected_erm_meas_date": _datetime_to_iso(candidate.get("meas_date")),
+            "selected_erm_session_date": _datetime_to_iso(candidate.get("session_date")),
+            "time_diff_hours": _format_time_diff_hours(time_diff_hours),
+        },
+    )
+
+
+def _check_max_time_diff(
+    config: PipelineConfig,
+    time_diff_hours: float | None,
+) -> str | None:
+    max_hours = getattr(config.empty_room.matching, "max_time_diff_hours", None)
+    if max_hours is None or time_diff_hours is None:
+        return None
+    if time_diff_hours > float(max_hours):
+        return (
+            f"Nearest empty-room recording is {time_diff_hours:.2f} h away, "
+            f"which exceeds max_time_diff_hours={float(max_hours):.2f}."
+        )
+    return None
+
+
+def _match_empty_room_by_meas_date(
+    config: PipelineConfig,
+    candidates: list[dict[str, Any]],
+    *,
+    recording_meas_date: datetime | None,
+) -> SourceModelingPathResult | None:
+    if recording_meas_date is None:
+        return None
+
+    dated = [candidate for candidate in candidates if _candidate_date(candidate) is not None]
+    if not dated:
+        return None
+
+    selected = min(
+        dated,
+        key=lambda candidate: abs(_candidate_date(candidate) - recording_meas_date),
+    )
+    selected_date = _candidate_date(selected)
+    diff_hours = abs((selected_date - recording_meas_date).total_seconds()) / 3600.0
+    max_message = _check_max_time_diff(config, diff_hours)
+    if max_message is not None:
+        return SourceModelingPathResult(
+            path="",
+            kind="erm",
+            status="missing",
+            message=max_message,
+            metadata={
+                "match_strategy": "meas_date_nearest",
+                "recording_meas_date": _datetime_to_iso(recording_meas_date),
+                "selected_erm_session": selected.get("session"),
+                "selected_erm_run": selected.get("run"),
+                "selected_erm_meas_date": _datetime_to_iso(selected.get("meas_date")),
+                "selected_erm_session_date": _datetime_to_iso(selected.get("session_date")),
+                "time_diff_hours": _format_time_diff_hours(diff_hours),
+            },
+        )
+
+    return _result_from_empty_room_candidate(
+        selected,
+        status="found",
+        message=f"Selected nearest empty-room recording by measurement date ({diff_hours:.2f} h).",
+        strategy="meas_date_nearest",
+        recording_meas_date=recording_meas_date,
+        time_diff_hours=diff_hours,
+    )
+
+
+def _match_empty_room_by_session_exact(
+    candidates: list[dict[str, Any]],
+    *,
+    recording_session: str | None,
+    recording_meas_date: datetime | None,
+) -> SourceModelingPathResult | None:
+    if recording_session is None:
+        return None
+
+    matching = [candidate for candidate in candidates if candidate.get("session") == recording_session]
+    if not matching:
+        return None
+
+    selected = sorted(matching, key=lambda candidate: str(candidate["path"]))[0]
+    diff_hours = None
+    if recording_meas_date is not None and _candidate_date(selected) is not None:
+        diff_hours = abs((_candidate_date(selected) - recording_meas_date).total_seconds()) / 3600.0
+
+    return _result_from_empty_room_candidate(
+        selected,
+        status="found",
+        message="Selected empty-room recording by exact BIDS session match.",
+        strategy="session_exact",
+        recording_meas_date=recording_meas_date,
+        time_diff_hours=diff_hours,
+    )
+
+
+def _match_empty_room_by_session_date(
+    candidates: list[dict[str, Any]],
+    *,
+    recording_session: str | None,
+    recording_meas_date: datetime | None,
+) -> SourceModelingPathResult | None:
+    recording_session_date = _session_date(recording_session)
+    if recording_session_date is None:
+        return None
+
+    dated = [candidate for candidate in candidates if candidate.get("session_date") is not None]
+    if not dated:
+        return None
+
+    selected = min(
+        dated,
+        key=lambda candidate: abs(candidate["session_date"] - recording_session_date),
+    )
+    diff_hours = abs((selected["session_date"] - recording_session_date).total_seconds()) / 3600.0
+
+    return _result_from_empty_room_candidate(
+        selected,
+        status="found",
+        message="Selected nearest empty-room recording by date-like session label.",
+        strategy="session_date_nearest",
+        recording_meas_date=recording_meas_date,
+        time_diff_hours=diff_hours,
+    )
+
+
 def find_empty_room_noise_input_path(
     config: PipelineConfig,
     *,
@@ -701,21 +991,92 @@ def find_empty_room_noise_input_path(
     session: str | None = None,
     run: str | None = None,
 ) -> SourceModelingPathResult:
-    """Find an empty-room recording for covariance estimation.
+    """Find the BIDS empty-room recording matched to one recording.
 
-    Empty-room discovery is intentionally conservative for now. The project
-    convention is documented, but the BIDS matching logic will be added in a
-    dedicated patch. Until then, ERM mode reports a status value instead of
-    aborting source-modeling batches.
+    Supported matching strategies are configured under
+    ``empty_room.matching.strategy``:
+
+    - ``meas_date_nearest``: nearest empty-room measurement datetime
+    - ``session_exact``: identical BIDS session label
+    - ``session_date_nearest``: nearest date-like session label
+    - ``auto``: try measurement date, exact session, then session date
     """
+    if not getattr(config.empty_room, "enabled", False):
+        return SourceModelingPathResult(
+            path="",
+            kind="erm",
+            status="missing",
+            message="empty_room.enabled is false in the config.",
+        )
+
+    candidates = _empty_room_bids_candidates(config)
+    if not candidates:
+        return SourceModelingPathResult(
+            path="",
+            kind="erm",
+            status="missing",
+            message=(
+                "No BIDS empty-room FIF files found. Run the empty-room block "
+                "in 1B_meg_preprocessing/01_raw_bids_and_events.ipynb first."
+            ),
+        )
+
+    recording_meas_date = _recording_datetime(
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
+    )
+    strategy = getattr(config.empty_room.matching, "strategy", "meas_date_nearest")
+
+    strategies = [strategy]
+    if strategy == "auto":
+        strategies = ["meas_date_nearest", "session_exact", "session_date_nearest"]
+    elif getattr(config.empty_room.matching, "allow_fallback", True):
+        fallback = getattr(config.empty_room.matching, "fallback_strategy", None)
+        if fallback is not None and fallback not in strategies:
+            strategies.append(fallback)
+
+    for current_strategy in strategies:
+        if current_strategy == "meas_date_nearest":
+            result = _match_empty_room_by_meas_date(
+                config,
+                candidates,
+                recording_meas_date=recording_meas_date,
+            )
+        elif current_strategy == "session_exact":
+            result = _match_empty_room_by_session_exact(
+                candidates,
+                recording_session=session,
+                recording_meas_date=recording_meas_date,
+            )
+        elif current_strategy == "session_date_nearest":
+            result = _match_empty_room_by_session_date(
+                candidates,
+                recording_session=session,
+                recording_meas_date=recording_meas_date,
+            )
+        else:
+            result = None
+
+        if result is not None and result.status == "found":
+            return result
+        if result is not None and result.status != "found":
+            return result
+
     return SourceModelingPathResult(
         path="",
         kind="erm",
         status="missing",
         message=(
-            "Empty-room discovery is not implemented yet. "
-            "Use mode='epochs_baseline' to continue without ERM data."
+            "No empty-room recording could be matched with strategy "
+            f"{strategy!r}."
         ),
+        metadata={
+            "match_strategy": strategy,
+            "recording_meas_date": _datetime_to_iso(recording_meas_date),
+        },
     )
 
 
@@ -813,23 +1174,23 @@ def noise_covariance_input_overview_to_dataframe(
             status = "ready"
             message = noise_input.message
 
-        rows.append(
-            {
-                "subject": _subject_label(subject),
-                "session": session,
-                "task": task,
-                "run": run,
-                "status": status,
-                "message": message,
-                "mode": mode,
-                "data_input_kind": noise_input.kind,
-                "data_input_exists": noise_input.status == "found",
-                "data_input": noise_input.path,
-                "cov_exists": cov_path.exists(),
-                "cov_path": str(cov_path),
-                "overwrite": on_existing == "overwrite",
-            }
-        )
+        row = {
+            "subject": _subject_label(subject),
+            "session": session,
+            "task": task,
+            "run": run,
+            "status": status,
+            "message": message,
+            "mode": mode,
+            "data_input_kind": noise_input.kind,
+            "data_input_exists": noise_input.status == "found",
+            "data_input": noise_input.path,
+            "cov_exists": cov_path.exists(),
+            "cov_path": str(cov_path),
+            "overwrite": on_existing == "overwrite",
+        }
+        row.update(noise_input.metadata)
+        rows.append(row)
 
     return pd.DataFrame(rows)
 
@@ -869,6 +1230,60 @@ def _compute_ad_hoc_covariance(
     info = _read_info_from_input(info_path, info_kind)
     return mne.make_ad_hoc_cov(info)
 
+
+
+def _apply_configured_empty_room_filtering(
+    raw: mne.io.BaseRaw,
+    config: PipelineConfig,
+    *,
+    verbose: bool | str | int | None = True,
+) -> mne.io.BaseRaw:
+    """Apply project-compatible basic filtering to an empty-room raw object."""
+    filtering = config.preprocessing.filtering
+
+    if filtering.notch_freqs:
+        raw.notch_filter(
+            freqs=list(filtering.notch_freqs),
+            method=filtering.method,
+            verbose=verbose,
+        )
+
+    if filtering.l_freq is not None or filtering.h_freq is not None:
+        raw.filter(
+            l_freq=filtering.l_freq,
+            h_freq=filtering.h_freq,
+            method=filtering.method,
+            verbose=verbose,
+        )
+
+    return raw
+
+
+def _match_covariance_to_info(cov: mne.Covariance, info: mne.Info) -> mne.Covariance:
+    """Restrict and order covariance channels to match recording info."""
+    include = [name for name in info["ch_names"] if name in cov["names"]]
+    if not include:
+        raise ValueError("No overlapping channels between ERM covariance and recording info.")
+    return mne.pick_channels_cov(cov, include=include, exclude=[], ordered=True)
+
+
+def _compute_empty_room_covariance(
+    config: PipelineConfig,
+    empty_room_path: str | Path,
+    info_path: str | Path,
+    info_kind: str,
+    *,
+    method: str | list[str] | None = "empirical",
+    rank: str | dict[str, int] | None = None,
+    verbose: bool | str | int | None = True,
+) -> mne.Covariance:
+    """Compute a noise covariance matrix from a BIDS empty-room raw FIF file."""
+    raw = mne.io.read_raw_fif(empty_room_path, preload=True, verbose=verbose)
+    raw.pick_types(meg=True, eeg=False, stim=False, eog=False, ecg=False, exclude=[])
+    raw = _apply_configured_empty_room_filtering(raw, config, verbose=verbose)
+    cov = mne.compute_raw_covariance(raw, method=method, rank=rank, verbose=verbose)
+    info = _read_info_from_input(info_path, info_kind)
+    return _match_covariance_to_info(cov, info)
 
 def write_noise_covariance_for_recording(
     config: PipelineConfig,
@@ -930,6 +1345,29 @@ def write_noise_covariance_for_recording(
         cov = _compute_epochs_baseline_covariance(
             config,
             overview["data_input"],
+            method=method,
+            rank=rank,
+            verbose=verbose,
+        )
+    elif mode == "erm":
+        info_input = find_info_input_path(config, **entities)
+        if info_input.status != "found":
+            return NoiseCovarianceResult(
+                subject=_subject_label(subject),
+                session=session,
+                task=task,
+                run=run,
+                path=str(cov_path),
+                status="missing_info",
+                mode=mode,
+                data_input=str(overview["data_input"]),
+                message="No recording info input found for ERM channel matching.",
+            )
+        cov = _compute_empty_room_covariance(
+            config,
+            overview["data_input"],
+            info_input.path,
+            info_input.kind,
             method=method,
             rank=rank,
             verbose=verbose,

@@ -303,3 +303,182 @@ def make_target_bids_path(config: PipelineConfig, recording: SourceRecording):
         run=recording.run,
         extension=".fif",
     )
+
+
+@dataclass(frozen=True)
+class EmptyRoomSourceRecording:
+    """One original empty-room source FIF file."""
+
+    source_path: Path
+    session: str
+    task: str
+    run: str | None = None
+    source_session: str | None = None
+
+
+def _strip_session_prefix(session: str) -> str:
+    return str(session).removeprefix("ses-")
+
+
+def _strip_run_prefix(run: str) -> str:
+    return str(run).removeprefix("run-")
+
+
+def _run_from_path(path: Path) -> str | None:
+    """Infer a BIDS run label from a path component or filename if present."""
+    for part in path.parts:
+        if part.startswith("run-"):
+            return _strip_run_prefix(part)
+
+    for token in path.stem.replace("_", "-").split("-"):
+        if token.isdigit() and "run" in path.stem.lower():
+            return token.zfill(2) if len(token) == 1 else token
+
+    return None
+
+
+def discover_empty_room_source_recordings(
+    config: PipelineConfig,
+) -> list[EmptyRoomSourceRecording]:
+    """Find empty-room source FIF files from ``empty_room.sourcedata_root``.
+
+    The source filename may be arbitrary. The session is inferred from the
+    ``ses-*`` folder directly below ``sourcedata/emptyroom``. Runs are optional
+    and may be encoded as a ``run-*`` folder or in the filename.
+    """
+    recordings, _issues = discover_empty_room_source_recordings_with_issues(config)
+    return recordings
+
+
+def discover_empty_room_source_recordings_with_issues(
+    config: PipelineConfig,
+) -> tuple[list[EmptyRoomSourceRecording], list[SourceDiscoveryIssue]]:
+    empty_room = getattr(config, "empty_room", None)
+
+    if empty_room is None or not getattr(empty_room, "enabled", False):
+        return [], []
+
+    root = empty_room.sourcedata_root
+    if root is None or not Path(root).exists():
+        return [], [
+            SourceDiscoveryIssue(
+                path=str(root),
+                status="missing_input",
+                message="Empty-room sourcedata directory does not exist.",
+            )
+        ]
+
+    recordings: list[EmptyRoomSourceRecording] = []
+    issues: list[SourceDiscoveryIssue] = []
+    seen: set[Path] = set()
+
+    for session_dir in sorted(Path(root).glob(empty_room.session_pattern)):
+        if not session_dir.is_dir():
+            continue
+
+        session = _strip_session_prefix(session_dir.name)
+        candidate_files: list[Path] = []
+        for pattern in empty_room.file_patterns:
+            candidate_files.extend(session_dir.rglob(pattern))
+
+        files = sorted({candidate.resolve() for candidate in candidate_files if candidate.is_file()})
+
+        if not files:
+            issues.append(
+                SourceDiscoveryIssue(
+                    path=str(session_dir),
+                    status="missing_input",
+                    message="No empty-room FIF file found in session folder.",
+                )
+            )
+            continue
+
+        # If several files exist and none has a run label, report an ambiguity
+        # instead of silently creating duplicate BIDS targets.
+        runs = [_run_from_path(file) for file in files]
+        if len(files) > 1 and any(run is None for run in runs):
+            issues.append(
+                SourceDiscoveryIssue(
+                    path=str(session_dir),
+                    status="ambiguous_input",
+                    message=(
+                        "Multiple empty-room FIF files found but not all have "
+                        "a run label. Add run-* folders or run-* filenames."
+                    ),
+                )
+            )
+            continue
+
+        for file, run in zip(files, runs):
+            if file in seen:
+                continue
+            seen.add(file)
+            recordings.append(
+                EmptyRoomSourceRecording(
+                    source_path=file,
+                    session=session,
+                    task=empty_room.task,
+                    run=run,
+                    source_session=session,
+                )
+            )
+
+    return recordings, issues
+
+
+def make_empty_room_target_bids_path(
+    config: PipelineConfig,
+    recording: EmptyRoomSourceRecording,
+):
+    """Return the raw BIDS target path for one empty-room source recording."""
+    empty_room = config.empty_room
+    return make_bids_path(
+        config,
+        subject=empty_room.subject,
+        session=recording.session,
+        task=recording.task,
+        run=recording.run,
+        extension=".fif",
+    )
+
+
+def empty_room_sourcedata_overview_to_dataframe(config: PipelineConfig):
+    """Return a notebook-friendly overview of empty-room source files."""
+    import pandas as pd
+
+    recordings, issues = discover_empty_room_source_recordings_with_issues(config)
+    rows: list[dict[str, str | bool | None]] = []
+
+    for recording in recordings:
+        target = make_empty_room_target_bids_path(config, recording)
+        rows.append(
+            {
+                "kind": "emptyroom",
+                "session": recording.session,
+                "task": recording.task,
+                "run": recording.run,
+                "source_path": str(recording.source_path),
+                "target_path": str(target.fpath),
+                "target_exists": target.fpath.exists(),
+                "status": "found",
+                "message": "",
+            }
+        )
+
+    for issue in issues:
+        rows.append(
+            {
+                "kind": "emptyroom",
+                "session": None,
+                "task": getattr(config.empty_room, "task", "noise"),
+                "run": None,
+                "source_path": issue.path,
+                "target_path": "",
+                "target_exists": False,
+                "status": issue.status,
+                "message": issue.message,
+            }
+        )
+
+    return pd.DataFrame(rows)
+

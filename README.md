@@ -402,6 +402,22 @@ freesurfer:
 
 sourcedata:
   sessions: "ignore"  # "ignore" | "include" | "auto"
+
+empty_room:
+  enabled: true
+  subject: "emptyroom"
+  task: "noise"
+  sourcedata_root: "./sourcedata/emptyroom"
+  sessions: "from_folders"
+  session_pattern: "ses-*"
+  file_patterns:
+    - "*.fif"
+    - "*.fif.gz"
+  matching:
+    strategy: "meas_date_nearest"  # "auto" | "meas_date_nearest" | "session_exact" | "session_date_nearest"
+    max_time_diff_hours: 24
+    allow_fallback: true
+    fallback_strategy: "session_date_nearest"
 ```
 
 If original source files live on an external drive or outside the project folder,
@@ -532,28 +548,141 @@ may fall back to baseline covariance from cleaned epochs or, for technical tests
 only, an ad-hoc covariance matrix. Missing empty-room inputs should be reported
 as status values instead of aborting an entire batch workflow.
 
-Store empty-room recordings in the raw BIDS tree using a dedicated empty-room
-subject and acquisition-date session:
+### Empty-room source data
+
+Store original empty-room recordings under `sourcedata/emptyroom/`. The source
+filename itself may be arbitrary; the session is inferred from the `ses-*`
+folder. This mirrors the regular source-data principle that folder structure,
+not original filenames, defines pipeline entities.
+
+Recommended source layout:
 
 ```text
-rawdata/
-  sub-emptyroom/
+sourcedata/
+  emptyroom/
     ses-YYYYMMDD/
-      meg/
-        sub-emptyroom_ses-YYYYMMDD_task-noise_meg.fif
-        sub-emptyroom_ses-YYYYMMDD_task-noise_channels.tsv
-        sub-emptyroom_ses-YYYYMMDD_task-noise_meg.json
+      <original_empty_room_file>.fif
 ```
 
-If multiple empty-room recordings exist for the same day, add runs:
+Example:
 
 ```text
-rawdata/
-  sub-emptyroom/
-    ses-YYYYMMDD/
-      meg/
-        sub-emptyroom_ses-YYYYMMDD_task-noise_run-01_meg.fif
-        sub-emptyroom_ses-YYYYMMDD_task-noise_run-02_meg.fif
+sourcedata/
+  emptyroom/
+    ses-20250305/
+      4859_erm-raw.fif
+    ses-20250313/
+      1409_erm-raw.fif
+    ses-20250430/
+      2827_erm-raw.fif
+```
+
+If multiple empty-room recordings exist for the same day, encode runs either as
+run folders or in the filename:
+
+```text
+sourcedata/
+  emptyroom/
+    ses-20250313/
+      run-01/
+        <original_empty_room_file>.fif
+      run-02/
+        <original_empty_room_file>.fif
+```
+
+or:
+
+```text
+sourcedata/
+  emptyroom/
+    ses-20250313/
+      run-01_emptyroom.fif
+      run-02_emptyroom.fif
+```
+
+The raw BIDS/event notebook converts these source files to a dedicated BIDS
+empty-room subject. Empty-room recordings do not require `events.tsv` files.
+
+### Empty-room raw BIDS output
+
+After import, empty-room recordings are stored in the raw BIDS tree using a
+dedicated empty-room subject and acquisition-date session:
+
+```text
+sub-emptyroom/
+  ses-YYYYMMDD/
+    meg/
+      sub-emptyroom_ses-YYYYMMDD_task-noise_meg.fif
+      sub-emptyroom_ses-YYYYMMDD_task-noise_channels.tsv
+      sub-emptyroom_ses-YYYYMMDD_task-noise_meg.json
+```
+
+If multiple empty-room recordings exist for the same day, BIDS runs are added:
+
+```text
+sub-emptyroom/
+  ses-YYYYMMDD/
+    meg/
+      sub-emptyroom_ses-YYYYMMDD_task-noise_run-01_meg.fif
+      sub-emptyroom_ses-YYYYMMDD_task-noise_run-02_meg.fif
+```
+
+### Empty-room config
+
+Empty-room import and matching are configured separately from regular subject
+source-data session handling:
+
+```yaml
+empty_room:
+  enabled: true
+  subject: "emptyroom"
+  task: "noise"
+  sourcedata_root: "./sourcedata/emptyroom"
+  sessions: "from_folders"
+  session_pattern: "ses-*"
+  file_patterns:
+    - "*.fif"
+    - "*.fif.gz"
+  matching:
+    strategy: "meas_date_nearest"
+    max_time_diff_hours: 24
+    allow_fallback: true
+    fallback_strategy: "session_date_nearest"
+```
+
+Supported matching strategies for source modeling are:
+
+```text
+meas_date_nearest:
+  Match each recording to the empty-room recording with the nearest FIF
+  raw.info["meas_date"]. This is the recommended default when measurement dates
+  are preserved in the FIF files.
+
+session_exact:
+  Match by identical BIDS session labels. This is useful for projects where
+  subject recordings and empty-room recordings deliberately share session names,
+  such as ses-001 or ses-20250313.
+
+session_date_nearest:
+  Interpret session labels of the form ses-YYYYMMDD as dates and select the
+  nearest empty-room session date.
+
+auto:
+  Try measurement-date matching first, then exact session matching, then
+  date-like session matching.
+```
+
+For one-session projects, regular subject recordings may remain sessionless in
+BIDS while empty-room recordings use date-like sessions. In that case,
+`meas_date_nearest` can still match subject recordings to empty-room recordings
+because the recording date is read from the FIF metadata rather than from the
+BIDS session label.
+
+The source configuration controls which covariance mode is used:
+
+```yaml
+source:
+  noise_cov_mode: "erm"
 ```
 
 Empty-room data should be processed with a strategy compatible with the analyzed
@@ -561,15 +690,6 @@ MEG recordings, including comparable channel selection, filtering, bad-channel
 handling, and any project-specific preprocessing decisions that affect the data
 rank. Source-space workflows then match the covariance channels to the recording
 used for the forward and inverse operators.
-
-The source configuration controls how covariance inputs are selected:
-
-```yaml
-source:
-  noise_cov_mode: "erm"
-  # Optional future fallback:
-  # fallback_noise_cov_mode: "epochs_baseline"
-```
 
 ## Source modeling derivatives
 
@@ -711,6 +831,21 @@ The pipeline uses the folder structure to infer BIDS entities such as subject,
 source session, task, and run. If `sourcedata.sessions` is `ignore`, the source
 session is retained in source-discovery summaries but not written to raw BIDS
 filenames.
+
+Empty-room source data are handled separately from regular subject source data.
+They live under `sourcedata/emptyroom` and always use session folders to encode
+acquisition dates or matching labels:
+
+```text
+sourcedata/
+  emptyroom/
+    ses-YYYYMMDD/
+      <original_empty_room_file>.fif
+```
+
+These files are converted by `1B_meg_preprocessing/01_raw_bids_and_events.ipynb`
+to `sub-emptyroom/ses-YYYYMMDD/meg/` in the raw BIDS tree. The original empty-room
+filename is arbitrary.
 
 ### MRI inputs
 
@@ -1877,9 +2012,11 @@ Suggested roles:
   Opens the interactive MNE coregistration GUI and stores trans.fif derivatives.
 
 1B_meg_preprocessing/01_raw_bids_and_events.ipynb
-  Active raw-data and bad-channel notebook.
-  Discovers sourcedata, converts to raw BIDS, extracts trigger-derived events,
-  inspects channels, performs manual bad-channel QC, and updates channels.tsv.
+  Active raw-data, empty-room import, and bad-channel notebook.
+  Discovers regular sourcedata, converts it to raw BIDS, imports empty-room
+  recordings as `sub-emptyroom`, extracts trigger-derived events for regular
+  task recordings, inspects channels, performs manual bad-channel QC, and
+  updates channels.tsv.
 
 1B_meg_preprocessing/02_project_specific_events.ipynb
   Optional event-derivation notebook.
@@ -2020,6 +2157,9 @@ freesurfer_provenance:
 convert_to_bids:
   skip / overwrite
 
+empty_room_to_bids:
+  skip / overwrite
+
 events:
   skip / overwrite
 
@@ -2048,6 +2188,12 @@ epochs:
   skip / overwrite
 
 evokeds:
+  skip / overwrite
+
+forward:
+  skip / overwrite
+
+noise_covariance:
   skip / overwrite
 ```
 
@@ -2337,6 +2483,7 @@ Currently implemented:
 - BIDSPath construction
 - sourcedata discovery
 - conversion from `sourcedata_root` to raw BIDS
+- empty-room sourcedata discovery and conversion to `sub-emptyroom` raw BIDS
 - MRI conversion helpers for DICOM/NIfTI/MGZ preparation
 - FreeSurfer recon-all helpers
 - FreeSurfer software provenance documentation
@@ -2372,8 +2519,7 @@ Currently implemented:
 Not yet implemented:
 
 - SSP / empty-room based cleaning
-- forward solution workflow
-- noise covariance workflow
+- inverse operator workflow
 - inverse operator workflow
 - source estimates
 - source morphing to fsaverage

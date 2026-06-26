@@ -16,6 +16,146 @@ ExistingOutputPolicy = Literal["skip", "overwrite"]
 ManualDecisionPolicy = Literal["load", "overwrite"]
 
 
+
+def normalize_recording_subject(subject: str | None) -> str | None:
+    """Normalize a BIDS subject value by removing an optional ``sub-`` prefix."""
+    if subject is None:
+        return None
+
+    return str(subject).removeprefix("sub-")
+
+
+def empty_room_subject(config: PipelineConfig) -> str:
+    """Return the configured empty-room subject label without ``sub-`` prefix."""
+    empty_room_config = getattr(config, "empty_room", None)
+    subject = getattr(empty_room_config, "subject", "emptyroom")
+    return normalize_recording_subject(subject) or "emptyroom"
+
+
+def empty_room_task(config: PipelineConfig) -> str:
+    """Return the configured empty-room task label."""
+    empty_room_config = getattr(config, "empty_room", None)
+    task = getattr(empty_room_config, "task", "noise")
+    return str(task)
+
+
+def is_empty_room_subject(
+    subject: str | None,
+    config: PipelineConfig,
+) -> bool:
+    """Return whether *subject* refers to the configured empty-room subject."""
+    return normalize_recording_subject(subject) == empty_room_subject(config)
+
+
+def is_empty_room_recording(
+    recording: Recording,
+    config: PipelineConfig,
+) -> bool:
+    """Return whether a recording dictionary refers to an empty-room recording."""
+    return is_empty_room_subject(recording.get("subject"), config)
+
+
+def _selection_is_all(selection: EntitySelection) -> bool:
+    """Return whether a notebook entity selection requests all available values."""
+    if selection == "all":
+        return True
+
+    if isinstance(selection, (list, tuple, set)):
+        return "all" in selection
+
+    return False
+
+
+def _selection_matches_value(
+    config: PipelineConfig,
+    entity: str,
+    selection: EntitySelection,
+    value: str | None,
+) -> bool:
+    """Return whether one concrete BIDS entity value matches a selection."""
+    if _selection_is_all(selection):
+        return True
+
+    if selection is None:
+        return value is None
+
+    wanted = resolve_entity_values(config, entity, selection)
+    return value in wanted
+
+
+def _raw_bids_recording_from_path(path: Path) -> Recording | None:
+    """Extract subject/session/task/run entities from a raw BIDS FIF path."""
+    subject = None
+    session = None
+    task = None
+    run = None
+
+    for part in path.parts:
+        if part.startswith("sub-"):
+            subject = part.removeprefix("sub-")
+        elif part.startswith("ses-"):
+            session = part.removeprefix("ses-")
+
+    for part in path.name.split("_"):
+        if part.startswith("sub-"):
+            subject = part.removeprefix("sub-")
+        elif part.startswith("ses-"):
+            session = part.removeprefix("ses-")
+        elif part.startswith("task-"):
+            task = part.removeprefix("task-")
+        elif part.startswith("run-"):
+            run = part.removeprefix("run-")
+
+    if subject is None:
+        return None
+
+    return {
+        "subject": subject,
+        "session": session,
+        "task": task,
+        "run": run,
+    }
+
+
+def list_raw_bids_recordings(
+    config: PipelineConfig,
+    *,
+    include_empty_room: bool = False,
+) -> list[Recording]:
+    """List concrete raw BIDS MEG recordings that actually exist on disk.
+
+    Unlike taking the cartesian product of all observed BIDS entity values, this
+    returns only combinations that correspond to existing ``*_meg.fif`` files.
+    Empty-room recordings are excluded by default because regular preprocessing,
+    event generation, anatomy, and source-modeling notebooks should operate on
+    experimental recordings only. ERM-specific code discovers and matches
+    empty-room recordings separately.
+    """
+    root = config.paths.bids_root
+    if not root.exists():
+        return []
+
+    recordings: dict[tuple[str | None, str | None, str | None, str | None], Recording] = {}
+
+    for path in sorted(root.glob("sub-*/**/*_meg.fif")):
+        recording = _raw_bids_recording_from_path(path)
+        if recording is None:
+            continue
+
+        if is_empty_room_recording(recording, config) and not include_empty_room:
+            continue
+
+        key = (
+            recording.get("subject"),
+            recording.get("session"),
+            recording.get("task"),
+            recording.get("run"),
+        )
+        recordings[key] = recording
+
+    return list(recordings.values())
+
+
 def as_set(value: Any) -> set[Any]:
     """Return *value* as a set.
 
@@ -113,23 +253,72 @@ def iter_recordings(
     sessions: EntitySelection = "all",
     tasks: EntitySelection = "all",
     runs: EntitySelection = "all",
+    include_empty_room: bool = False,
 ) -> Iterable[Recording]:
     """Yield concrete subject/session/task/run combinations.
 
-    Notebook defaults should normally use ``"all"`` for optional entities.
-    For an entity that is not used in a project, ``"all"`` resolves to
-    ``[None]``. This keeps the same notebook usable for projects with and
-    without sessions, tasks, or runs.
+    When one or more entities are selected as ``"all"``, existing raw BIDS
+    files are used as the source of truth. This avoids artificial combinations
+    such as ``sub-emptyroom`` with ``task-chords`` or normal subjects with
+    empty-room sessions.
 
-    The yielded dictionaries are accepted by high-level pipeline functions that
-    expect ``subject``, ``session``, ``task``, and ``run`` keys.
+    Empty-room recordings are excluded by default because regular notebooks
+    should operate on experimental recordings. ERM-specific workflows discover
+    and match empty-room recordings separately. Pass
+    ``include_empty_room=True`` only for diagnostics that explicitly need to
+    list empty-room raw BIDS files.
+
+    If no raw BIDS recordings exist yet, the function falls back to the previous
+    cartesian-product behavior so early-stage notebooks remain usable before
+    conversion.
     """
+    use_existing_recordings = any(
+        _selection_is_all(selection)
+        for selection in (subjects, sessions, tasks, runs)
+    )
+
+    if use_existing_recordings:
+        existing_recordings = list_raw_bids_recordings(
+            config,
+            include_empty_room=include_empty_room,
+        )
+
+        if existing_recordings:
+            for recording in existing_recordings:
+                if not _selection_matches_value(
+                    config, "subject", subjects, recording.get("subject")
+                ):
+                    continue
+                if not _selection_matches_value(
+                    config, "session", sessions, recording.get("session")
+                ):
+                    continue
+                if not _selection_matches_value(
+                    config, "task", tasks, recording.get("task")
+                ):
+                    continue
+                if not _selection_matches_value(
+                    config, "run", runs, recording.get("run")
+                ):
+                    continue
+
+                yield recording
+
+            return
+
     for subject in resolve_entity_values(config, "subject", subjects):
         if subject is None:
             continue
 
+        if is_empty_room_subject(subject, config) and not include_empty_room:
+            continue
+
         for session in resolve_entity_values(config, "session", sessions):
             for task in resolve_entity_values(config, "task", tasks):
+                if is_empty_room_subject(subject, config):
+                    if task != empty_room_task(config):
+                        continue
+
                 for run in resolve_entity_values(config, "run", runs):
                     yield {
                         "subject": subject,

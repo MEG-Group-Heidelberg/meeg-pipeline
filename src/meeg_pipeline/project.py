@@ -85,9 +85,10 @@ def make_local_yaml(project_name: str) -> str:
   name: "{project_name}"
 
 paths:
-  # Raw BIDS dataset root. Keeping this in ./raw keeps the project root tidy
-  # while ./raw itself remains a valid BIDS dataset root.
-  bids_root: "./raw"
+  # rawdata/ is the raw BIDS dataset root. Project-level files such as
+  # README.md, configs/, notebooks/, sourcedata/, and derivatives/ live one
+  # level above it in the outer project folder.
+  bids_root: "./rawdata"
   sourcedata_root: "./sourcedata"
   derivatives_root: "./derivatives/meeg-pipeline"
 
@@ -143,8 +144,55 @@ def make_dataset_description(project_name: str) -> str:
 
 
 def make_participants_tsv() -> str:
-    """Create a minimal participants.tsv."""
+    """Create a minimal BIDS participants.tsv."""
     return "participant_id\nsub-0001\n"
+
+
+def make_participants_json() -> str:
+    """Create a minimal BIDS participants.json sidecar."""
+    payload = {
+        "participant_id": {
+            "Description": "Unique participant identifier"
+        },
+        "age": {
+            "Description": "Age of the participant at time of testing",
+            "Units": "years",
+        },
+        "sex": {
+            "Description": "Sex of the participant",
+            "Levels": {
+                "F": "female",
+                "M": "male",
+                "O": "other",
+            },
+        },
+        "hand": {
+            "Description": "Handedness of the participant",
+            "Levels": {
+                "R": "right",
+                "L": "left",
+                "A": "ambidextrous",
+            },
+        },
+    }
+
+    return json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+
+
+def make_bids_readme(project_name: str) -> str:
+    """Create a short README for the raw BIDS dataset root."""
+    return f"""# {project_name} raw BIDS dataset
+
+This directory is the raw BIDS dataset root for the outer project folder.
+
+It contains BIDS metadata files such as `dataset_description.json`,
+`participants.tsv`, and `participants.json`, plus BIDS subject folders
+`sub-*`.
+
+Original acquisition exports are stored separately in the outer
+`sourcedata/` directory. Processed outputs are stored separately in the outer
+`derivatives/` directory.
+"""
 
 
 def make_project_readme(project_name: str) -> str:
@@ -159,17 +207,29 @@ This is a M/EEG project initialized with `meegpipe init-project`.
 
 ## Structure
 
-- `configs/local.yaml`
-- `notebooks/`
-- `raw/` raw BIDS dataset
-- `sourcedata/` original acquisition exports
-- `derivatives/meeg-pipeline/` pipeline derivatives
+This outer folder is the project workspace, not the raw BIDS dataset root.
+
+- `README.md` — project-level notes for the analysis workspace
+- `configs/local.yaml` — project configuration
+- `notebooks/` — project workflow notebooks
+- `sourcedata/` — original acquisition exports, kept unchanged
+- `rawdata/` — raw BIDS dataset root
+- `derivatives/meeg-pipeline/` — M/EEG pipeline outputs
+- `derivatives/freesurfer/` — FreeSurfer anatomy outputs
+
+The raw BIDS metadata files live under `rawdata/`, not in the outer project
+folder:
+
+- `rawdata/dataset_description.json`
+- `rawdata/participants.tsv`
+- `rawdata/participants.json`
+- `rawdata/README`
 
 ## First steps
 
 1. Edit `configs/local.yaml`.
 2. Place original FIF files under `sourcedata/`.
-3. Convert source files into raw BIDS under `raw/`.
+3. Convert source files into the raw BIDS dataset under `rawdata/`.
 4. Open the notebooks in order.
 5. Run the summary notebook to inspect project status.
 
@@ -191,6 +251,7 @@ If source data live outside this project folder, set `sourcedata_root` in
 `configs/local.yaml`, for example:
 
     paths:
+      bids_root: "./rawdata"
       sourcedata_root: "../sourcedata"
 
 Do not modify original source files after placing them in `sourcedata_root`.
@@ -236,7 +297,7 @@ def init_project(
     )
 
     _write_text_if_missing(
-        project_root / "raw" / "dataset_description.json",
+        project_root / "rawdata" / "dataset_description.json",
         make_dataset_description(project_name),
         overwrite=overwrite,
         created_paths=created_paths,
@@ -244,8 +305,24 @@ def init_project(
     )
 
     _write_text_if_missing(
-        project_root / "raw" / "participants.tsv",
+        project_root / "rawdata" / "participants.tsv",
         make_participants_tsv(),
+        overwrite=overwrite,
+        created_paths=created_paths,
+        skipped_paths=skipped_paths,
+    )
+
+    _write_text_if_missing(
+        project_root / "rawdata" / "participants.json",
+        make_participants_json(),
+        overwrite=overwrite,
+        created_paths=created_paths,
+        skipped_paths=skipped_paths,
+    )
+
+    _write_text_if_missing(
+        project_root / "rawdata" / "README",
+        make_bids_readme(project_name),
         overwrite=overwrite,
         created_paths=created_paths,
         skipped_paths=skipped_paths,
@@ -261,7 +338,8 @@ def init_project(
 
     for directory in [
         project_root / "notebooks",
-        project_root / "raw",
+        project_root / "rawdata",
+        project_root / "rawdata" / "sub-0001" / "meg",
         project_root / "sourcedata",
         project_root / "sourcedata" / "sub-0001" / "meg" / "task-example",
         project_root

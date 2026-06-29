@@ -1686,3 +1686,342 @@ def noise_covariance_results_to_dataframe(
     """Convert noise-covariance results to a status table."""
     return pd.DataFrame([result.__dict__ for result in results])
 
+@dataclass(frozen=True)
+class InverseOperatorResult:
+    """Result row for one inverse-operator job."""
+
+    subject: str
+    session: str | None
+    task: str | None
+    run: str | None
+    path: str
+    status: str
+    info_input: str = ""
+    info_input_kind: str = ""
+    fwd_path: str = ""
+    cov_path: str = ""
+    message: str = ""
+
+
+def inverse_operator_input_overview_to_dataframe(
+    config: PipelineConfig,
+    recordings: Iterable[Recording],
+    *,
+    on_existing: ExistingOutputPolicy = "skip",
+    spacing: str | None = None,
+    noise_cov_mode: str | None = None,
+    inverse_method: str | None = None,
+) -> pd.DataFrame:
+    """Summarize inverse-operator inputs and output status for recordings."""
+    rows: list[dict[str, Any]] = []
+    mode = _noise_cov_mode(config, noise_cov_mode)
+
+    for recording in recordings:
+        entities = _recording_entities(recording)
+        subject = entities["subject"]
+        session = entities["session"]
+        task = entities["task"]
+        run = entities["run"]
+
+        info_input = find_info_input_path(config, **entities)
+        fwd_path = make_forward_path(config, **entities, spacing=spacing)
+        cov_path = make_noise_covariance_path(config, **entities, mode=mode)
+        inverse_path = make_inverse_operator_path(
+            config,
+            **entities,
+            spacing=spacing,
+            noise_cov_mode=mode,
+            inverse_method=inverse_method,
+        )
+
+        missing = []
+        if info_input.status != "found":
+            missing.append("info")
+        if not fwd_path.exists():
+            missing.append("forward")
+        if not cov_path.exists():
+            missing.append("covariance")
+
+        if inverse_path.exists() and on_existing == "skip":
+            status = "exists"
+            message = "Inverse operator already exists."
+        elif missing:
+            status = "missing_" + "_".join(missing)
+            message = "Missing required input(s): " + ", ".join(missing)
+        else:
+            status = "ready"
+            message = info_input.message
+
+        rows.append(
+            {
+                "subject": _subject_label(subject),
+                "session": session,
+                "task": task,
+                "run": run,
+                "status": status,
+                "message": message,
+                "info_input_kind": info_input.kind,
+                "info_input_exists": info_input.status == "found",
+                "info_input": info_input.path,
+                "fwd_exists": fwd_path.exists(),
+                "fwd_path": str(fwd_path),
+                "cov_exists": cov_path.exists(),
+                "cov_path": str(cov_path),
+                "inverse_exists": inverse_path.exists(),
+                "inverse_path": str(inverse_path),
+                "overwrite": on_existing == "overwrite",
+                "spacing": _source_spacing(config, spacing),
+                "noise_cov_mode": mode,
+                "inverse_method": inverse_method or config.source.inverse_method,
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+def write_inverse_operator_for_recording(
+    config: PipelineConfig,
+    recording: Recording,
+    *,
+    on_existing: ExistingOutputPolicy = "skip",
+    spacing: str | None = None,
+    noise_cov_mode: str | None = None,
+    inverse_method: str | None = None,
+    loose: float | str | None = 0.2,
+    depth: float | None = 0.8,
+    rank: str | dict[str, int] | None = None,
+    verbose: bool | str | int | None = True,
+) -> InverseOperatorResult:
+    """Create and write an inverse operator for one recording."""
+    entities = _recording_entities(recording)
+    subject = entities["subject"]
+    session = entities["session"]
+    task = entities["task"]
+    run = entities["run"]
+    mode = _noise_cov_mode(config, noise_cov_mode)
+
+    inverse_path = make_inverse_operator_path(
+        config,
+        **entities,
+        spacing=spacing,
+        noise_cov_mode=mode,
+        inverse_method=inverse_method,
+    )
+
+    if inverse_path.exists() and on_existing == "skip":
+        return InverseOperatorResult(
+            subject=_subject_label(subject),
+            session=session,
+            task=task,
+            run=run,
+            path=str(inverse_path),
+            status="skipped_existing",
+            message="Inverse operator already exists.",
+        )
+
+    overview = inverse_operator_input_overview_to_dataframe(
+        config,
+        [recording],
+        on_existing="overwrite",
+        spacing=spacing,
+        noise_cov_mode=mode,
+        inverse_method=inverse_method,
+    ).iloc[0]
+
+    if overview["status"] != "ready":
+        return InverseOperatorResult(
+            subject=_subject_label(subject),
+            session=session,
+            task=task,
+            run=run,
+            path=str(inverse_path),
+            status=str(overview["status"]),
+            info_input=str(overview["info_input"]),
+            info_input_kind=str(overview["info_input_kind"]),
+            fwd_path=str(overview["fwd_path"]),
+            cov_path=str(overview["cov_path"]),
+            message=str(overview["message"]),
+        )
+
+    info = _read_info_from_input(
+        overview["info_input"],
+        str(overview["info_input_kind"]),
+    )
+    fwd = mne.read_forward_solution(overview["fwd_path"], verbose=verbose)
+    noise_cov = mne.read_cov(overview["cov_path"], verbose=verbose)
+
+    inverse_operator = mne.minimum_norm.make_inverse_operator(
+        info=info,
+        forward=fwd,
+        noise_cov=noise_cov,
+        loose=loose,
+        depth=depth,
+        rank=rank,
+        verbose=verbose,
+    )
+
+    inverse_path.parent.mkdir(parents=True, exist_ok=True)
+    mne.minimum_norm.write_inverse_operator(
+        inverse_path,
+        inverse_operator,
+        overwrite=on_existing == "overwrite" or not inverse_path.exists(),
+        verbose=verbose,
+    )
+
+    return InverseOperatorResult(
+        subject=_subject_label(subject),
+        session=session,
+        task=task,
+        run=run,
+        path=str(inverse_path),
+        status="written",
+        info_input=str(overview["info_input"]),
+        info_input_kind=str(overview["info_input_kind"]),
+        fwd_path=str(overview["fwd_path"]),
+        cov_path=str(overview["cov_path"]),
+    )
+
+
+def write_inverse_operators_for_recordings(
+    config: PipelineConfig,
+    recordings: Iterable[Recording],
+    *,
+    on_existing: ExistingOutputPolicy = "skip",
+    spacing: str | None = None,
+    noise_cov_mode: str | None = None,
+    inverse_method: str | None = None,
+    loose: float | str | None = 0.2,
+    depth: float | None = 0.8,
+    rank: str | dict[str, int] | None = None,
+    verbose: bool | str | int | None = True,
+) -> list[InverseOperatorResult]:
+    """Create inverse operators for multiple recordings."""
+    results = []
+    mode = _noise_cov_mode(config, noise_cov_mode)
+
+    for recording in recordings:
+        try:
+            result = write_inverse_operator_for_recording(
+                config,
+                recording,
+                on_existing=on_existing,
+                spacing=spacing,
+                noise_cov_mode=mode,
+                inverse_method=inverse_method,
+                loose=loose,
+                depth=depth,
+                rank=rank,
+                verbose=verbose,
+            )
+        except Exception as exc:  # noqa: BLE001 - batch notebooks should continue.
+            entities = _recording_entities(recording)
+            result = InverseOperatorResult(
+                subject=_subject_label(str(entities["subject"])),
+                session=entities["session"],
+                task=entities["task"],
+                run=entities["run"],
+                path=str(
+                    make_inverse_operator_path(
+                        config,
+                        **entities,
+                        spacing=spacing,
+                        noise_cov_mode=mode,
+                        inverse_method=inverse_method,
+                    )
+                ),
+                status="failed",
+                message=f"{type(exc).__name__}: {exc}",
+            )
+
+        results.append(result)
+
+    return results
+
+
+def inverse_operator_results_to_dataframe(
+    results: Iterable[InverseOperatorResult],
+) -> pd.DataFrame:
+    """Convert inverse-operator results to a status table."""
+    return pd.DataFrame([result.__dict__ for result in results])
+
+
+def inverse_operator_qc_to_dataframe(
+    inverse_results: pd.DataFrame | Iterable[InverseOperatorResult | dict[str, Any]],
+    *,
+    max_rows: int | None = None,
+) -> pd.DataFrame:
+    """Read inverse-operator files and summarize basic QC metadata."""
+    if isinstance(inverse_results, pd.DataFrame):
+        table = inverse_results.copy()
+    else:
+        rows = []
+        for result in inverse_results:
+            if isinstance(result, InverseOperatorResult):
+                rows.append(result.__dict__)
+            else:
+                rows.append(dict(result))
+        table = pd.DataFrame(rows)
+
+    if table.empty:
+        return pd.DataFrame(
+            [{"status": "no_results", "message": "No inverse-operator results to inspect."}]
+        )
+
+    if "path" not in table.columns:
+        raise KeyError(f"inverse_results must contain a 'path' column. Columns: {list(table.columns)}")
+
+    candidate_table = table.copy()
+    if max_rows is not None:
+        candidate_table = candidate_table.head(max_rows)
+
+    rows: list[dict[str, Any]] = []
+
+    for _, row in candidate_table.iterrows():
+        path = Path(row["path"])
+
+        try:
+            if not path.exists():
+                raise FileNotFoundError(path)
+
+            inverse_operator = mne.minimum_norm.read_inverse_operator(
+                path,
+                verbose=False,
+            )
+
+            rows.append(
+                {
+                    "subject": row.get("subject"),
+                    "session": row.get("session"),
+                    "task": row.get("task"),
+                    "run": row.get("run"),
+                    "status": "ok",
+                    "path": str(path),
+                    "nsource": inverse_operator.get("nsource"),
+                    "nchan": inverse_operator.get("nchan"),
+                    "source_ori": inverse_operator.get("source_ori"),
+                    "coord_frame": inverse_operator.get("coord_frame"),
+                    "noise_cov_dim": inverse_operator.get("noise_cov", {}).get("dim"),
+                    "message": "",
+                }
+            )
+
+        except Exception as exc:  # noqa: BLE001 - QC table should report all rows.
+            rows.append(
+                {
+                    "subject": row.get("subject"),
+                    "session": row.get("session"),
+                    "task": row.get("task"),
+                    "run": row.get("run"),
+                    "status": "failed",
+                    "path": str(path),
+                    "nsource": None,
+                    "nchan": None,
+                    "source_ori": None,
+                    "coord_frame": None,
+                    "noise_cov_dim": None,
+                    "message": f"{type(exc).__name__}: {exc}",
+                }
+            )
+
+    return pd.DataFrame(rows)
+

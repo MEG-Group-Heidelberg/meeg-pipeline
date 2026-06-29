@@ -297,7 +297,7 @@ A project should then be organized like this:
 my-meeg-project/
   README.md
 
-  raw/
+  rawdata/
     dataset_description.json
     participants.tsv
     sub-0001/
@@ -405,7 +405,7 @@ project:
   name: "my-meeg-project"
 
 paths:
-  bids_root: "./raw"
+  bids_root: "./rawdata"
   sourcedata_root: "./sourcedata"
   derivatives_root: "./derivatives/meeg-pipeline"
   mri_raw_root: "./sourcedata/mri_raw"
@@ -491,11 +491,11 @@ library.
 
 The project folder contains:
 
-- a raw BIDS dataset in `raw/`, configured as `paths.bids_root`
+- a raw BIDS dataset in `rawdata/`, configured as `paths.bids_root`
 - project-specific configuration in `configs/`
 - workflow notebooks in `notebooks/`
 - original source files in `sourcedata/`
-- BIDS-compatible raw MEG/EEG files under `raw/sub-*/...`
+- BIDS-compatible raw MEG/EEG files under `rawdata/sub-*/...`
 - M/EEG processed outputs in `derivatives/meeg-pipeline/`
 - FreeSurfer anatomy outputs in `derivatives/freesurfer/subjects/`
 
@@ -625,10 +625,10 @@ empty-room subject. Empty-room recordings do not require `events.tsv` files.
 
 After import, empty-room recordings are stored in the configured raw BIDS tree
 using a dedicated empty-room subject and acquisition-date session. With the
-recommended `paths.bids_root: "./raw"` layout:
+recommended `paths.bids_root: "./rawdata"` layout:
 
 ```text
-raw/
+rawdata/
   sub-emptyroom/
     ses-YYYYMMDD/
       meg/
@@ -640,7 +640,7 @@ raw/
 If multiple empty-room recordings exist for the same day, BIDS runs are added:
 
 ```text
-raw/
+rawdata/
   sub-emptyroom/
     ses-YYYYMMDD/
       meg/
@@ -975,7 +975,7 @@ sourcedata/
 ```
 
 These files are converted by `1B_meg_preprocessing/01_raw_bids_and_events.ipynb`
-to `raw/sub-emptyroom/ses-YYYYMMDD/meg/` when `paths.bids_root: "./raw"` is used.
+to `rawdata/sub-emptyroom/ses-YYYYMMDD/meg/` when `paths.bids_root: "./rawdata"` is used.
 The original empty-room filename is arbitrary.
 
 ### MRI inputs
@@ -1053,15 +1053,15 @@ anatomy:
 
 The BIDS-formatted raw MEG/EEG data are stored outside `sourcedata/`, using BIDS
 naming. The recommended project layout keeps the raw BIDS dataset in a dedicated
-`raw/` folder:
+`rawdata/` folder:
 
 ```yaml
 paths:
-  bids_root: "./raw"
+  bids_root: "./rawdata"
 ```
 
-In this layout, the project root is a working directory and `raw/` is the BIDS
-dataset root. BIDS tools should be pointed to `raw/`, not to the outer project
+In this layout, the project root is a working directory and `rawdata/` is the BIDS
+dataset root. BIDS tools should be pointed to `rawdata/`, not to the outer project
 folder. This keeps `sourcedata/`, `derivatives/`, `configs/`, and `notebooks/`
 as project-level siblings instead of mixing `sub-*` raw-data folders directly
 with workflow files.
@@ -1069,7 +1069,7 @@ with workflow files.
 With BIDS sessions:
 
 ```text
-raw/
+rawdata/
   dataset_description.json
   participants.tsv
   sub-0001/
@@ -1084,7 +1084,7 @@ raw/
 Without BIDS sessions:
 
 ```text
-raw/
+rawdata/
   dataset_description.json
   participants.tsv
   sub-0001/
@@ -1100,7 +1100,7 @@ MNE-BIDS. They should be treated as immutable analysis inputs.
 
 The raw BIDS area should not contain intermediate preprocessing outputs.
 
-Using `raw/` is BIDS-compatible as long as `raw/` itself is treated as the BIDS
+Using `rawdata/` is BIDS-compatible as long as `rawdata/` itself is treated as the BIDS
 dataset root and contains the required top-level BIDS files such as
 `dataset_description.json` and `participants.tsv`. The outer project folder is
 then a convenience workspace, not the BIDS dataset root.
@@ -1114,13 +1114,13 @@ For example, manual bad-channel decisions should update the `channels.tsv` file
 inside the configured raw BIDS root:
 
 ```text
-raw/sub-0001/meg/sub-0001_task-rest_channels.tsv
+rawdata/sub-0001/meg/sub-0001_task-rest_channels.tsv
 ```
 
 or, with sessions:
 
 ```text
-raw/sub-0001/ses-20260523/meg/sub-0001_ses-20260523_task-rest_channels.tsv
+rawdata/sub-0001/ses-20260523/meg/sub-0001_ses-20260523_task-rest_channels.tsv
 ```
 
 using the BIDS columns:
@@ -1358,9 +1358,9 @@ blocks.
 ## Minimal BIDS project files
 
 In the recommended layout, create BIDS metadata files at the root of the raw
-BIDS dataset, i.e. under `raw/`, not in the outer project folder.
+BIDS dataset, i.e. under `rawdata/`, not in the outer project folder.
 
-Create `raw/dataset_description.json`.
+Create `rawdata/dataset_description.json`.
 
 Example:
 
@@ -1373,7 +1373,7 @@ Example:
 }
 ```
 
-Also create `raw/participants.tsv`.
+Also create `rawdata/participants.tsv`.
 
 Example:
 
@@ -1383,7 +1383,7 @@ sub-0001
 sub-0002
 ```
 
-The participant IDs in `raw/participants.tsv` should match the `raw/sub-*` folders.
+The participant IDs in `rawdata/participants.tsv` should match the `rawdata/sub-*` folders.
 
 ## Minimal project config
 
@@ -1402,7 +1402,7 @@ project:
   name: "my-meeg-project"
 
 paths:
-  bids_root: "./raw"
+  bids_root: "./rawdata"
   sourcedata_root: "./sourcedata"
   derivatives_root: "./derivatives/meeg-pipeline"
   mri_raw_root: "./sourcedata/mri_raw"
@@ -2029,8 +2029,8 @@ Recommended workflow:
 Example files:
 
 ```text
-raw/sub-0001/meg/sub-0001_task-rest_meg.fif
-raw/sub-0001/meg/sub-0001_task-rest_channels.tsv
+rawdata/sub-0001/meg/sub-0001_task-rest_meg.fif
+rawdata/sub-0001/meg/sub-0001_task-rest_channels.tsv
 
 derivatives/meeg-pipeline/sub-0001/meg/qc/
   sub-0001_task-rest_desc-badchannels.json
@@ -2733,7 +2733,7 @@ If `sourcedata.sessions` is `include`, the corresponding raw BIDS files will be
 generated under the configured raw BIDS root:
 
 ```text
-raw/sub-0001/ses-20260523/meg/
+rawdata/sub-0001/ses-20260523/meg/
 ```
 
 with filenames such as:
@@ -2747,7 +2747,7 @@ If `sourcedata.sessions` is `ignore`, the same source folders generate raw BIDS
 files without a session level under the configured raw BIDS root:
 
 ```text
-raw/sub-0001/meg/
+rawdata/sub-0001/meg/
 ```
 
 with filenames such as:
@@ -2757,20 +2757,20 @@ sub-0001_task-rest_meg.fif
 sub-0001_task-auditory_meg.fif
 ```
 
-## Moving an existing root-level raw BIDS dataset into `raw/`
+## Moving an existing root-level raw BIDS dataset into `rawdata/`
 
 Older projects may have raw BIDS files directly in the project root, for example
 `dataset_description.json`, `participants.tsv`, `sub-0001/`, and
 `sub-emptyroom/`. To migrate such a project to the recommended layout, move only
-the raw BIDS dataset files into `raw/` and then set `paths.bids_root: "./raw"`
+the raw BIDS dataset files into `rawdata/` and then set `paths.bids_root: "./rawdata"`
 in `configs/local.yaml`.
 
 Example migration from the project root:
 
 ```bash
 mkdir -p raw
-mv dataset_description.json participants.tsv raw/
-mv sub-* raw/
+mv dataset_description.json participants.tsv rawdata/
+mv sub-* rawdata/
 ```
 
 Do not move `sourcedata/`, `derivatives/`, `configs/`, or `notebooks/`. If the
@@ -2780,7 +2780,7 @@ raw BIDS files have already been moved, rerun:
 meegpipe bids-info --config configs/local.yaml
 ```
 
-The subject folders should then be discovered below `raw/`.
+The subject folders should then be discovered below `rawdata/`.
 
 ## Checking expected BIDS paths
 
@@ -2802,7 +2802,7 @@ meegpipe bids-path \
 Expected output path:
 
 ```text
-raw/sub-0001/ses-20260523/meg/sub-0001_ses-20260523_task-rest_meg.fif
+rawdata/sub-0001/ses-20260523/meg/sub-0001_ses-20260523_task-rest_meg.fif
 ```
 
 Without sessions:
@@ -2818,7 +2818,7 @@ meegpipe bids-path \
 Expected output path:
 
 ```text
-raw/sub-0001/meg/sub-0001_task-rest_meg.fif
+rawdata/sub-0001/meg/sub-0001_task-rest_meg.fif
 ```
 
 ## Development status

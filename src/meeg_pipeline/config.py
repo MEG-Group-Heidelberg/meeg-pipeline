@@ -255,6 +255,17 @@ class SourceLabelTimeCoursesEpochsConfig:
 
 
 @dataclass(frozen=True)
+class SourceMorphConfig:
+    enabled: bool = True
+    subject_to: str = "fsaverage"
+    spacing: str | None = None
+    smooth: int | None = None
+    method: Literal["MNE", "dSPM", "sLORETA", "eLORETA"] | None = None
+    pick_conditions: tuple[str, ...] | Literal["all"] = "all"
+    stc_format: Literal["h5"] = "h5"
+
+
+@dataclass(frozen=True)
 class SourceConfig:
     spacing: str = "ico5"
     noise_cov_mode: str = "erm"
@@ -263,6 +274,7 @@ class SourceConfig:
     extract_mode: str = "mean"
     inverse_method: str = "dSPM"
     apply_inverse: SourceApplyInverseConfig = SourceApplyInverseConfig()
+    morph: SourceMorphConfig = SourceMorphConfig()
     label_time_courses_epochs: SourceLabelTimeCoursesEpochsConfig = SourceLabelTimeCoursesEpochsConfig()
 
 
@@ -764,6 +776,29 @@ def load_config(config_path: str | Path) -> PipelineConfig:
             f"got {stc_format!r}."
         )
 
+    morph_raw = source_raw.get("morph", {})
+
+    morph_method_raw = morph_raw.get("method", None)
+    morph_method = None if morph_method_raw is None else str(morph_method_raw)
+    if morph_method is not None and morph_method not in {"MNE", "dSPM", "sLORETA", "eLORETA"}:
+        raise ValueError(
+            "source.morph.method must be null or one of 'MNE', 'dSPM', "
+            f"'sLORETA', or 'eLORETA', got {morph_method!r}."
+        )
+
+    morph_pick_conditions_raw = morph_raw.get("pick_conditions", "all")
+    if morph_pick_conditions_raw == "all":
+        morph_pick_conditions: tuple[str, ...] | Literal["all"] = "all"
+    else:
+        morph_pick_conditions = _str_tuple(morph_pick_conditions_raw, ())
+
+    morph_stc_format = str(morph_raw.get("stc_format", "h5"))
+    if morph_stc_format != "h5":
+        raise ValueError(
+            "source.morph.stc_format currently must be 'h5', "
+            f"got {morph_stc_format!r}."
+        )
+
     label_time_courses_epochs_raw = source_raw.get("label_time_courses_epochs", {})
 
     ltc_epochs_method = str(
@@ -811,6 +846,15 @@ def load_config(config_path: str | Path) -> PipelineConfig:
             pick_conditions=pick_conditions,
             save_stcs=bool(apply_inverse_raw.get("save_stcs", True)),
             stc_format=stc_format,
+        ),
+        morph=SourceMorphConfig(
+            enabled=bool(morph_raw.get("enabled", True)),
+            subject_to=str(morph_raw.get("subject_to", "fsaverage")),
+            spacing=morph_raw.get("spacing", None),
+            smooth=_optional_int(morph_raw.get("smooth", None)),
+            method=morph_method,
+            pick_conditions=morph_pick_conditions,
+            stc_format=morph_stc_format,
         ),
         label_time_courses_epochs=SourceLabelTimeCoursesEpochsConfig(
             enabled=bool(label_time_courses_epochs_raw.get("enabled", True)),

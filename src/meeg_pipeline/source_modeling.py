@@ -207,6 +207,33 @@ def make_evoked_source_estimate_path(
     )
 
 
+def make_morphed_evoked_source_estimate_path(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    condition: str,
+    task: str | None = None,
+    session: str | None = None,
+    run: str | None = None,
+    inverse_method: str | None = None,
+    subject_to: str | None = None,
+) -> Path:
+    """Create the HDF5 path for one morphed evoked source estimate."""
+    condition_label = sanitize_bids_label(condition)
+    method_label = sanitize_bids_label(inverse_method or config.source.inverse_method)
+    target_label = sanitize_bids_label(subject_to or getattr(config.source.morph, "subject_to", "fsaverage"))
+
+    return derivative_path(
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
+        kind="source_estimates_fsaverage",
+        suffix=f"space-{target_label}_desc-{condition_label}{method_label}-stc.h5",
+    )
+
+
 def make_evoked_label_time_course_path(
     config: PipelineConfig,
     *,
@@ -2613,6 +2640,497 @@ def source_estimate_qc_to_dataframe(
             )
 
     return pd.DataFrame(rows)
+
+
+@dataclass(frozen=True)
+class MorphedSourceEstimateResult:
+    """Result row for one morphed evoked source-estimate job."""
+
+    subject: str
+    session: str | None
+    task: str | None
+    run: str | None
+    condition: str
+    path: str
+    status: str
+    source_path: str = ""
+    subject_from: str = ""
+    subject_to: str = ""
+    method: str = ""
+    spacing: str = ""
+    message: str = ""
+
+
+def _morph_config(config: PipelineConfig) -> Any:
+    """Return source-morph configuration with backward-compatible defaults."""
+    return getattr(config.source, "morph", None)
+
+
+def _effective_morph_subject_to(config: PipelineConfig, subject_to: str | None = None) -> str:
+    if subject_to is not None:
+        return str(subject_to)
+    morph_config = _morph_config(config)
+    return str(getattr(morph_config, "subject_to", "fsaverage"))
+
+
+def _effective_morph_method(config: PipelineConfig, method: str | None = None) -> str:
+    if method is not None:
+        return str(method)
+    morph_config = _morph_config(config)
+    configured = getattr(morph_config, "method", None) if morph_config is not None else None
+    if configured is not None:
+        return str(configured)
+    return _effective_apply_inverse_method(config, None)
+
+
+def _effective_morph_pick_conditions(
+    config: PipelineConfig,
+    pick_conditions: tuple[str, ...] | list[str] | str | None = None,
+) -> tuple[str, ...] | Literal["all"]:
+    if pick_conditions is not None:
+        if pick_conditions == "all":
+            return "all"
+        if isinstance(pick_conditions, str):
+            return (pick_conditions,)
+        return tuple(str(condition) for condition in pick_conditions)
+
+    morph_config = _morph_config(config)
+    configured = getattr(morph_config, "pick_conditions", "all") if morph_config is not None else "all"
+    if configured == "all":
+        return "all"
+    if isinstance(configured, str):
+        return (configured,)
+    return tuple(str(condition) for condition in configured)
+
+
+def _effective_morph_spacing(config: PipelineConfig, spacing: str | int | None = None) -> Any:
+    """Return an MNE-compatible morph spacing value."""
+    if spacing is None:
+        morph_config = _morph_config(config)
+        spacing = getattr(morph_config, "spacing", None) if morph_config is not None else None
+    if spacing is None:
+        spacing = _source_spacing(config)
+
+    if isinstance(spacing, int):
+        return spacing
+
+    text = str(spacing)
+    match = re.fullmatch(r"ico(\d+)", text.lower())
+    if match:
+        return int(match.group(1))
+
+    return text
+
+
+def _effective_morph_smooth(config: PipelineConfig, smooth: int | None = None) -> int | None:
+    if smooth is not None:
+        return int(smooth)
+    morph_config = _morph_config(config)
+    configured = getattr(morph_config, "smooth", None) if morph_config is not None else None
+    return None if configured is None else int(configured)
+
+
+def morph_source_estimate_config_to_dataframe(config: PipelineConfig) -> pd.DataFrame:
+    """Return effective evoked-source morph settings as a one-row table."""
+    return pd.DataFrame(
+        [
+            {
+                "enabled": bool(getattr(_morph_config(config), "enabled", True)),
+                "subject_to": _effective_morph_subject_to(config),
+                "spacing": _effective_morph_spacing(config),
+                "smooth": _effective_morph_smooth(config),
+                "method": _effective_morph_method(config),
+                "pick_conditions": _effective_morph_pick_conditions(config),
+                "stc_format": getattr(_morph_config(config), "stc_format", "h5"),
+            }
+        ]
+    )
+
+
+def morph_source_estimate_input_overview_to_dataframe(
+    config: PipelineConfig,
+    recordings: Iterable[Recording],
+    *,
+    on_existing: ExistingOutputPolicy = "skip",
+    method: str | None = None,
+    pick_conditions: tuple[str, ...] | list[str] | str | None = None,
+    subject_to: str | None = None,
+) -> pd.DataFrame:
+    """Summarize native evoked STC inputs and fsaverage-morph output status."""
+    effective_method = _effective_morph_method(config, method)
+    effective_subject_to = _effective_morph_subject_to(config, subject_to)
+    selected_conditions = _effective_morph_pick_conditions(config, pick_conditions)
+    rows: list[dict[str, Any]] = []
+
+    for recording in recordings:
+        entities = _recording_entities(recording)
+        subject = entities["subject"]
+        session = entities["session"]
+        task = entities["task"]
+        run = entities["run"]
+
+        inputs = find_source_estimate_inputs_for_recording(
+            config,
+            recording,
+            method=effective_method,
+            pick_conditions=selected_conditions,
+        )
+
+        if not inputs:
+            rows.append(
+                {
+                    "subject": _subject_label(subject),
+                    "session": session,
+                    "task": task,
+                    "run": run,
+                    "condition": "",
+                    "status": "missing_source_estimate",
+                    "message": "No matching native evoked source estimates were found.",
+                    "method": effective_method,
+                    "subject_to": effective_subject_to,
+                    "source_exists": False,
+                    "source_path": "",
+                    "morphed_exists": False,
+                    "morphed_path": "",
+                    "overwrite": on_existing == "overwrite",
+                }
+            )
+            continue
+
+        for item in inputs:
+            condition = str(item["condition"])
+            source_path = Path(item["stc_path"])
+            morphed_path = make_morphed_evoked_source_estimate_path(
+                config,
+                **entities,
+                condition=condition,
+                inverse_method=effective_method,
+                subject_to=effective_subject_to,
+            )
+
+            if morphed_path.exists() and on_existing == "skip":
+                status = "exists"
+                message = "Morphed source estimate already exists."
+            elif not source_path.exists():
+                status = "missing_source_estimate"
+                message = "Native evoked source estimate is missing."
+            else:
+                status = "ready"
+                message = ""
+
+            rows.append(
+                {
+                    "subject": _subject_label(subject),
+                    "session": session,
+                    "task": task,
+                    "run": run,
+                    "condition": condition,
+                    "status": status,
+                    "message": message,
+                    "method": effective_method,
+                    "subject_to": effective_subject_to,
+                    "source_exists": source_path.exists(),
+                    "source_path": str(source_path),
+                    "morphed_exists": morphed_path.exists(),
+                    "morphed_path": str(morphed_path),
+                    "overwrite": on_existing == "overwrite",
+                }
+            )
+
+    return pd.DataFrame(rows)
+
+
+def morph_evoked_source_estimate_for_recording(
+    config: PipelineConfig,
+    recording: Recording,
+    *,
+    condition: str,
+    source_path: str | Path | None = None,
+    on_existing: ExistingOutputPolicy = "skip",
+    method: str | None = None,
+    subject_to: str | None = None,
+    spacing: str | int | None = None,
+    smooth: int | None = None,
+    verbose: bool | str | int | None = True,
+) -> MorphedSourceEstimateResult:
+    """Morph one saved native evoked source estimate to a common subject."""
+    entities = _recording_entities(recording)
+    subject = entities["subject"]
+    session = entities["session"]
+    task = entities["task"]
+    run = entities["run"]
+    subject_from = _subject_label(subject)
+    effective_subject_to = _effective_morph_subject_to(config, subject_to)
+    effective_method = _effective_morph_method(config, method)
+    effective_spacing = _effective_morph_spacing(config, spacing)
+    effective_smooth = _effective_morph_smooth(config, smooth)
+
+    if source_path is None:
+        source_path = make_evoked_source_estimate_path(
+            config,
+            **entities,
+            condition=condition,
+            inverse_method=effective_method,
+        )
+    source_path = Path(source_path)
+
+    morphed_path = make_morphed_evoked_source_estimate_path(
+        config,
+        **entities,
+        condition=condition,
+        inverse_method=effective_method,
+        subject_to=effective_subject_to,
+    )
+
+    if morphed_path.exists() and on_existing == "skip":
+        return MorphedSourceEstimateResult(
+            subject=subject_from,
+            session=session,
+            task=task,
+            run=run,
+            condition=condition,
+            path=str(morphed_path),
+            status="skipped_existing",
+            source_path=str(source_path),
+            subject_from=subject_from,
+            subject_to=effective_subject_to,
+            method=effective_method,
+            spacing=str(effective_spacing),
+            message="Morphed source estimate already exists.",
+        )
+
+    if not source_path.exists():
+        return MorphedSourceEstimateResult(
+            subject=subject_from,
+            session=session,
+            task=task,
+            run=run,
+            condition=condition,
+            path=str(morphed_path),
+            status="missing_source_estimate",
+            source_path=str(source_path),
+            subject_from=subject_from,
+            subject_to=effective_subject_to,
+            method=effective_method,
+            spacing=str(effective_spacing),
+            message="Native evoked source estimate is missing.",
+        )
+
+    stc = mne.read_source_estimate(source_path, subject=subject_from)
+    morph_kwargs = {
+        "subject_from": subject_from,
+        "subject_to": effective_subject_to,
+        "subjects_dir": _subjects_dir(config),
+        "spacing": effective_spacing,
+        "verbose": verbose,
+    }
+    if effective_smooth is not None:
+        morph_kwargs["smooth"] = effective_smooth
+
+    morph = mne.compute_source_morph(stc, **morph_kwargs)
+    stc_morph = morph.apply(stc, verbose=verbose)
+
+    morphed_path.parent.mkdir(parents=True, exist_ok=True)
+    stc_morph.save(
+        morphed_path,
+        ftype="h5",
+        overwrite=on_existing == "overwrite" or not morphed_path.exists(),
+    )
+
+    return MorphedSourceEstimateResult(
+        subject=subject_from,
+        session=session,
+        task=task,
+        run=run,
+        condition=condition,
+        path=str(morphed_path),
+        status="written",
+        source_path=str(source_path),
+        subject_from=subject_from,
+        subject_to=effective_subject_to,
+        method=effective_method,
+        spacing=str(effective_spacing),
+    )
+
+
+def morph_evoked_source_estimates_for_recordings(
+    config: PipelineConfig,
+    recordings: Iterable[Recording],
+    *,
+    on_existing: ExistingOutputPolicy = "skip",
+    method: str | None = None,
+    pick_conditions: tuple[str, ...] | list[str] | str | None = None,
+    subject_to: str | None = None,
+    spacing: str | int | None = None,
+    smooth: int | None = None,
+    verbose: bool | str | int | None = True,
+) -> list[MorphedSourceEstimateResult]:
+    """Morph all selected evoked source estimates to a common subject."""
+    results: list[MorphedSourceEstimateResult] = []
+    effective_method = _effective_morph_method(config, method)
+    effective_subject_to = _effective_morph_subject_to(config, subject_to)
+
+    overview = morph_source_estimate_input_overview_to_dataframe(
+        config,
+        recordings,
+        on_existing=on_existing,
+        method=effective_method,
+        pick_conditions=pick_conditions,
+        subject_to=effective_subject_to,
+    )
+
+    if overview.empty:
+        return results
+
+    ready_or_existing = overview[overview["status"].isin(["ready", "exists"])]
+
+    for _, row in overview[~overview.index.isin(ready_or_existing.index)].iterrows():
+        results.append(
+            MorphedSourceEstimateResult(
+                subject=str(row.get("subject", "")),
+                session=row.get("session"),
+                task=row.get("task"),
+                run=row.get("run"),
+                condition=str(row.get("condition", "")),
+                path=str(row.get("morphed_path", "")),
+                status=str(row.get("status", "")),
+                source_path=str(row.get("source_path", "")),
+                subject_from=str(row.get("subject", "")),
+                subject_to=effective_subject_to,
+                method=effective_method,
+                spacing=str(_effective_morph_spacing(config, spacing)),
+                message=str(row.get("message", "")),
+            )
+        )
+
+    for _, row in ready_or_existing.iterrows():
+        recording = {
+            "subject": str(row["subject"]).removeprefix("sub-"),
+            "session": row.get("session") if pd.notna(row.get("session")) else None,
+            "task": row.get("task") if pd.notna(row.get("task")) else None,
+            "run": row.get("run") if pd.notna(row.get("run")) else None,
+        }
+        try:
+            result = morph_evoked_source_estimate_for_recording(
+                config,
+                recording,
+                condition=str(row["condition"]),
+                source_path=row["source_path"],
+                on_existing=on_existing,
+                method=effective_method,
+                subject_to=effective_subject_to,
+                spacing=spacing,
+                smooth=smooth,
+                verbose=verbose,
+            )
+        except Exception as exc:  # noqa: BLE001 - batch notebooks should continue.
+            result = MorphedSourceEstimateResult(
+                subject=str(row.get("subject", "")),
+                session=row.get("session"),
+                task=row.get("task"),
+                run=row.get("run"),
+                condition=str(row.get("condition", "")),
+                path=str(row.get("morphed_path", "")),
+                status="failed",
+                source_path=str(row.get("source_path", "")),
+                subject_from=str(row.get("subject", "")),
+                subject_to=effective_subject_to,
+                method=effective_method,
+                spacing=str(_effective_morph_spacing(config, spacing)),
+                message=f"{type(exc).__name__}: {exc}",
+            )
+        results.append(result)
+
+    return results
+
+
+def morphed_source_estimate_results_to_dataframe(
+    results: Iterable[MorphedSourceEstimateResult],
+) -> pd.DataFrame:
+    """Convert morphed source-estimate results to a status table."""
+    return pd.DataFrame([result.__dict__ for result in results])
+
+
+def morphed_source_estimate_qc_to_dataframe(
+    config: PipelineConfig,
+    morph_results: pd.DataFrame | Iterable[MorphedSourceEstimateResult | dict[str, Any]],
+    *,
+    max_rows: int | None = None,
+) -> pd.DataFrame:
+    """Read morphed source estimates and summarize basic QC metadata."""
+    if isinstance(morph_results, pd.DataFrame):
+        table = morph_results.copy()
+    else:
+        rows = []
+        for result in morph_results:
+            if isinstance(result, MorphedSourceEstimateResult):
+                rows.append(result.__dict__)
+            else:
+                rows.append(dict(result))
+        table = pd.DataFrame(rows)
+
+    if table.empty:
+        return pd.DataFrame(
+            [{"status": "no_results", "message": "No morphed source-estimate results to inspect."}]
+        )
+
+    candidate_table = table.copy()
+    if max_rows is not None:
+        candidate_table = candidate_table.head(max_rows)
+
+    rows: list[dict[str, Any]] = []
+    for _, row in candidate_table.iterrows():
+        path = Path(row.get("path", ""))
+        subject_to = str(row.get("subject_to", _effective_morph_subject_to(config)))
+        try:
+            if not path.exists():
+                raise FileNotFoundError(path)
+            stc = mne.read_source_estimate(path, subject=subject_to)
+            data = stc.data
+            rows.append(
+                {
+                    "subject": row.get("subject"),
+                    "session": row.get("session"),
+                    "task": row.get("task"),
+                    "run": row.get("run"),
+                    "condition": row.get("condition"),
+                    "status": "ok",
+                    "path": str(path),
+                    "subject_to": subject_to,
+                    "n_vertices_lh": len(stc.vertices[0]) if len(stc.vertices) > 0 else None,
+                    "n_vertices_rh": len(stc.vertices[1]) if len(stc.vertices) > 1 else None,
+                    "n_times": len(stc.times),
+                    "tmin": float(stc.times[0]) if len(stc.times) else None,
+                    "tmax": float(stc.times[-1]) if len(stc.times) else None,
+                    "max_abs": float(abs(data).max()) if data.size else None,
+                    "mean_abs": float(abs(data).mean()) if data.size else None,
+                    "message": "",
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - QC should report all rows.
+            rows.append(
+                {
+                    "subject": row.get("subject"),
+                    "session": row.get("session"),
+                    "task": row.get("task"),
+                    "run": row.get("run"),
+                    "condition": row.get("condition"),
+                    "status": "failed",
+                    "path": str(path),
+                    "subject_to": subject_to,
+                    "n_vertices_lh": None,
+                    "n_vertices_rh": None,
+                    "n_times": None,
+                    "tmin": None,
+                    "tmax": None,
+                    "max_abs": None,
+                    "mean_abs": None,
+                    "message": f"{type(exc).__name__}: {exc}",
+                }
+            )
+
+    return pd.DataFrame(rows)
+
 
 
 @dataclass(frozen=True)

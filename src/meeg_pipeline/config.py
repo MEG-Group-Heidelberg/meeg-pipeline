@@ -239,6 +239,22 @@ class SourceApplyInverseConfig:
 
 
 @dataclass(frozen=True)
+class SourceLabelTimeCoursesEpochsConfig:
+    enabled: bool = True
+    method: Literal["MNE", "dSPM", "sLORETA", "eLORETA"] = "dSPM"
+    snr: float = 3.0
+    lambda2: float | None = None
+    parcellation: str | None = None
+    extract_mode: str | None = None
+    target_labels: tuple[str, ...] | None = None
+    decim: int | None = 5
+    tmin: float | None = None
+    tmax: float | None = None
+    dtype: Literal["float32", "float64"] = "float32"
+    save_format: Literal["npy"] = "npy"
+
+
+@dataclass(frozen=True)
 class SourceConfig:
     spacing: str = "ico5"
     noise_cov_mode: str = "erm"
@@ -247,6 +263,7 @@ class SourceConfig:
     extract_mode: str = "mean"
     inverse_method: str = "dSPM"
     apply_inverse: SourceApplyInverseConfig = SourceApplyInverseConfig()
+    label_time_courses_epochs: SourceLabelTimeCoursesEpochsConfig = SourceLabelTimeCoursesEpochsConfig()
 
 
 @dataclass(frozen=True)
@@ -747,6 +764,38 @@ def load_config(config_path: str | Path) -> PipelineConfig:
             f"got {stc_format!r}."
         )
 
+    label_time_courses_epochs_raw = source_raw.get("label_time_courses_epochs", {})
+
+    ltc_epochs_method = str(
+        label_time_courses_epochs_raw.get(
+            "method",
+            apply_inverse_raw.get("method", source_raw.get("inverse_method", "dSPM")),
+        )
+    )
+    if ltc_epochs_method not in {"MNE", "dSPM", "sLORETA", "eLORETA"}:
+        raise ValueError(
+            "source.label_time_courses_epochs.method must be one of 'MNE', "
+            f"'dSPM', 'sLORETA', or 'eLORETA', got {ltc_epochs_method!r}."
+        )
+
+    ltc_epochs_decim = _optional_int(label_time_courses_epochs_raw.get("decim", 5))
+    if ltc_epochs_decim is not None and ltc_epochs_decim < 1:
+        raise ValueError("source.label_time_courses_epochs.decim must be >= 1 or null.")
+
+    ltc_epochs_dtype = str(label_time_courses_epochs_raw.get("dtype", "float32"))
+    if ltc_epochs_dtype not in {"float32", "float64"}:
+        raise ValueError(
+            "source.label_time_courses_epochs.dtype must be 'float32' or 'float64', "
+            f"got {ltc_epochs_dtype!r}."
+        )
+
+    ltc_epochs_save_format = str(label_time_courses_epochs_raw.get("save_format", "npy"))
+    if ltc_epochs_save_format != "npy":
+        raise ValueError(
+            "source.label_time_courses_epochs.save_format currently must be 'npy', "
+            f"got {ltc_epochs_save_format!r}."
+        )
+
     source = SourceConfig(
         spacing=source_raw.get("spacing", "ico5"),
         noise_cov_mode=source_raw.get("noise_cov_mode", "erm"),
@@ -762,6 +811,20 @@ def load_config(config_path: str | Path) -> PipelineConfig:
             pick_conditions=pick_conditions,
             save_stcs=bool(apply_inverse_raw.get("save_stcs", True)),
             stc_format=stc_format,
+        ),
+        label_time_courses_epochs=SourceLabelTimeCoursesEpochsConfig(
+            enabled=bool(label_time_courses_epochs_raw.get("enabled", True)),
+            method=ltc_epochs_method,
+            snr=float(label_time_courses_epochs_raw.get("snr", apply_inverse_raw.get("snr", 3.0))),
+            lambda2=_optional_float(label_time_courses_epochs_raw.get("lambda2", None)),
+            parcellation=label_time_courses_epochs_raw.get("parcellation", None),
+            extract_mode=label_time_courses_epochs_raw.get("extract_mode", None),
+            target_labels=_optional_str_tuple(label_time_courses_epochs_raw.get("target_labels", None)),
+            decim=ltc_epochs_decim,
+            tmin=_optional_float(label_time_courses_epochs_raw.get("tmin", None)),
+            tmax=_optional_float(label_time_courses_epochs_raw.get("tmax", None)),
+            dtype=ltc_epochs_dtype,
+            save_format=ltc_epochs_save_format,
         ),
     )
 

@@ -245,11 +245,13 @@ def make_epoch_label_time_course_path(
     run: str | None = None,
     parcellation: str | None = None,
     inverse_method: str | None = None,
-    extension: str = ".h5",
+    decim: int | None = None,
+    extension: str = ".npy",
 ) -> Path:
     """Create the path for epoch-level label time courses."""
     parc_label = sanitize_bids_label(parcellation or config.source.parcellation)
     method_label = sanitize_bids_label(inverse_method or config.source.inverse_method)
+    decim_label = f"decim{decim}" if decim not in {None, 1} else ""
     extension = extension if extension.startswith(".") else f".{extension}"
 
     return derivative_path(
@@ -258,8 +260,8 @@ def make_epoch_label_time_course_path(
         session=session,
         task=task,
         run=run,
-        kind="label_time_course",
-        suffix=f"space-label_parc-{parc_label}_desc-epoch{method_label}-ltc{extension}",
+        kind="label_time_course_epochs",
+        suffix=f"space-label_parc-{parc_label}_desc-epoch{method_label}{decim_label}-ltc{extension}",
     )
 
 
@@ -3289,6 +3291,777 @@ def label_time_course_qc_to_dataframe(
                     "n_times": None,
                     "max_abs": None,
                     "mean_abs": None,
+                    "message": f"{type(exc).__name__}: {exc}",
+                }
+            )
+
+    return pd.DataFrame(rows)
+
+
+@dataclass(frozen=True)
+class EpochLabelTimeCourseResult:
+    """Result row for one epoch-wise label-time-course extraction job."""
+
+    subject: str
+    session: str | None
+    task: str | None
+    run: str | None
+    path: str
+    status: str
+    epochs_path: str = ""
+    inverse_path: str = ""
+    labels_path: str = ""
+    times_path: str = ""
+    epochs_sidecar_path: str = ""
+    parcellation: str = ""
+    extract_mode: str = ""
+    method: str = ""
+    lambda2: float | None = None
+    decim: int | None = None
+    dtype: str = ""
+    n_epochs: int | None = None
+    n_labels: int | None = None
+    n_times: int | None = None
+    message: str = ""
+
+
+def _label_time_courses_epochs_config(config: PipelineConfig) -> Any:
+    """Return epoch-wise label-time-course config with backward-compatible defaults."""
+    configured = getattr(getattr(config, "source", None), "label_time_courses_epochs", None)
+    if configured is not None:
+        return configured
+
+    @dataclass(frozen=True)
+    class _Defaults:
+        enabled: bool = True
+        method: str = str(getattr(getattr(config, "source", None), "inverse_method", "dSPM"))
+        snr: float = 3.0
+        lambda2: float | None = None
+        parcellation: str | None = None
+        extract_mode: str | None = None
+        target_labels: tuple[str, ...] | None = None
+        decim: int | None = 5
+        tmin: float | None = None
+        tmax: float | None = None
+        dtype: str = "float32"
+        save_format: str = "npy"
+
+    return _Defaults()
+
+
+def label_time_courses_epochs_config_to_dataframe(config: PipelineConfig) -> pd.DataFrame:
+    """Return effective epoch-wise label-time-course settings as a one-row table."""
+    epoch_config = _label_time_courses_epochs_config(config)
+    snr = float(getattr(epoch_config, "snr", 3.0))
+    lambda2 = getattr(epoch_config, "lambda2", None)
+    if lambda2 is None:
+        lambda2 = 1.0 / snr**2
+
+    return pd.DataFrame(
+        [
+            {
+                "enabled": bool(getattr(epoch_config, "enabled", True)),
+                "method": getattr(epoch_config, "method", config.source.inverse_method),
+                "snr": snr,
+                "lambda2": lambda2,
+                "parcellation": getattr(epoch_config, "parcellation", None) or config.source.parcellation,
+                "extract_mode": getattr(epoch_config, "extract_mode", None) or config.source.extract_mode,
+                "target_labels": getattr(epoch_config, "target_labels", None) or config.source.target_labels,
+                "decim": getattr(epoch_config, "decim", 5),
+                "tmin": getattr(epoch_config, "tmin", None),
+                "tmax": getattr(epoch_config, "tmax", None),
+                "dtype": getattr(epoch_config, "dtype", "float32"),
+                "save_format": getattr(epoch_config, "save_format", "npy"),
+                "source_spacing": _source_spacing(config),
+            }
+        ]
+    )
+
+
+def _effective_epoch_ltc_settings(
+    config: PipelineConfig,
+    *,
+    method: str | None = None,
+    lambda2: float | None = None,
+    snr: float | None = None,
+    parcellation: str | None = None,
+    extract_mode: str | None = None,
+    target_labels: tuple[str, ...] | list[str] | str | None = None,
+    decim: int | None = None,
+    tmin: float | None = None,
+    tmax: float | None = None,
+    dtype: str | None = None,
+) -> dict[str, Any]:
+    """Resolve epoch-wise label-time-course settings."""
+    epoch_config = _label_time_courses_epochs_config(config)
+    effective_method = str(method or getattr(epoch_config, "method", config.source.inverse_method))
+
+    configured_lambda2 = getattr(epoch_config, "lambda2", None)
+    if lambda2 is not None:
+        effective_lambda2 = float(lambda2)
+    elif configured_lambda2 is not None:
+        effective_lambda2 = float(configured_lambda2)
+    else:
+        effective_snr = float(snr if snr is not None else getattr(epoch_config, "snr", 3.0))
+        effective_lambda2 = 1.0 / effective_snr**2
+
+    configured_targets = getattr(epoch_config, "target_labels", None)
+    if target_labels is None and configured_targets is not None:
+        effective_targets = configured_targets
+    else:
+        effective_targets = _effective_target_labels(config, target_labels)
+
+    effective_decim = decim if decim is not None else getattr(epoch_config, "decim", 5)
+    if effective_decim is not None:
+        effective_decim = int(effective_decim)
+
+    return {
+        "method": effective_method,
+        "lambda2": effective_lambda2,
+        "parcellation": str(parcellation or getattr(epoch_config, "parcellation", None) or config.source.parcellation),
+        "extract_mode": str(extract_mode or getattr(epoch_config, "extract_mode", None) or config.source.extract_mode),
+        "target_labels": effective_targets,
+        "decim": effective_decim,
+        "tmin": tmin if tmin is not None else getattr(epoch_config, "tmin", None),
+        "tmax": tmax if tmax is not None else getattr(epoch_config, "tmax", None),
+        "dtype": str(dtype or getattr(epoch_config, "dtype", "float32")),
+    }
+
+
+def _epoch_label_time_course_sidecar_paths(path: str | Path) -> tuple[Path, Path, Path]:
+    """Return labels, times, and epochs sidecar paths for an epoch-wise LTC array."""
+    path = Path(path)
+    name = path.name
+    if name.endswith("-ltc.npy"):
+        stem = name.removesuffix("-ltc.npy")
+    else:
+        stem = path.stem
+    return (
+        path.with_name(stem + "-labels.tsv"),
+        path.with_name(stem + "-times.tsv"),
+        path.with_name(stem + "-epochs.tsv"),
+    )
+
+
+def _write_epoch_label_time_course_array(
+    *,
+    data: np.ndarray,
+    times: np.ndarray,
+    labels: list[mne.Label],
+    epochs: mne.Epochs,
+    ltc_path: Path,
+    labels_path: Path,
+    times_path: Path,
+    epochs_sidecar_path: Path,
+) -> None:
+    """Write epoch-wise label-time-course array and sidecar tables."""
+    ltc_path.parent.mkdir(parents=True, exist_ok=True)
+    np.save(ltc_path, data)
+
+    label_names = [label.name for label in labels]
+    hemis = [getattr(label, "hemi", "") for label in labels]
+    pd.DataFrame(
+        {
+            "label_index": range(len(labels)),
+            "label": label_names,
+            "hemi": hemis,
+            "n_vertices": [len(label.vertices) for label in labels],
+        }
+    ).to_csv(labels_path, sep="\t", index=False)
+
+    pd.DataFrame({"time_index": range(len(times)), "time_s": times}).to_csv(
+        times_path,
+        sep="\t",
+        index=False,
+    )
+
+    event_id_lookup = {int(code): name for name, code in epochs.event_id.items()}
+    event_codes = epochs.events[:, 2].astype(int) if len(epochs.events) else np.array([], dtype=int)
+    event_names = [event_id_lookup.get(int(code), str(code)) for code in event_codes]
+    selection = getattr(epochs, "selection", np.arange(len(event_codes)))
+
+    epochs_table = pd.DataFrame(
+        {
+            "epoch_index": range(len(event_codes)),
+            "original_epoch_index": selection,
+            "event_sample": epochs.events[:, 0] if len(epochs.events) else [],
+            "event_code": event_codes,
+            "event_name": event_names,
+        }
+    )
+
+    metadata = getattr(epochs, "metadata", None)
+    if metadata is not None and len(metadata) == len(epochs_table):
+        metadata = metadata.reset_index(drop=True)
+        for column in metadata.columns:
+            if column not in epochs_table.columns:
+                epochs_table[column] = metadata[column]
+
+    epochs_table.to_csv(epochs_sidecar_path, sep="\t", index=False)
+
+
+def epoch_label_time_course_input_overview_to_dataframe(
+    config: PipelineConfig,
+    recordings: Iterable[Recording],
+    *,
+    on_existing: ExistingOutputPolicy = "skip",
+    method: str | None = None,
+    parcellation: str | None = None,
+    extract_mode: str | None = None,
+    target_labels: tuple[str, ...] | list[str] | str | None = None,
+    spacing: str | None = None,
+    noise_cov_mode: str | None = None,
+    decim: int | None = None,
+    dtype: str | None = None,
+) -> pd.DataFrame:
+    """Summarize inputs/outputs for epoch-wise label-time-course extraction."""
+    settings = _effective_epoch_ltc_settings(
+        config,
+        method=method,
+        parcellation=parcellation,
+        extract_mode=extract_mode,
+        target_labels=target_labels,
+        decim=decim,
+        dtype=dtype,
+    )
+    mode = _noise_cov_mode(config, noise_cov_mode)
+    rows: list[dict[str, Any]] = []
+
+    for recording in recordings:
+        entities = _recording_entities(recording)
+        subject = entities["subject"]
+        session = entities["session"]
+        task = entities["task"]
+        run = entities["run"]
+
+        epochs_path = make_epochs_path(config, **entities, desc="cleaned")
+        inverse_path = make_inverse_operator_path(
+            config,
+            **entities,
+            spacing=spacing,
+            noise_cov_mode=mode,
+            inverse_method=settings["method"],
+        )
+        ltc_path = make_epoch_label_time_course_path(
+            config,
+            **entities,
+            parcellation=settings["parcellation"],
+            inverse_method=settings["method"],
+            decim=settings["decim"],
+            extension=".npy",
+        )
+        labels_path, times_path, epochs_sidecar_path = _epoch_label_time_course_sidecar_paths(ltc_path)
+
+        labels_status = "found"
+        labels_message = ""
+        n_labels: int | None = None
+        try:
+            labels = _load_labels_for_subject(
+                config,
+                subject=subject,
+                parcellation=settings["parcellation"],
+                target_labels=settings["target_labels"],
+            )
+            n_labels = len(labels)
+            if not labels:
+                labels_status = "missing"
+                labels_message = "No labels remained after filtering."
+        except Exception as exc:  # noqa: BLE001 - overview should report missing labels.
+            labels_status = "missing"
+            labels_message = f"{type(exc).__name__}: {exc}"
+
+        missing = []
+        if not epochs_path.exists():
+            missing.append("epochs")
+        if not inverse_path.exists():
+            missing.append("inverse")
+        if labels_status != "found":
+            missing.append("labels")
+
+        if ltc_path.exists() and on_existing == "skip":
+            status = "exists"
+            message = "Epoch-wise label time courses already exist."
+        elif missing:
+            status = "missing_" + "_".join(missing)
+            message = "Missing required input(s): " + ", ".join(missing)
+            if labels_message:
+                message += f"; labels: {labels_message}"
+        else:
+            status = "ready"
+            message = labels_message
+
+        rows.append(
+            {
+                "subject": _subject_label(subject),
+                "session": session,
+                "task": task,
+                "run": run,
+                "status": status,
+                "message": message,
+                "epochs_exists": epochs_path.exists(),
+                "epochs_path": str(epochs_path),
+                "inverse_exists": inverse_path.exists(),
+                "inverse_path": str(inverse_path),
+                "labels_status": labels_status,
+                "labels_message": labels_message,
+                "n_labels": n_labels,
+                "ltc_exists": ltc_path.exists(),
+                "ltc_path": str(ltc_path),
+                "labels_path": str(labels_path),
+                "times_path": str(times_path),
+                "epochs_sidecar_path": str(epochs_sidecar_path),
+                "method": settings["method"],
+                "lambda2": settings["lambda2"],
+                "parcellation": settings["parcellation"],
+                "extract_mode": settings["extract_mode"],
+                "target_labels": settings["target_labels"],
+                "decim": settings["decim"],
+                "dtype": settings["dtype"],
+                "overwrite": on_existing == "overwrite",
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+def extract_epoch_label_time_courses_for_recording(
+    config: PipelineConfig,
+    recording: Recording,
+    *,
+    epochs_path: str | Path | None = None,
+    inverse_path: str | Path | None = None,
+    on_existing: ExistingOutputPolicy = "skip",
+    method: str | None = None,
+    lambda2: float | None = None,
+    snr: float | None = None,
+    parcellation: str | None = None,
+    extract_mode: str | None = None,
+    target_labels: tuple[str, ...] | list[str] | str | None = None,
+    spacing: str | None = None,
+    noise_cov_mode: str | None = None,
+    decim: int | None = None,
+    tmin: float | None = None,
+    tmax: float | None = None,
+    dtype: str | None = None,
+    allow_empty: bool | str = False,
+    pick_ori: str | None = None,
+    verbose: bool | str | int | None = True,
+) -> EpochLabelTimeCourseResult:
+    """Apply inverse epoch-wise and save compact label time courses."""
+    entities = _recording_entities(recording)
+    subject = entities["subject"]
+    session = entities["session"]
+    task = entities["task"]
+    run = entities["run"]
+
+    settings = _effective_epoch_ltc_settings(
+        config,
+        method=method,
+        lambda2=lambda2,
+        snr=snr,
+        parcellation=parcellation,
+        extract_mode=extract_mode,
+        target_labels=target_labels,
+        decim=decim,
+        tmin=tmin,
+        tmax=tmax,
+        dtype=dtype,
+    )
+    mode = _noise_cov_mode(config, noise_cov_mode)
+
+    if epochs_path is None:
+        epochs_path = make_epochs_path(config, **entities, desc="cleaned")
+    epochs_path = Path(epochs_path)
+
+    if inverse_path is None:
+        inverse_path = make_inverse_operator_path(
+            config,
+            **entities,
+            spacing=spacing,
+            noise_cov_mode=mode,
+            inverse_method=settings["method"],
+        )
+    inverse_path = Path(inverse_path)
+
+    ltc_path = make_epoch_label_time_course_path(
+        config,
+        **entities,
+        parcellation=settings["parcellation"],
+        inverse_method=settings["method"],
+        decim=settings["decim"],
+        extension=".npy",
+    )
+    labels_path, times_path, epochs_sidecar_path = _epoch_label_time_course_sidecar_paths(ltc_path)
+
+    if ltc_path.exists() and on_existing == "skip":
+        return EpochLabelTimeCourseResult(
+            subject=_subject_label(subject),
+            session=session,
+            task=task,
+            run=run,
+            path=str(ltc_path),
+            status="skipped_existing",
+            epochs_path=str(epochs_path),
+            inverse_path=str(inverse_path),
+            labels_path=str(labels_path),
+            times_path=str(times_path),
+            epochs_sidecar_path=str(epochs_sidecar_path),
+            parcellation=settings["parcellation"],
+            extract_mode=settings["extract_mode"],
+            method=settings["method"],
+            lambda2=settings["lambda2"],
+            decim=settings["decim"],
+            dtype=settings["dtype"],
+            message="Epoch-wise label time courses already exist.",
+        )
+
+    missing = []
+    if not epochs_path.exists():
+        missing.append("epochs")
+    if not inverse_path.exists():
+        missing.append("inverse")
+    if missing:
+        return EpochLabelTimeCourseResult(
+            subject=_subject_label(subject),
+            session=session,
+            task=task,
+            run=run,
+            path=str(ltc_path),
+            status="missing_" + "_".join(missing),
+            epochs_path=str(epochs_path),
+            inverse_path=str(inverse_path),
+            labels_path=str(labels_path),
+            times_path=str(times_path),
+            epochs_sidecar_path=str(epochs_sidecar_path),
+            parcellation=settings["parcellation"],
+            extract_mode=settings["extract_mode"],
+            method=settings["method"],
+            lambda2=settings["lambda2"],
+            decim=settings["decim"],
+            dtype=settings["dtype"],
+            message="Missing required input(s): " + ", ".join(missing),
+        )
+
+    try:
+        labels = _load_labels_for_subject(
+            config,
+            subject=subject,
+            parcellation=settings["parcellation"],
+            target_labels=settings["target_labels"],
+        )
+        if not labels:
+            raise RuntimeError("No labels remained after filtering.")
+
+        subjects_dir = _subjects_dir(config)
+        src_path = source_space_path(
+            subjects_dir,
+            _subject_label(subject),
+            spacing=_source_spacing(config, spacing),
+        )
+        if not src_path.exists():
+            raise FileNotFoundError(src_path)
+
+        epochs = mne.read_epochs(epochs_path, preload=False, verbose=verbose)
+        if settings["tmin"] is not None or settings["tmax"] is not None:
+            epochs.crop(tmin=settings["tmin"], tmax=settings["tmax"])
+        if settings["decim"] not in {None, 1}:
+            epochs.decimate(int(settings["decim"]))
+
+        inverse_operator = mne.minimum_norm.read_inverse_operator(inverse_path, verbose=verbose)
+        src = mne.read_source_spaces(src_path, verbose=verbose)
+
+        stcs = mne.minimum_norm.apply_inverse_epochs(
+            epochs,
+            inverse_operator,
+            lambda2=settings["lambda2"],
+            method=settings["method"],
+            pick_ori=pick_ori,
+            return_generator=True,
+            verbose=verbose,
+        )
+
+        arrays: list[np.ndarray] = []
+        for stc in stcs:
+            label_tc = mne.extract_label_time_course(
+                stc,
+                labels,
+                src,
+                mode=settings["extract_mode"],
+                allow_empty=allow_empty,
+                verbose=verbose,
+            )
+            arrays.append(np.asarray(label_tc, dtype=settings["dtype"]))
+
+        if not arrays:
+            raise RuntimeError("No source epochs were produced.")
+
+        data = np.stack(arrays, axis=0).astype(settings["dtype"], copy=False)
+
+        _write_epoch_label_time_course_array(
+            data=data,
+            times=np.asarray(epochs.times),
+            labels=labels,
+            epochs=epochs,
+            ltc_path=ltc_path,
+            labels_path=labels_path,
+            times_path=times_path,
+            epochs_sidecar_path=epochs_sidecar_path,
+        )
+
+        return EpochLabelTimeCourseResult(
+            subject=_subject_label(subject),
+            session=session,
+            task=task,
+            run=run,
+            path=str(ltc_path),
+            status="written",
+            epochs_path=str(epochs_path),
+            inverse_path=str(inverse_path),
+            labels_path=str(labels_path),
+            times_path=str(times_path),
+            epochs_sidecar_path=str(epochs_sidecar_path),
+            parcellation=settings["parcellation"],
+            extract_mode=settings["extract_mode"],
+            method=settings["method"],
+            lambda2=settings["lambda2"],
+            decim=settings["decim"],
+            dtype=settings["dtype"],
+            n_epochs=int(data.shape[0]),
+            n_labels=int(data.shape[1]),
+            n_times=int(data.shape[2]),
+        )
+
+    except Exception as exc:  # noqa: BLE001 - batch notebooks should continue.
+        return EpochLabelTimeCourseResult(
+            subject=_subject_label(subject),
+            session=session,
+            task=task,
+            run=run,
+            path=str(ltc_path),
+            status="failed",
+            epochs_path=str(epochs_path),
+            inverse_path=str(inverse_path),
+            labels_path=str(labels_path),
+            times_path=str(times_path),
+            epochs_sidecar_path=str(epochs_sidecar_path),
+            parcellation=settings["parcellation"],
+            extract_mode=settings["extract_mode"],
+            method=settings["method"],
+            lambda2=settings["lambda2"],
+            decim=settings["decim"],
+            dtype=settings["dtype"],
+            message=f"{type(exc).__name__}: {exc}",
+        )
+
+
+def extract_epoch_label_time_courses_for_recordings(
+    config: PipelineConfig,
+    recordings: Iterable[Recording],
+    *,
+    on_existing: ExistingOutputPolicy = "skip",
+    method: str | None = None,
+    lambda2: float | None = None,
+    snr: float | None = None,
+    parcellation: str | None = None,
+    extract_mode: str | None = None,
+    target_labels: tuple[str, ...] | list[str] | str | None = None,
+    spacing: str | None = None,
+    noise_cov_mode: str | None = None,
+    decim: int | None = None,
+    tmin: float | None = None,
+    tmax: float | None = None,
+    dtype: str | None = None,
+    allow_empty: bool | str = False,
+    pick_ori: str | None = None,
+    verbose: bool | str | int | None = True,
+) -> list[EpochLabelTimeCourseResult]:
+    """Extract epoch-wise label time courses for multiple recordings."""
+    overview = epoch_label_time_course_input_overview_to_dataframe(
+        config,
+        recordings,
+        on_existing=on_existing,
+        method=method,
+        parcellation=parcellation,
+        extract_mode=extract_mode,
+        target_labels=target_labels,
+        spacing=spacing,
+        noise_cov_mode=noise_cov_mode,
+        decim=decim,
+        dtype=dtype,
+    )
+
+    results: list[EpochLabelTimeCourseResult] = []
+    for _, row in overview.iterrows():
+        if row["status"] == "exists" and on_existing == "skip":
+            results.append(
+                EpochLabelTimeCourseResult(
+                    subject=str(row["subject"]),
+                    session=row.get("session"),
+                    task=row.get("task"),
+                    run=row.get("run"),
+                    path=str(row.get("ltc_path", "")),
+                    status="skipped_existing",
+                    epochs_path=str(row.get("epochs_path", "")),
+                    inverse_path=str(row.get("inverse_path", "")),
+                    labels_path=str(row.get("labels_path", "")),
+                    times_path=str(row.get("times_path", "")),
+                    epochs_sidecar_path=str(row.get("epochs_sidecar_path", "")),
+                    parcellation=str(row.get("parcellation", "")),
+                    extract_mode=str(row.get("extract_mode", "")),
+                    method=str(row.get("method", "")),
+                    lambda2=float(row["lambda2"]) if pd.notna(row.get("lambda2")) else None,
+                    decim=int(row["decim"]) if pd.notna(row.get("decim")) else None,
+                    dtype=str(row.get("dtype", "")),
+                    n_labels=int(row["n_labels"]) if pd.notna(row.get("n_labels")) else None,
+                    message="Epoch-wise label time courses already exist.",
+                )
+            )
+            continue
+
+        if row["status"] != "ready":
+            results.append(
+                EpochLabelTimeCourseResult(
+                    subject=str(row["subject"]),
+                    session=row.get("session"),
+                    task=row.get("task"),
+                    run=row.get("run"),
+                    path=str(row.get("ltc_path", "")),
+                    status=str(row["status"]),
+                    epochs_path=str(row.get("epochs_path", "")),
+                    inverse_path=str(row.get("inverse_path", "")),
+                    labels_path=str(row.get("labels_path", "")),
+                    times_path=str(row.get("times_path", "")),
+                    epochs_sidecar_path=str(row.get("epochs_sidecar_path", "")),
+                    parcellation=str(row.get("parcellation", "")),
+                    extract_mode=str(row.get("extract_mode", "")),
+                    method=str(row.get("method", "")),
+                    lambda2=float(row["lambda2"]) if pd.notna(row.get("lambda2")) else None,
+                    decim=int(row["decim"]) if pd.notna(row.get("decim")) else None,
+                    dtype=str(row.get("dtype", "")),
+                    n_labels=int(row["n_labels"]) if pd.notna(row.get("n_labels")) else None,
+                    message=str(row.get("message", "")),
+                )
+            )
+            continue
+
+        recording: Recording = {
+            "subject": str(row["subject"]).removeprefix("sub-"),
+            "session": row.get("session") if pd.notna(row.get("session")) else None,
+            "task": row.get("task") if pd.notna(row.get("task")) else None,
+            "run": row.get("run") if pd.notna(row.get("run")) else None,
+        }
+        result = extract_epoch_label_time_courses_for_recording(
+            config,
+            recording,
+            epochs_path=row.get("epochs_path"),
+            inverse_path=row.get("inverse_path"),
+            on_existing=on_existing,
+            method=method,
+            lambda2=lambda2,
+            snr=snr,
+            parcellation=parcellation,
+            extract_mode=extract_mode,
+            target_labels=target_labels,
+            spacing=spacing,
+            noise_cov_mode=noise_cov_mode,
+            decim=decim,
+            tmin=tmin,
+            tmax=tmax,
+            dtype=dtype,
+            allow_empty=allow_empty,
+            pick_ori=pick_ori,
+            verbose=verbose,
+        )
+        results.append(result)
+
+    return results
+
+
+def epoch_label_time_course_results_to_dataframe(
+    results: Iterable[EpochLabelTimeCourseResult],
+) -> pd.DataFrame:
+    """Convert epoch-wise label-time-course results to a status table."""
+    return pd.DataFrame([result.__dict__ for result in results])
+
+
+def epoch_label_time_course_qc_to_dataframe(
+    epoch_label_time_course_results: pd.DataFrame | Iterable[EpochLabelTimeCourseResult | dict[str, Any]],
+    *,
+    max_rows: int | None = None,
+) -> pd.DataFrame:
+    """Read epoch-wise LTC arrays and summarize shape/basic QC metadata."""
+    if isinstance(epoch_label_time_course_results, pd.DataFrame):
+        table = epoch_label_time_course_results.copy()
+    else:
+        rows = []
+        for result in epoch_label_time_course_results:
+            if isinstance(result, EpochLabelTimeCourseResult):
+                rows.append(result.__dict__)
+            else:
+                rows.append(dict(result))
+        table = pd.DataFrame(rows)
+
+    if table.empty:
+        return pd.DataFrame(
+            [{"status": "no_results", "message": "No epoch-wise label-time-course results to inspect."}]
+        )
+
+    if "path" not in table.columns:
+        raise KeyError(
+            f"epoch_label_time_course_results must contain a 'path' column. Columns: {list(table.columns)}"
+        )
+
+    candidate_table = table.copy()
+    if max_rows is not None:
+        candidate_table = candidate_table.head(max_rows)
+
+    rows: list[dict[str, Any]] = []
+    for _, row in candidate_table.iterrows():
+        path = Path(row["path"])
+        try:
+            if not path.exists():
+                raise FileNotFoundError(path)
+
+            data = np.load(path, mmap_mode="r")
+            shape = tuple(int(value) for value in data.shape)
+            sample = np.asarray(data[: min(shape[0], 5)]) if len(shape) == 3 and shape[0] else np.asarray(data)
+
+            rows.append(
+                {
+                    "subject": row.get("subject"),
+                    "session": row.get("session"),
+                    "task": row.get("task"),
+                    "run": row.get("run"),
+                    "status": "ok",
+                    "path": str(path),
+                    "shape": shape,
+                    "n_epochs": shape[0] if len(shape) > 0 else None,
+                    "n_labels": shape[1] if len(shape) > 1 else None,
+                    "n_times": shape[2] if len(shape) > 2 else None,
+                    "dtype": str(data.dtype),
+                    "file_size_mb": path.stat().st_size / 1024**2,
+                    "max_abs_sample": float(np.abs(sample).max()) if sample.size else None,
+                    "mean_abs_sample": float(np.abs(sample).mean()) if sample.size else None,
+                    "message": "",
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - QC table should report all rows.
+            rows.append(
+                {
+                    "subject": row.get("subject"),
+                    "session": row.get("session"),
+                    "task": row.get("task"),
+                    "run": row.get("run"),
+                    "status": "failed",
+                    "path": str(path),
+                    "shape": None,
+                    "n_epochs": None,
+                    "n_labels": None,
+                    "n_times": None,
+                    "dtype": None,
+                    "file_size_mb": None,
+                    "max_abs_sample": None,
+                    "mean_abs_sample": None,
                     "message": f"{type(exc).__name__}: {exc}",
                 }
             )

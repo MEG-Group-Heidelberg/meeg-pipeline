@@ -85,7 +85,9 @@ def make_local_yaml(project_name: str) -> str:
   name: "{project_name}"
 
 paths:
-  bids_root: "."
+  # Raw BIDS dataset root. Keeping this in ./raw keeps the project root tidy
+  # while ./raw itself remains a valid BIDS dataset root.
+  bids_root: "./raw"
   sourcedata_root: "./sourcedata"
   derivatives_root: "./derivatives/meeg-pipeline"
 
@@ -159,15 +161,17 @@ This is a M/EEG project initialized with `meegpipe init-project`.
 
 - `configs/local.yaml`
 - `notebooks/`
-- `sourcedata/`
-- `derivatives/meeg-pipeline/`
+- `raw/` raw BIDS dataset
+- `sourcedata/` original acquisition exports
+- `derivatives/meeg-pipeline/` pipeline derivatives
 
 ## First steps
 
 1. Edit `configs/local.yaml`.
 2. Place original FIF files under `sourcedata/`.
-3. Open the notebooks in order.
-4. Run the summary notebook to inspect project status.
+3. Convert source files into raw BIDS under `raw/`.
+4. Open the notebooks in order.
+5. Run the summary notebook to inspect project status.
 
 ## Source data example
 
@@ -232,7 +236,7 @@ def init_project(
     )
 
     _write_text_if_missing(
-        project_root / "dataset_description.json",
+        project_root / "raw" / "dataset_description.json",
         make_dataset_description(project_name),
         overwrite=overwrite,
         created_paths=created_paths,
@@ -240,7 +244,7 @@ def init_project(
     )
 
     _write_text_if_missing(
-        project_root / "participants.tsv",
+        project_root / "raw" / "participants.tsv",
         make_participants_tsv(),
         overwrite=overwrite,
         created_paths=created_paths,
@@ -257,6 +261,7 @@ def init_project(
 
     for directory in [
         project_root / "notebooks",
+        project_root / "raw",
         project_root / "sourcedata",
         project_root / "sourcedata" / "sub-0001" / "meg" / "task-example",
         project_root

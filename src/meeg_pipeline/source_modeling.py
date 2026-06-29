@@ -17,6 +17,11 @@ from meeg_pipeline.anatomy import (
 )
 from meeg_pipeline.cleaning import make_cleaned_raw_path
 from meeg_pipeline.config import PipelineConfig
+from meeg_pipeline.conditions import (
+    ConditionDefinition,
+    condition_definitions_from_config,
+    select_epoch_indices_from_metadata,
+)
 from meeg_pipeline.epoching import make_epochs_path
 from meeg_pipeline.paths import derivative_directory, derivative_path, sanitize_bids_label
 from meeg_pipeline.workflow import ExistingOutputPolicy, Recording
@@ -3977,6 +3982,7 @@ def _write_epoch_label_time_course_array(
     labels_path: Path,
     times_path: Path,
     epochs_sidecar_path: Path,
+    condition_definitions: dict[str, ConditionDefinition] | None = None,
 ) -> None:
     """Write epoch-wise label-time-course array and sidecar tables."""
     ltc_path.parent.mkdir(parents=True, exist_ok=True)
@@ -4332,6 +4338,7 @@ def extract_epoch_label_time_courses_for_recording(
             labels_path=labels_path,
             times_path=times_path,
             epochs_sidecar_path=epochs_sidecar_path,
+            condition_definitions=condition_definitions_from_config(config),
         )
 
         return EpochLabelTimeCourseResult(

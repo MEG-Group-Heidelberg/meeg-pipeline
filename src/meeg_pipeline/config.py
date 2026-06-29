@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
@@ -324,6 +324,23 @@ class SourceConfig:
 
 
 @dataclass(frozen=True)
+class ConditionsConfig:
+    """Project-specific named condition definitions.
+
+    This is intentionally optional. Most projects can work directly with
+    trigger/event labels in event_name or trial_type. Projects that need derived
+    selections can define named pandas metadata queries here, for example:
+
+        first_deviant: "deviant == 1"
+
+    Downstream steps can then refer to ``first_deviant`` while the generic
+    library still works for simple trigger-based workflows.
+    """
+
+    definitions: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class ConnectivityWindowConfig:
     tmin: float
     tmax: float
@@ -386,6 +403,7 @@ class PipelineConfig:
     epochs: EpochsConfig
     autoreject: AutorejectConfig
     source: SourceConfig
+    conditions: ConditionsConfig = ConditionsConfig()
     connectivity: ConnectivityConfig = ConnectivityConfig()
 
 
@@ -835,6 +853,44 @@ def load_config(config_path: str | Path) -> PipelineConfig:
     )
 
 
+    conditions_raw = raw.get("conditions", {})
+    if conditions_raw is None:
+        condition_definitions_raw: dict[str, Any] = {}
+    elif not isinstance(conditions_raw, dict):
+        raise ValueError("conditions must be a mapping or null.")
+    elif "definitions" in conditions_raw:
+        definitions_value = conditions_raw.get("definitions") or {}
+        if not isinstance(definitions_value, dict):
+            raise ValueError("conditions.definitions must be a mapping.")
+        condition_definitions_raw = definitions_value
+    else:
+        # Backward-compatible shorthand:
+        # conditions:
+        #   my_condition: "metadata_query"
+        # Ignore reserved non-definition keys.
+        reserved = {"mode"}
+        condition_definitions_raw = {
+            str(key): value
+            for key, value in conditions_raw.items()
+            if str(key) not in reserved
+        }
+
+    condition_definitions: dict[str, Any] = {}
+    for name, definition in condition_definitions_raw.items():
+        if isinstance(definition, str):
+            condition_definitions[str(name)] = definition
+        elif isinstance(definition, (list, tuple, set)):
+            condition_definitions[str(name)] = [int(value) for value in definition]
+        elif definition is None:
+            raise ValueError(f"Condition definition {name!r} must not be null.")
+        else:
+            raise TypeError(
+                "Condition definitions must be pandas query strings or lists "
+                f"of integer event IDs, got {type(definition)!r} for {name!r}."
+            )
+
+    conditions = ConditionsConfig(definitions=condition_definitions)
+
     connectivity_raw = raw.get("connectivity", {})
 
     connectivity_input = str(connectivity_raw.get("input", "label_time_course_epochs"))
@@ -1129,5 +1185,6 @@ def load_config(config_path: str | Path) -> PipelineConfig:
         epochs=epochs,
         autoreject=autoreject,
         source=source,
+        conditions=conditions,
         connectivity=connectivity,
     )

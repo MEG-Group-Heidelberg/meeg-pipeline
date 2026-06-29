@@ -8,12 +8,16 @@ import mne
 from mne import Epochs, Evoked
 
 from meeg_pipeline.config import PipelineConfig
+from meeg_pipeline.conditions import (
+    ConditionDefinition,
+    condition_definitions_from_config,
+    condition_indices_from_mne_epochs,
+)
 from meeg_pipeline.epoching import make_epochs_path
 from meeg_pipeline.paths import derivative_path, sanitize_bids_label
 
 
 ExistingOutputPolicy = Literal["skip", "overwrite"]
-ConditionDefinition = str | list[int] | tuple[int, ...] | set[int]
 
 
 @dataclass(frozen=True)
@@ -126,33 +130,15 @@ def load_epochs_for_evokeds(
     )
 
 
-def _metadata_query_indices(
-    epochs: Epochs,
-    query: str,
-) -> list[int]:
-    """Return integer epoch indices matching a pandas metadata query."""
-    if epochs.metadata is None:
-        return []
 
-    metadata = epochs.metadata.reset_index(drop=True)
-    selected = metadata.query(query, engine="python")
+def configured_conditions(config: PipelineConfig) -> dict[str, ConditionDefinition]:
+    """Return project-specific condition definitions from config.
 
-    return [int(index) for index in selected.index.to_list()]
-
-
-def _event_value_indices(
-    epochs: Epochs,
-    values: list[int] | tuple[int, ...] | set[int],
-) -> list[int]:
-    """Return integer epoch indices whose MNE event code is in values."""
-    value_set = {int(value) for value in values}
-    event_codes = epochs.events[:, 2]
-
-    return [
-        int(index)
-        for index, code in enumerate(event_codes)
-        if int(code) in value_set
-    ]
+    Most projects do not need this and can keep using trigger labels directly.
+    Project-specific derived selections can be defined once under
+    ``conditions.definitions`` in the project config and reused here.
+    """
+    return condition_definitions_from_config(config)
 
 
 def condition_indices(
@@ -163,24 +149,11 @@ def condition_indices(
 
     Supported condition definitions:
 
-    - str:
-        pandas query applied to epochs.metadata, e.g.
-        "non_diatonic in [1, 2, 3, 4, 5]"
-
-    - list/tuple/set of int:
-        MNE event codes to select from epochs.events[:, 2], useful for older
-        event-id based workflows.
+    - str: pandas query applied to epochs.metadata, e.g.
+      ``"non_diatonic == 1"``
+    - list/tuple/set of int: MNE event codes selected from epochs.events[:, 2].
     """
-    if isinstance(condition, str):
-        return _metadata_query_indices(epochs, condition)
-
-    if isinstance(condition, (list, tuple, set)):
-        return _event_value_indices(epochs, condition)
-
-    raise TypeError(
-        "Condition definitions must be metadata query strings or collections "
-        f"of integer event IDs, got {type(condition)!r}."
-    )
+    return condition_indices_from_mne_epochs(epochs, condition)
 
 
 def make_evoked_for_condition(

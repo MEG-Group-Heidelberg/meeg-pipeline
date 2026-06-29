@@ -304,7 +304,13 @@ def connectivity_input_overview_to_dataframe(
                             "overwrite": on_existing == "overwrite",
                         }
                     )
-    return pd.DataFrame(rows)
+    columns = [
+        "subject", "session", "task", "run", "method", "window", "condition",
+        "status", "message", "ltc_path", "labels_path", "times_path",
+        "epochs_path", "output_path", "n_epochs", "n_labels", "n_times",
+        "selected_label_preview", "overwrite",
+    ]
+    return pd.DataFrame(rows, columns=columns)
 
 
 def compute_source_label_connectivity_for_recording(

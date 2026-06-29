@@ -249,7 +249,7 @@ def resolve_entity_values(
 def iter_recordings(
     config: PipelineConfig,
     *,
-    subjects: EntitySelection,
+    subjects: EntitySelection = "all",
     sessions: EntitySelection = "all",
     tasks: EntitySelection = "all",
     runs: EntitySelection = "all",

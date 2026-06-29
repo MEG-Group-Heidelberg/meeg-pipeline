@@ -138,6 +138,77 @@ def make_bids_path(
     )
 
 
+
+def make_raw_bids_path(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    task: str | None = None,
+    session: str | None = None,
+    run: str | None = None,
+    suffix: str | None = None,
+    extension: str | None = None,
+) -> Path:
+    """Return the expected raw BIDS file path without opening the file.
+
+    This is a lightweight helper for notebook overview tables and batch checks.
+    It does not touch the FIF file and therefore avoids the cost of reading
+    MNE headers just to determine whether a raw BIDS file or sidecar exists.
+    """
+    bids_path = make_bids_path(
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
+        extension=extension,
+    )
+
+    if suffix is not None:
+        bids_path = bids_path.update(suffix=suffix)
+
+    return Path(bids_path.fpath)
+
+
+def make_raw_bids_fif_path(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    task: str | None = None,
+    session: str | None = None,
+    run: str | None = None,
+) -> Path:
+    """Return the expected raw BIDS FIF path without opening the FIF file."""
+    return make_raw_bids_path(
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
+        suffix=config.bids.datatype,
+        extension=".fif",
+    )
+
+
+def make_raw_bids_channels_tsv_path(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    task: str | None = None,
+    session: str | None = None,
+    run: str | None = None,
+) -> Path:
+    """Return the expected raw BIDS channels.tsv path without opening data."""
+    return make_raw_bids_path(
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
+        suffix="channels",
+        extension=".tsv",
+    )
+
 def make_events_path(
     config: PipelineConfig,
     *,

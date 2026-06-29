@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 
 from collections import Counter
@@ -16,6 +18,60 @@ class ChannelSummary:
     stim_channels: list[str]
     eog_channels: list[str]
     ecg_channels: list[str]
+
+
+@dataclass(frozen=True)
+class ChannelSidecarSummary:
+    """Summary of a raw BIDS channels.tsv sidecar without opening raw data."""
+
+    path: Path
+    status: str
+    message: str
+    n_channels: int | None
+    channel_types: dict[str, int]
+    bad_channels: list[str]
+
+
+def summarize_channels_tsv(path: str | Path) -> ChannelSidecarSummary:
+    """Summarize a BIDS channels.tsv sidecar without opening the raw FIF file."""
+    path = Path(path)
+
+    if not path.exists():
+        return ChannelSidecarSummary(
+            path=path,
+            status="missing_channels_tsv",
+            message="channels.tsv sidecar does not exist.",
+            n_channels=None,
+            channel_types={},
+            bad_channels=[],
+        )
+
+    channels = pd.read_csv(path, sep="\t")
+
+    if "type" in channels.columns:
+        channel_types = {
+            str(channel_type): int(count)
+            for channel_type, count in channels["type"]
+            .value_counts(dropna=False)
+            .items()
+        }
+    else:
+        channel_types = {}
+
+    if {"name", "status"}.issubset(channels.columns):
+        bad_mask = channels["status"].astype(str).str.lower().eq("bad")
+        bad_channels = channels.loc[bad_mask, "name"].astype(str).tolist()
+    else:
+        bad_channels = []
+
+    return ChannelSidecarSummary(
+        path=path,
+        status="loaded_sidecar",
+        message="",
+        n_channels=len(channels),
+        channel_types=channel_types,
+        bad_channels=bad_channels,
+    )
 
 
 def summarize_channels(raw: BaseRaw) -> ChannelSummary:

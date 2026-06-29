@@ -228,6 +228,17 @@ class AnatomyConfig:
 
 
 @dataclass(frozen=True)
+class SourceApplyInverseConfig:
+    apply_to: Literal["evoked", "epochs"] = "evoked"
+    method: Literal["MNE", "dSPM", "sLORETA", "eLORETA"] = "dSPM"
+    snr: float = 3.0
+    lambda2: float | None = None
+    pick_conditions: tuple[str, ...] | Literal["all"] = "all"
+    save_stcs: bool = True
+    stc_format: Literal["h5"] = "h5"
+
+
+@dataclass(frozen=True)
 class SourceConfig:
     spacing: str = "ico5"
     noise_cov_mode: str = "erm"
@@ -235,6 +246,7 @@ class SourceConfig:
     parcellation: str = "aparc_sub"
     extract_mode: str = "mean"
     inverse_method: str = "dSPM"
+    apply_inverse: SourceApplyInverseConfig = SourceApplyInverseConfig()
 
 
 @dataclass(frozen=True)
@@ -701,6 +713,40 @@ def load_config(config_path: str | Path) -> PipelineConfig:
     )
 
     source_raw = raw.get("source", {})
+    apply_inverse_raw = source_raw.get("apply_inverse", {})
+
+    apply_to = str(apply_inverse_raw.get("apply_to", "evoked"))
+    if apply_to not in {"evoked", "epochs"}:
+        raise ValueError(
+            "source.apply_inverse.apply_to must be one of 'evoked' or 'epochs', "
+            f"got {apply_to!r}."
+        )
+
+    apply_inverse_method = str(
+        apply_inverse_raw.get(
+            "method",
+            source_raw.get("inverse_method", "dSPM"),
+        )
+    )
+    if apply_inverse_method not in {"MNE", "dSPM", "sLORETA", "eLORETA"}:
+        raise ValueError(
+            "source.apply_inverse.method must be one of 'MNE', 'dSPM', "
+            f"'sLORETA', or 'eLORETA', got {apply_inverse_method!r}."
+        )
+
+    pick_conditions_raw = apply_inverse_raw.get("pick_conditions", "all")
+    if pick_conditions_raw == "all":
+        pick_conditions: tuple[str, ...] | Literal["all"] = "all"
+    else:
+        pick_conditions = _str_tuple(pick_conditions_raw, ())
+
+    stc_format = str(apply_inverse_raw.get("stc_format", "h5"))
+    if stc_format != "h5":
+        raise ValueError(
+            "source.apply_inverse.stc_format currently must be 'h5', "
+            f"got {stc_format!r}."
+        )
+
     source = SourceConfig(
         spacing=source_raw.get("spacing", "ico5"),
         noise_cov_mode=source_raw.get("noise_cov_mode", "erm"),
@@ -708,6 +754,15 @@ def load_config(config_path: str | Path) -> PipelineConfig:
         parcellation=source_raw.get("parcellation", "aparc_sub"),
         extract_mode=source_raw.get("extract_mode", "mean"),
         inverse_method=source_raw.get("inverse_method", "dSPM"),
+        apply_inverse=SourceApplyInverseConfig(
+            apply_to=apply_to,
+            method=apply_inverse_method,
+            snr=float(apply_inverse_raw.get("snr", 3.0)),
+            lambda2=_optional_float(apply_inverse_raw.get("lambda2", None)),
+            pick_conditions=pick_conditions,
+            save_stcs=bool(apply_inverse_raw.get("save_stcs", True)),
+            stc_format=stc_format,
+        ),
     )
 
     return PipelineConfig(

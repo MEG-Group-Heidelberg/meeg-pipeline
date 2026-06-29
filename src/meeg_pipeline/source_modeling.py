@@ -2025,3 +2025,588 @@ def inverse_operator_qc_to_dataframe(
 
     return pd.DataFrame(rows)
 
+
+
+@dataclass(frozen=True)
+class SourceEstimateResult:
+    """Result row for one source-estimate job."""
+
+    subject: str
+    session: str | None
+    task: str | None
+    run: str | None
+    condition: str
+    path: str
+    status: str
+    apply_to: str = ""
+    method: str = ""
+    lambda2: float | None = None
+    evoked_path: str = ""
+    inverse_path: str = ""
+    message: str = ""
+
+
+def _apply_inverse_config(config: PipelineConfig) -> Any:
+    """Return the apply-inverse config, with backward-compatible defaults."""
+    source = getattr(config, "source", None)
+    apply_inverse = getattr(source, "apply_inverse", None)
+
+    if apply_inverse is not None:
+        return apply_inverse
+
+    # Backward compatibility for old PipelineConfig objects.
+    @dataclass(frozen=True)
+    class _Defaults:
+        apply_to: str = "evoked"
+        method: str = str(getattr(source, "inverse_method", "dSPM"))
+        snr: float = 3.0
+        lambda2: float | None = None
+        pick_conditions: tuple[str, ...] | Literal["all"] = "all"
+        save_stcs: bool = True
+        stc_format: str = "h5"
+
+    return _Defaults()
+
+
+def apply_inverse_config_to_dataframe(config: PipelineConfig) -> pd.DataFrame:
+    """Return effective apply-inverse settings as a one-row table."""
+    apply_config = _apply_inverse_config(config)
+    snr = float(getattr(apply_config, "snr", 3.0))
+    lambda2 = getattr(apply_config, "lambda2", None)
+    if lambda2 is None:
+        lambda2 = 1.0 / snr**2
+
+    return pd.DataFrame(
+        [
+            {
+                "apply_to": getattr(apply_config, "apply_to", "evoked"),
+                "method": getattr(apply_config, "method", config.source.inverse_method),
+                "snr": snr,
+                "lambda2": lambda2,
+                "pick_conditions": getattr(apply_config, "pick_conditions", "all"),
+                "save_stcs": getattr(apply_config, "save_stcs", True),
+                "stc_format": getattr(apply_config, "stc_format", "h5"),
+            }
+        ]
+    )
+
+
+def _effective_apply_inverse_method(
+    config: PipelineConfig,
+    method: str | None = None,
+) -> str:
+    """Return the method used when applying an inverse operator."""
+    if method is not None:
+        return str(method)
+    return str(getattr(_apply_inverse_config(config), "method", config.source.inverse_method))
+
+
+def _effective_apply_inverse_lambda2(
+    config: PipelineConfig,
+    lambda2: float | None = None,
+    snr: float | None = None,
+) -> float:
+    """Return lambda2, preferring explicit lambda2 over SNR-derived values."""
+    if lambda2 is not None:
+        return float(lambda2)
+
+    apply_config = _apply_inverse_config(config)
+    configured_lambda2 = getattr(apply_config, "lambda2", None)
+    if configured_lambda2 is not None:
+        return float(configured_lambda2)
+
+    effective_snr = float(snr if snr is not None else getattr(apply_config, "snr", 3.0))
+    return 1.0 / effective_snr**2
+
+
+def _effective_pick_conditions(
+    config: PipelineConfig,
+    pick_conditions: tuple[str, ...] | list[str] | str | None = None,
+) -> tuple[str, ...] | Literal["all"]:
+    """Return selected evoked condition descriptions."""
+    if pick_conditions is None:
+        configured = getattr(_apply_inverse_config(config), "pick_conditions", "all")
+    else:
+        configured = pick_conditions
+
+    if configured == "all":
+        return "all"
+
+    if isinstance(configured, str):
+        return (configured,)
+
+    return tuple(str(item) for item in configured)
+
+
+def _condition_from_evoked_path(path: str | Path) -> str:
+    """Parse the desc entity from a condition-specific evoked filename."""
+    path = Path(path)
+    condition = _parse_entity_from_filename(path, "desc")
+    if condition:
+        return condition
+    return path.stem
+
+
+def find_evoked_inputs_for_recording(
+    config: PipelineConfig,
+    recording: Recording,
+    *,
+    pick_conditions: tuple[str, ...] | list[str] | str | None = None,
+) -> list[dict[str, Any]]:
+    """Find condition-specific evoked files for one recording."""
+    entities = _recording_entities(recording)
+    evoked_paths = _evoked_candidates(config, **entities)
+    selected_conditions = _effective_pick_conditions(config, pick_conditions)
+
+    rows: list[dict[str, Any]] = []
+    for evoked_path in evoked_paths:
+        condition = _condition_from_evoked_path(evoked_path)
+        if selected_conditions != "all" and condition not in selected_conditions:
+            continue
+        rows.append({"condition": condition, "evoked_path": str(evoked_path)})
+
+    return rows
+
+
+def source_estimate_input_overview_to_dataframe(
+    config: PipelineConfig,
+    recordings: Iterable[Recording],
+    *,
+    on_existing: ExistingOutputPolicy = "skip",
+    apply_to: Literal["evoked"] | None = None,
+    method: str | None = None,
+    pick_conditions: tuple[str, ...] | list[str] | str | None = None,
+    spacing: str | None = None,
+    noise_cov_mode: str | None = None,
+) -> pd.DataFrame:
+    """Summarize apply-inverse inputs and output status for evoked STCs."""
+    apply_config = _apply_inverse_config(config)
+    effective_apply_to = apply_to or str(getattr(apply_config, "apply_to", "evoked"))
+    if effective_apply_to != "evoked":
+        raise NotImplementedError("Only apply_to='evoked' is currently implemented.")
+
+    effective_method = _effective_apply_inverse_method(config, method)
+    mode = _noise_cov_mode(config, noise_cov_mode)
+    rows: list[dict[str, Any]] = []
+
+    for recording in recordings:
+        entities = _recording_entities(recording)
+        subject = entities["subject"]
+        session = entities["session"]
+        task = entities["task"]
+        run = entities["run"]
+
+        inverse_path = make_inverse_operator_path(
+            config,
+            **entities,
+            spacing=spacing,
+            noise_cov_mode=mode,
+            inverse_method=effective_method,
+        )
+        evoked_inputs = find_evoked_inputs_for_recording(
+            config,
+            recording,
+            pick_conditions=pick_conditions,
+        )
+
+        if not evoked_inputs:
+            rows.append(
+                {
+                    "subject": _subject_label(subject),
+                    "session": session,
+                    "task": task,
+                    "run": run,
+                    "condition": "",
+                    "status": "missing_evoked",
+                    "message": "No matching condition-specific evoked files were found.",
+                    "apply_to": effective_apply_to,
+                    "method": effective_method,
+                    "evoked_exists": False,
+                    "evoked_path": "",
+                    "inverse_exists": inverse_path.exists(),
+                    "inverse_path": str(inverse_path),
+                    "stc_exists": False,
+                    "stc_path": "",
+                    "overwrite": on_existing == "overwrite",
+                }
+            )
+            continue
+
+        for evoked_input in evoked_inputs:
+            condition = evoked_input["condition"]
+            evoked_path = Path(evoked_input["evoked_path"])
+            stc_path = make_evoked_source_estimate_path(
+                config,
+                **entities,
+                condition=condition,
+                inverse_method=effective_method,
+            )
+
+            missing = []
+            if not evoked_path.exists():
+                missing.append("evoked")
+            if not inverse_path.exists():
+                missing.append("inverse")
+
+            if stc_path.exists() and on_existing == "skip":
+                status = "exists"
+                message = "Source estimate already exists."
+            elif missing:
+                status = "missing_" + "_".join(missing)
+                message = "Missing required input(s): " + ", ".join(missing)
+            else:
+                status = "ready"
+                message = ""
+
+            rows.append(
+                {
+                    "subject": _subject_label(subject),
+                    "session": session,
+                    "task": task,
+                    "run": run,
+                    "condition": condition,
+                    "status": status,
+                    "message": message,
+                    "apply_to": effective_apply_to,
+                    "method": effective_method,
+                    "evoked_exists": evoked_path.exists(),
+                    "evoked_path": str(evoked_path),
+                    "inverse_exists": inverse_path.exists(),
+                    "inverse_path": str(inverse_path),
+                    "stc_exists": stc_path.exists(),
+                    "stc_path": str(stc_path),
+                    "overwrite": on_existing == "overwrite",
+                }
+            )
+
+    return pd.DataFrame(rows)
+
+
+def apply_inverse_to_evoked_for_recording(
+    config: PipelineConfig,
+    recording: Recording,
+    *,
+    condition: str,
+    evoked_path: str | Path | None = None,
+    on_existing: ExistingOutputPolicy = "skip",
+    method: str | None = None,
+    lambda2: float | None = None,
+    snr: float | None = None,
+    spacing: str | None = None,
+    noise_cov_mode: str | None = None,
+    pick_ori: str | None = None,
+    save_stc: bool | None = None,
+    verbose: bool | str | int | None = True,
+) -> SourceEstimateResult:
+    """Apply an inverse operator to one condition-specific evoked file."""
+    entities = _recording_entities(recording)
+    subject = entities["subject"]
+    session = entities["session"]
+    task = entities["task"]
+    run = entities["run"]
+    effective_method = _effective_apply_inverse_method(config, method)
+    effective_lambda2 = _effective_apply_inverse_lambda2(config, lambda2, snr)
+    mode = _noise_cov_mode(config, noise_cov_mode)
+    save = bool(getattr(_apply_inverse_config(config), "save_stcs", True) if save_stc is None else save_stc)
+
+    inverse_path = make_inverse_operator_path(
+        config,
+        **entities,
+        spacing=spacing,
+        noise_cov_mode=mode,
+        inverse_method=effective_method,
+    )
+    stc_path = make_evoked_source_estimate_path(
+        config,
+        **entities,
+        condition=condition,
+        inverse_method=effective_method,
+    )
+
+    if evoked_path is None:
+        candidates = find_evoked_inputs_for_recording(config, recording, pick_conditions=(condition,))
+        if not candidates:
+            return SourceEstimateResult(
+                subject=_subject_label(subject),
+                session=session,
+                task=task,
+                run=run,
+                condition=condition,
+                path=str(stc_path),
+                status="missing_evoked",
+                apply_to="evoked",
+                method=effective_method,
+                lambda2=effective_lambda2,
+                inverse_path=str(inverse_path),
+                message="No matching evoked file was found.",
+            )
+        evoked_path = candidates[0]["evoked_path"]
+
+    evoked_path = Path(evoked_path)
+
+    if stc_path.exists() and on_existing == "skip":
+        return SourceEstimateResult(
+            subject=_subject_label(subject),
+            session=session,
+            task=task,
+            run=run,
+            condition=condition,
+            path=str(stc_path),
+            status="skipped_existing",
+            apply_to="evoked",
+            method=effective_method,
+            lambda2=effective_lambda2,
+            evoked_path=str(evoked_path),
+            inverse_path=str(inverse_path),
+            message="Source estimate already exists.",
+        )
+
+    missing = []
+    if not evoked_path.exists():
+        missing.append("evoked")
+    if not inverse_path.exists():
+        missing.append("inverse")
+    if missing:
+        return SourceEstimateResult(
+            subject=_subject_label(subject),
+            session=session,
+            task=task,
+            run=run,
+            condition=condition,
+            path=str(stc_path),
+            status="missing_" + "_".join(missing),
+            apply_to="evoked",
+            method=effective_method,
+            lambda2=effective_lambda2,
+            evoked_path=str(evoked_path),
+            inverse_path=str(inverse_path),
+            message="Missing required input(s): " + ", ".join(missing),
+        )
+
+    evoked = mne.read_evokeds(evoked_path, condition=0, verbose=verbose)
+    inverse_operator = mne.minimum_norm.read_inverse_operator(inverse_path, verbose=verbose)
+
+    stc = mne.minimum_norm.apply_inverse(
+        evoked,
+        inverse_operator,
+        lambda2=effective_lambda2,
+        method=effective_method,
+        pick_ori=pick_ori,
+        verbose=verbose,
+    )
+
+    if save:
+        stc_path.parent.mkdir(parents=True, exist_ok=True)
+        stc.save(
+            stc_path,
+            ftype="h5",
+            overwrite=on_existing == "overwrite" or not stc_path.exists(),
+        )
+        status = "written"
+    else:
+        status = "computed_not_saved"
+
+    return SourceEstimateResult(
+        subject=_subject_label(subject),
+        session=session,
+        task=task,
+        run=run,
+        condition=condition,
+        path=str(stc_path),
+        status=status,
+        apply_to="evoked",
+        method=effective_method,
+        lambda2=effective_lambda2,
+        evoked_path=str(evoked_path),
+        inverse_path=str(inverse_path),
+    )
+
+
+def apply_inverse_to_evokeds_for_recordings(
+    config: PipelineConfig,
+    recordings: Iterable[Recording],
+    *,
+    on_existing: ExistingOutputPolicy = "skip",
+    method: str | None = None,
+    lambda2: float | None = None,
+    snr: float | None = None,
+    pick_conditions: tuple[str, ...] | list[str] | str | None = None,
+    spacing: str | None = None,
+    noise_cov_mode: str | None = None,
+    pick_ori: str | None = None,
+    save_stcs: bool | None = None,
+    verbose: bool | str | int | None = True,
+) -> list[SourceEstimateResult]:
+    """Apply inverse operators to all selected condition-specific evokeds."""
+    results: list[SourceEstimateResult] = []
+    effective_method = _effective_apply_inverse_method(config, method)
+
+    overview = source_estimate_input_overview_to_dataframe(
+        config,
+        recordings,
+        on_existing=on_existing,
+        apply_to="evoked",
+        method=effective_method,
+        pick_conditions=pick_conditions,
+        spacing=spacing,
+        noise_cov_mode=noise_cov_mode,
+    )
+
+    if overview.empty:
+        return results
+
+    ready_or_existing = overview[overview["status"].isin(["ready", "exists"])]
+
+    # Return missing rows as status results too, so batch notebooks can report them.
+    for _, row in overview[~overview.index.isin(ready_or_existing.index)].iterrows():
+        results.append(
+            SourceEstimateResult(
+                subject=str(row.get("subject", "")),
+                session=row.get("session"),
+                task=row.get("task"),
+                run=row.get("run"),
+                condition=str(row.get("condition", "")),
+                path=str(row.get("stc_path", "")),
+                status=str(row.get("status", "")),
+                apply_to="evoked",
+                method=effective_method,
+                lambda2=_effective_apply_inverse_lambda2(config, lambda2, snr),
+                evoked_path=str(row.get("evoked_path", "")),
+                inverse_path=str(row.get("inverse_path", "")),
+                message=str(row.get("message", "")),
+            )
+        )
+
+    for _, row in ready_or_existing.iterrows():
+        recording = {
+            "subject": str(row["subject"]).removeprefix("sub-"),
+            "session": row.get("session") if pd.notna(row.get("session")) else None,
+            "task": row.get("task") if pd.notna(row.get("task")) else None,
+            "run": row.get("run") if pd.notna(row.get("run")) else None,
+        }
+        try:
+            result = apply_inverse_to_evoked_for_recording(
+                config,
+                recording,
+                condition=str(row["condition"]),
+                evoked_path=row["evoked_path"],
+                on_existing=on_existing,
+                method=effective_method,
+                lambda2=lambda2,
+                snr=snr,
+                spacing=spacing,
+                noise_cov_mode=noise_cov_mode,
+                pick_ori=pick_ori,
+                save_stc=save_stcs,
+                verbose=verbose,
+            )
+        except Exception as exc:  # noqa: BLE001 - batch notebooks should continue.
+            result = SourceEstimateResult(
+                subject=str(row.get("subject", "")),
+                session=row.get("session"),
+                task=row.get("task"),
+                run=row.get("run"),
+                condition=str(row.get("condition", "")),
+                path=str(row.get("stc_path", "")),
+                status="failed",
+                apply_to="evoked",
+                method=effective_method,
+                lambda2=_effective_apply_inverse_lambda2(config, lambda2, snr),
+                evoked_path=str(row.get("evoked_path", "")),
+                inverse_path=str(row.get("inverse_path", "")),
+                message=f"{type(exc).__name__}: {exc}",
+            )
+        results.append(result)
+
+    return results
+
+
+def source_estimate_results_to_dataframe(
+    results: Iterable[SourceEstimateResult],
+) -> pd.DataFrame:
+    """Convert source-estimate results to a status table."""
+    return pd.DataFrame([result.__dict__ for result in results])
+
+
+def source_estimate_qc_to_dataframe(
+    source_results: pd.DataFrame | Iterable[SourceEstimateResult | dict[str, Any]],
+    *,
+    max_rows: int | None = None,
+) -> pd.DataFrame:
+    """Read saved source estimates and summarize basic QC metadata."""
+    if isinstance(source_results, pd.DataFrame):
+        table = source_results.copy()
+    else:
+        rows = []
+        for result in source_results:
+            if isinstance(result, SourceEstimateResult):
+                rows.append(result.__dict__)
+            else:
+                rows.append(dict(result))
+        table = pd.DataFrame(rows)
+
+    if table.empty:
+        return pd.DataFrame(
+            [{"status": "no_results", "message": "No source-estimate results to inspect."}]
+        )
+
+    if "path" not in table.columns:
+        raise KeyError(f"source_results must contain a 'path' column. Columns: {list(table.columns)}")
+
+    candidate_table = table.copy()
+    if max_rows is not None:
+        candidate_table = candidate_table.head(max_rows)
+
+    rows: list[dict[str, Any]] = []
+
+    for _, row in candidate_table.iterrows():
+        path = Path(row["path"])
+        try:
+            if not path.exists():
+                raise FileNotFoundError(path)
+
+            stc = mne.read_source_estimate(path, subject=str(row.get("subject", "")).removeprefix("sub-"))
+            data = stc.data
+
+            rows.append(
+                {
+                    "subject": row.get("subject"),
+                    "session": row.get("session"),
+                    "task": row.get("task"),
+                    "run": row.get("run"),
+                    "condition": row.get("condition"),
+                    "status": "ok",
+                    "path": str(path),
+                    "n_vertices_lh": len(stc.vertices[0]) if len(stc.vertices) > 0 else None,
+                    "n_vertices_rh": len(stc.vertices[1]) if len(stc.vertices) > 1 else None,
+                    "n_times": len(stc.times),
+                    "tmin": float(stc.times[0]) if len(stc.times) else None,
+                    "tmax": float(stc.times[-1]) if len(stc.times) else None,
+                    "max_abs": float(abs(data).max()) if data.size else None,
+                    "mean_abs": float(abs(data).mean()) if data.size else None,
+                    "message": "",
+                }
+            )
+
+        except Exception as exc:  # noqa: BLE001 - QC table should report all rows.
+            rows.append(
+                {
+                    "subject": row.get("subject"),
+                    "session": row.get("session"),
+                    "task": row.get("task"),
+                    "run": row.get("run"),
+                    "condition": row.get("condition"),
+                    "status": "failed",
+                    "path": str(path),
+                    "n_vertices_lh": None,
+                    "n_vertices_rh": None,
+                    "n_times": None,
+                    "tmin": None,
+                    "tmax": None,
+                    "max_abs": None,
+                    "mean_abs": None,
+                    "message": f"{type(exc).__name__}: {exc}",
+                }
+            )
+
+    return pd.DataFrame(rows)

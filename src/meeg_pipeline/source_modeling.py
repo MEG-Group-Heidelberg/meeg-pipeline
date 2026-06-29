@@ -67,23 +67,6 @@ class NoiseCovarianceResult:
     message: str = ""
 
 
-@dataclass(frozen=True)
-class InverseOperatorResult:
-    """Result row for one inverse-operator job."""
-
-    subject: str
-    session: str | None
-    task: str | None
-    run: str | None
-    path: str
-    status: str
-    info_input: str = ""
-    info_input_kind: str = ""
-    fwd_path: str = ""
-    cov_path: str = ""
-    message: str = ""
-
-
 def _subject_label(subject: str) -> str:
     """Return a subject label with the ``sub-`` prefix."""
     return str(subject) if str(subject).startswith("sub-") else f"sub-{subject}"
@@ -303,6 +286,228 @@ def find_bem_solution_path(config: PipelineConfig, subject: str) -> Path:
     )
 
 
+def _coregistration_transform_scope(
+    config: PipelineConfig,
+    transform_scope: str | None = None,
+) -> str:
+    """Return the effective configured coregistration transform scope."""
+    if transform_scope is not None:
+        scope = str(transform_scope)
+    else:
+        scope = str(
+            getattr(
+                getattr(config.anatomy, "coregistration", None),
+                "transform_scope",
+                "recording",
+            )
+        )
+
+    if scope not in {"recording", "session", "subject"}:
+        raise ValueError(
+            "Coregistration transform scope must be one of "
+            "'recording', 'session', or 'subject', "
+            f"got {scope!r}."
+        )
+
+    return scope
+
+
+def _allow_compatible_trans_fallback(config: PipelineConfig) -> bool:
+    """Return whether compatible legacy transforms may be reused."""
+    return bool(
+        getattr(
+            getattr(config.anatomy, "coregistration", None),
+            "allow_compatible_fallback",
+            True,
+        )
+    )
+
+
+def _unique(items: Iterable[str]) -> list[str]:
+    """Return unique strings while preserving input order."""
+    result: list[str] = []
+    for item in items:
+        if item not in result:
+            result.append(item)
+    return result
+
+
+def _parse_session_from_bids_like_path(path: Path) -> str | None:
+    """Parse a BIDS-like session label from a filename or parent folders."""
+    for part in path.parts:
+        if part.startswith("ses-"):
+            return part.removeprefix("ses-")
+
+    session = _parse_entity_from_filename(path, "ses")
+    if session is not None:
+        return session.removeprefix("ses-")
+
+    return None
+
+
+def _compatible_trans_candidates(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    session: str | None = None,
+    desc: str = "coreg",
+) -> list[Path]:
+    """Find existing subject/session-compatible coregistration transforms.
+
+    This supports legacy project states where one task-specific transform, e.g.
+    ``task-chords``, was saved and should be reused for another task, e.g.
+    ``task-nochords``.
+    """
+    subject_label = _subject_label(subject)
+    subject_dir = config.paths.derivatives_root / subject_label
+
+    if not subject_dir.exists():
+        return []
+
+    pattern = f"{subject_label}*_desc-{sanitize_bids_label(desc)}_trans.fif"
+    candidates = sorted(subject_dir.glob(f"**/{config.bids.datatype}/coregistration/{pattern}"))
+
+    if session is None:
+        return [path for path in candidates if path.is_file()]
+
+    session_label = str(session).removeprefix("ses-")
+    return [
+        path
+        for path in candidates
+        if path.is_file() and _parse_session_from_bids_like_path(path) == session_label
+    ]
+
+
+def find_trans_path_result(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    task: str | None = None,
+    session: str | None = None,
+    run: str | None = None,
+    desc: str = "coreg",
+    transform_scope: str | None = None,
+) -> SourceModelingPathResult:
+    """Resolve a usable coregistration transform for a recording.
+
+    The canonical output path is governed by
+    ``anatomy.coregistration.transform_scope``. If it is missing and compatible
+    fallback is enabled, this function can reuse existing subject/session-
+    compatible transforms, including task-specific legacy transforms.
+    """
+    scope = _coregistration_transform_scope(config, transform_scope)
+    canonical_path = coregistration_trans_path(
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
+        desc=desc,
+        transform_scope=scope,
+    )
+
+    metadata = {
+        "trans_scope": scope,
+        "canonical_trans_path": str(canonical_path),
+        "trans_match": "canonical",
+    }
+
+    if canonical_path.exists():
+        return SourceModelingPathResult(
+            path=str(canonical_path),
+            kind="trans",
+            status="found",
+            metadata=metadata,
+        )
+
+    if not _allow_compatible_trans_fallback(config):
+        return SourceModelingPathResult(
+            path=str(canonical_path),
+            kind="trans",
+            status="missing",
+            message="Canonical coregistration transform is missing.",
+            metadata=metadata,
+        )
+
+    # Try exact paths under alternative scopes first. This covers projects that
+    # changed transform_scope after some transforms had already been saved.
+    for fallback_scope in _unique([scope, "recording", "session", "subject"]):
+        fallback_path = coregistration_trans_path(
+            config,
+            subject=subject,
+            session=session,
+            task=task,
+            run=run,
+            desc=desc,
+            transform_scope=fallback_scope,
+        )
+        if fallback_path.exists():
+            fallback_metadata = dict(metadata)
+            fallback_metadata.update(
+                {
+                    "trans_scope": fallback_scope,
+                    "trans_match": "fallback_exact_scope",
+                }
+            )
+            return SourceModelingPathResult(
+                path=str(fallback_path),
+                kind="trans",
+                status="found",
+                message=(
+                    "Using existing transform from fallback scope "
+                    f"{fallback_scope!r}."
+                ),
+                metadata=fallback_metadata,
+            )
+
+    candidates = _compatible_trans_candidates(
+        config,
+        subject=subject,
+        session=session,
+        desc=desc,
+    )
+
+    if len(candidates) == 1:
+        fallback_metadata = dict(metadata)
+        fallback_metadata.update(
+            {
+                "trans_scope": "compatible",
+                "trans_match": "fallback_compatible",
+            }
+        )
+        return SourceModelingPathResult(
+            path=str(candidates[0]),
+            kind="trans",
+            status="found",
+            message=(
+                "Using one compatible existing coregistration transform: "
+                f"{candidates[0].name}"
+            ),
+            metadata=fallback_metadata,
+        )
+
+    if len(candidates) > 1:
+        return SourceModelingPathResult(
+            path=str(canonical_path),
+            kind="trans",
+            status="ambiguous",
+            message=(
+                "Canonical coregistration transform is missing and multiple "
+                "compatible fallback transforms exist: "
+                + ", ".join(path.name for path in candidates)
+            ),
+            metadata=metadata | {"trans_match": "ambiguous_fallback"},
+        )
+
+    return SourceModelingPathResult(
+        path=str(canonical_path),
+        kind="trans",
+        status="missing",
+        message="No canonical or compatible coregistration transform was found.",
+        metadata=metadata,
+    )
+
+
 def find_trans_path(
     config: PipelineConfig,
     *,
@@ -312,8 +517,8 @@ def find_trans_path(
     run: str | None = None,
     desc: str = "coreg",
 ) -> Path:
-    """Return the expected coregistration transform path."""
-    return coregistration_trans_path(
+    """Return a usable coregistration transform path for backward compatibility."""
+    result = find_trans_path_result(
         config,
         subject=subject,
         session=session,
@@ -321,6 +526,7 @@ def find_trans_path(
         run=run,
         desc=desc,
     )
+    return Path(result.path)
 
 
 def _evoked_candidates(
@@ -459,7 +665,8 @@ def forward_input_overview_to_dataframe(
         run = entities["run"]
 
         info_input = find_info_input_path(config, **entities)
-        trans_path = find_trans_path(config, **entities, desc=trans_desc)
+        trans_input = find_trans_path_result(config, **entities, desc=trans_desc)
+        trans_path = Path(trans_input.path)
         src_path = find_source_space_path(config, subject, spacing=spacing)
         bem_path = find_bem_solution_path(config, subject)
         fwd_path = make_forward_path(config, **entities, spacing=spacing)
@@ -467,7 +674,7 @@ def forward_input_overview_to_dataframe(
         missing = []
         if info_input.status != "found":
             missing.append("info")
-        if not trans_path.exists():
+        if trans_input.status != "found":
             missing.append("trans")
         if not src_path.exists():
             missing.append("source_space")
@@ -495,7 +702,12 @@ def forward_input_overview_to_dataframe(
                 "info_input_kind": info_input.kind,
                 "info_input_exists": info_input.status == "found",
                 "info_input": info_input.path,
-                "trans_exists": trans_path.exists(),
+                "trans_status": trans_input.status,
+                "trans_message": trans_input.message,
+                "trans_scope": trans_input.metadata.get("trans_scope", ""),
+                "trans_match": trans_input.metadata.get("trans_match", ""),
+                "canonical_trans_path": trans_input.metadata.get("canonical_trans_path", ""),
+                "trans_exists": trans_input.status == "found",
                 "trans_path": str(trans_path),
                 "src_exists": src_path.exists(),
                 "src_path": str(src_path),
@@ -1473,329 +1685,4 @@ def noise_covariance_results_to_dataframe(
 ) -> pd.DataFrame:
     """Convert noise-covariance results to a status table."""
     return pd.DataFrame([result.__dict__ for result in results])
-
-
-def inverse_operator_input_overview_to_dataframe(
-    config: PipelineConfig,
-    recordings: Iterable[Recording],
-    *,
-    on_existing: ExistingOutputPolicy = "skip",
-    spacing: str | None = None,
-    noise_cov_mode: str | None = None,
-    inverse_method: str | None = None,
-) -> pd.DataFrame:
-    """Summarize inverse-operator inputs and output status for recordings.
-
-    Required inputs are:
-
-    - a recording info input, selected by :func:`find_info_input_path`;
-    - an existing forward solution;
-    - an existing noise covariance matrix.
-
-    The function returns one status row per recording and never reads large data
-    arrays, making it safe for notebook overviews before a batch run.
-    """
-    rows: list[dict[str, Any]] = []
-    noise_cov_mode = _noise_cov_mode(config, noise_cov_mode)
-
-    for recording in recordings:
-        entities = _recording_entities(recording)
-        subject = entities["subject"]
-        session = entities["session"]
-        task = entities["task"]
-        run = entities["run"]
-
-        info_input = find_info_input_path(config, **entities)
-        fwd_path = make_forward_path(config, **entities, spacing=spacing)
-        cov_path = make_noise_covariance_path(config, **entities, mode=noise_cov_mode)
-        inv_path = make_inverse_operator_path(
-            config,
-            **entities,
-            spacing=spacing,
-            noise_cov_mode=noise_cov_mode,
-            inverse_method=inverse_method,
-        )
-
-        missing = []
-        if info_input.status != "found":
-            missing.append("info")
-        if not fwd_path.exists():
-            missing.append("forward")
-        if not cov_path.exists():
-            missing.append("covariance")
-
-        if inv_path.exists() and on_existing == "skip":
-            status = "exists"
-            message = "Inverse operator already exists."
-        elif missing:
-            status = "missing_" + "_".join(missing)
-            message = "Missing required input(s): " + ", ".join(missing)
-        else:
-            status = "ready"
-            message = info_input.message
-
-        rows.append(
-            {
-                "subject": _subject_label(subject),
-                "session": session,
-                "task": task,
-                "run": run,
-                "status": status,
-                "message": message,
-                "info_input_kind": info_input.kind,
-                "info_input_exists": info_input.status == "found",
-                "info_input": info_input.path,
-                "fwd_exists": fwd_path.exists(),
-                "fwd_path": str(fwd_path),
-                "cov_exists": cov_path.exists(),
-                "cov_path": str(cov_path),
-                "inverse_exists": inv_path.exists(),
-                "inverse_path": str(inv_path),
-                "noise_cov_mode": noise_cov_mode,
-                "spacing": _source_spacing(config, spacing),
-                "inverse_method": str(inverse_method or config.source.inverse_method),
-                "overwrite": on_existing == "overwrite",
-            }
-        )
-
-    return pd.DataFrame(rows)
-
-
-def write_inverse_operator_for_recording(
-    config: PipelineConfig,
-    recording: Recording,
-    *,
-    on_existing: ExistingOutputPolicy = "skip",
-    spacing: str | None = None,
-    noise_cov_mode: str | None = None,
-    inverse_method: str | None = None,
-    loose: float | str | dict[str, float] | None = 0.2,
-    depth: float | dict[str, Any] | None = 0.8,
-    rank: str | dict[str, int] | None = None,
-    verbose: bool | str | int | None = True,
-) -> InverseOperatorResult:
-    """Create and write an MNE inverse operator for one recording.
-
-    Missing inputs are returned as status values instead of raising, so callers
-    can use this function safely in batch notebooks. The inverse operator itself
-    is method-agnostic; ``inverse_method`` is only used for the output filename
-    to stay aligned with downstream source-estimate derivatives.
-    """
-    from mne.minimum_norm import make_inverse_operator, write_inverse_operator
-
-    entities = _recording_entities(recording)
-    subject = entities["subject"]
-    session = entities["session"]
-    task = entities["task"]
-    run = entities["run"]
-    noise_cov_mode = _noise_cov_mode(config, noise_cov_mode)
-
-    inv_path = make_inverse_operator_path(
-        config,
-        **entities,
-        spacing=spacing,
-        noise_cov_mode=noise_cov_mode,
-        inverse_method=inverse_method,
-    )
-
-    if inv_path.exists() and on_existing == "skip":
-        return InverseOperatorResult(
-            subject=_subject_label(subject),
-            session=session,
-            task=task,
-            run=run,
-            path=str(inv_path),
-            status="skipped_existing",
-            message="Inverse operator already exists.",
-        )
-
-    overview = inverse_operator_input_overview_to_dataframe(
-        config,
-        [recording],
-        on_existing="overwrite",
-        spacing=spacing,
-        noise_cov_mode=noise_cov_mode,
-        inverse_method=inverse_method,
-    ).iloc[0]
-
-    if overview["status"] != "ready":
-        return InverseOperatorResult(
-            subject=_subject_label(subject),
-            session=session,
-            task=task,
-            run=run,
-            path=str(inv_path),
-            status=str(overview["status"]),
-            info_input=str(overview["info_input"]),
-            info_input_kind=str(overview["info_input_kind"]),
-            fwd_path=str(overview["fwd_path"]),
-            cov_path=str(overview["cov_path"]),
-            message=str(overview["message"]),
-        )
-
-    info = _read_info_from_input(
-        overview["info_input"],
-        str(overview["info_input_kind"]),
-    )
-    fwd = mne.read_forward_solution(overview["fwd_path"], verbose=verbose)
-    noise_cov = mne.read_cov(overview["cov_path"], verbose=verbose)
-
-    inverse_operator = make_inverse_operator(
-        info=info,
-        forward=fwd,
-        noise_cov=noise_cov,
-        loose=loose,
-        depth=depth,
-        rank=rank,
-        verbose=verbose,
-    )
-
-    inv_path.parent.mkdir(parents=True, exist_ok=True)
-    write_inverse_operator(
-        inv_path,
-        inverse_operator,
-        overwrite=on_existing == "overwrite",
-        verbose=verbose,
-    )
-
-    return InverseOperatorResult(
-        subject=_subject_label(subject),
-        session=session,
-        task=task,
-        run=run,
-        path=str(inv_path),
-        status="written",
-        info_input=str(overview["info_input"]),
-        info_input_kind=str(overview["info_input_kind"]),
-        fwd_path=str(overview["fwd_path"]),
-        cov_path=str(overview["cov_path"]),
-    )
-
-
-def write_inverse_operators_for_recordings(
-    config: PipelineConfig,
-    recordings: Iterable[Recording],
-    *,
-    on_existing: ExistingOutputPolicy = "skip",
-    spacing: str | None = None,
-    noise_cov_mode: str | None = None,
-    inverse_method: str | None = None,
-    loose: float | str | dict[str, float] | None = 0.2,
-    depth: float | dict[str, Any] | None = 0.8,
-    rank: str | dict[str, int] | None = None,
-    verbose: bool | str | int | None = True,
-) -> list[InverseOperatorResult]:
-    """Create inverse operators for multiple recordings."""
-    results = []
-    noise_cov_mode = _noise_cov_mode(config, noise_cov_mode)
-
-    for recording in recordings:
-        try:
-            result = write_inverse_operator_for_recording(
-                config,
-                recording,
-                on_existing=on_existing,
-                spacing=spacing,
-                noise_cov_mode=noise_cov_mode,
-                inverse_method=inverse_method,
-                loose=loose,
-                depth=depth,
-                rank=rank,
-                verbose=verbose,
-            )
-        except Exception as exc:  # noqa: BLE001 - batch notebooks should continue.
-            entities = _recording_entities(recording)
-            result = InverseOperatorResult(
-                subject=_subject_label(str(entities["subject"])),
-                session=entities["session"],
-                task=entities["task"],
-                run=entities["run"],
-                path=str(
-                    make_inverse_operator_path(
-                        config,
-                        **entities,
-                        spacing=spacing,
-                        noise_cov_mode=noise_cov_mode,
-                        inverse_method=inverse_method,
-                    )
-                ),
-                status="failed",
-                message=f"{type(exc).__name__}: {exc}",
-            )
-
-        results.append(result)
-
-    return results
-
-
-def inverse_operator_results_to_dataframe(
-    results: Iterable[InverseOperatorResult],
-) -> pd.DataFrame:
-    """Convert inverse-operator results to a status table."""
-    return pd.DataFrame([result.__dict__ for result in results])
-
-
-def inverse_operator_qc_to_dataframe(
-    results: Iterable[InverseOperatorResult] | pd.DataFrame,
-    *,
-    max_rows: int | None = None,
-) -> pd.DataFrame:
-    """Read inverse operators and return a compact QC/status table."""
-    from mne.minimum_norm import read_inverse_operator
-
-    if isinstance(results, pd.DataFrame):
-        table = results.copy()
-    else:
-        table = inverse_operator_results_to_dataframe(results)
-
-    if max_rows is not None:
-        table = table.head(max_rows).copy()
-
-    rows: list[dict[str, Any]] = []
-
-    for _, row in table.iterrows():
-        path = Path(row["path"])
-
-        try:
-            if not path.exists():
-                raise FileNotFoundError(path)
-
-            inv = read_inverse_operator(path, verbose="error")
-
-            rows.append(
-                {
-                    "subject": row.get("subject"),
-                    "session": row.get("session"),
-                    "task": row.get("task"),
-                    "run": row.get("run"),
-                    "status": "ok",
-                    "path": str(path),
-                    "file_size_mb": path.stat().st_size / 1024 / 1024,
-                    "nsource": inv.get("nsource"),
-                    "nchan": inv.get("nchan"),
-                    "source_ori": inv.get("source_ori"),
-                    "coord_frame": inv.get("coord_frame"),
-                    "message": "",
-                }
-            )
-
-        except Exception as exc:  # noqa: BLE001 - QC should continue per file.
-            rows.append(
-                {
-                    "subject": row.get("subject"),
-                    "session": row.get("session"),
-                    "task": row.get("task"),
-                    "run": row.get("run"),
-                    "status": "failed",
-                    "path": str(path),
-                    "file_size_mb": None,
-                    "nsource": None,
-                    "nchan": None,
-                    "source_ori": None,
-                    "coord_frame": None,
-                    "message": f"{type(exc).__name__}: {exc}",
-                }
-            )
-
-    return pd.DataFrame(rows)
 

@@ -185,6 +185,19 @@ class AnatomyLabelsConfig:
 
 
 @dataclass(frozen=True)
+class AnatomyCoregistrationConfig:
+    # Controls the canonical output path for MEG<->MRI transforms.
+    # - recording: include subject/session/task/run entities
+    # - session: include subject/session only
+    # - subject: include subject only
+    transform_scope: Literal["recording", "session", "subject"] = "recording"
+
+    # If the canonical transform is missing, source-modeling helpers may search
+    # compatible legacy transforms, e.g. a task-chords transform for task-nochords.
+    allow_compatible_fallback: bool = True
+
+
+@dataclass(frozen=True)
 class AnatomyConfig:
     t1_patterns: tuple[str, ...] = (
         "{subject}/anat/T1.mgz",
@@ -201,6 +214,7 @@ class AnatomyConfig:
     source_space: AnatomySourceSpaceConfig = AnatomySourceSpaceConfig()
     volume_source_space: AnatomyVolumeSourceSpaceConfig = AnatomyVolumeSourceSpaceConfig()
     labels: AnatomyLabelsConfig = AnatomyLabelsConfig()
+    coregistration: AnatomyCoregistrationConfig = AnatomyCoregistrationConfig()
 
     @property
     def t1_pattern(self) -> str:
@@ -413,6 +427,7 @@ def load_config(config_path: str | Path) -> PipelineConfig:
     anatomy_source_space_raw = anatomy_raw.get("source_space", {})
     anatomy_volume_source_space_raw = anatomy_raw.get("volume_source_space", {})
     anatomy_labels_raw = anatomy_raw.get("labels", {})
+    anatomy_coregistration_raw = anatomy_raw.get("coregistration", {})
 
     bem_method = anatomy_bem_raw.get("method", "watershed")
     if bem_method not in {"watershed", "flash"}:
@@ -426,6 +441,17 @@ def load_config(config_path: str | Path) -> PipelineConfig:
         raise ValueError(
             "anatomy.conversion.converter must currently be 'dcm2niix', "
             f"got {anatomy_converter!r}."
+        )
+
+    coregistration_transform_scope = anatomy_coregistration_raw.get(
+        "transform_scope",
+        "recording",
+    )
+    if coregistration_transform_scope not in {"recording", "session", "subject"}:
+        raise ValueError(
+            "anatomy.coregistration.transform_scope must be one of "
+            "'recording', 'session', or 'subject', "
+            f"got {coregistration_transform_scope!r}."
         )
 
     anatomy = AnatomyConfig(
@@ -482,6 +508,12 @@ def load_config(config_path: str | Path) -> PipelineConfig:
             parcellations=tuple(
                 str(value)
                 for value in anatomy_labels_raw.get("parcellations", ["aparc_sub"])
+            ),
+        ),
+        coregistration=AnatomyCoregistrationConfig(
+            transform_scope=str(coregistration_transform_scope),
+            allow_compatible_fallback=bool(
+                anatomy_coregistration_raw.get("allow_compatible_fallback", True)
             ),
         ),
     )

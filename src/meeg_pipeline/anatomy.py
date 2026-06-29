@@ -1769,6 +1769,32 @@ def results_to_dataframe(
 
 
 
+def _coregistration_transform_scope(
+    config: Any,
+    transform_scope: str | None = None,
+) -> str:
+    """Return the effective coregistration transform scope."""
+    if transform_scope is not None:
+        scope = str(transform_scope)
+    else:
+        scope = str(
+            getattr(
+                getattr(getattr(config, "anatomy", None), "coregistration", None),
+                "transform_scope",
+                "recording",
+            )
+        )
+
+    if scope not in {"recording", "session", "subject"}:
+        raise ValueError(
+            "Coregistration transform scope must be one of "
+            "'recording', 'session', or 'subject', "
+            f"got {scope!r}."
+        )
+
+    return scope
+
+
 def coregistration_trans_path(
     config: Any,
     *,
@@ -1777,29 +1803,47 @@ def coregistration_trans_path(
     task: str | None = None,
     run: str | None = None,
     desc: str = "coreg",
+    transform_scope: str | None = None,
 ) -> Path:
-    """Return the expected derivative path for a coregistration transform.
+    """Return the canonical derivative path for a coregistration transform.
 
     The transform is stored as a pipeline derivative because it is a manual
     analysis decision derived from the raw recording's digitization and the
     subject's FreeSurfer anatomy.
+
+    The entity scope is configurable via
+    ``anatomy.coregistration.transform_scope``:
+
+    - ``recording``: include subject/session/task/run entities
+    - ``session``: include subject/session entities only
+    - ``subject``: include only the subject entity
+
+    This allows projects with identical digitization/head-position across tasks
+    to store one reusable transform per subject or session.
     """
+    scope = _coregistration_transform_scope(config, transform_scope)
     subject_label = _subject_label(subject)
 
-    parts = [subject_label]
-    if session is not None:
+    include_session = scope in {"recording", "session"}
+    include_task_run = scope == "recording"
+
+    session_label = None
+    if include_session and session is not None:
         session_label = str(session) if str(session).startswith("ses-") else f"ses-{session}"
+
+    parts = [subject_label]
+    if session_label is not None:
         parts.append(session_label)
-    if task is not None:
+    if include_task_run and task is not None:
         task_label = str(task) if str(task).startswith("task-") else f"task-{task}"
         parts.append(task_label)
-    if run is not None:
+    if include_task_run and run is not None:
         run_label = str(run) if str(run).startswith("run-") else f"run-{run}"
         parts.append(run_label)
 
     filename = "_".join(parts + [f"desc-{desc}_trans.fif"])
 
-    if session is None:
+    if session_label is None:
         directory = (
             config.paths.derivatives_root
             / subject_label
@@ -1847,6 +1891,7 @@ def coregistration_status_to_dataframe(
         )
         raw_path = bids_path_to_path(raw_bids_path)
         fs_dir = subject_dir(subjects_dir, subject)
+        transform_scope = _coregistration_transform_scope(config)
         trans_path = coregistration_trans_path(
             config,
             subject=subject,
@@ -1866,6 +1911,7 @@ def coregistration_status_to_dataframe(
                 "raw_path": str(raw_path),
                 "freesurfer_subject_exists": fs_dir.exists(),
                 "freesurfer_subject_dir": str(fs_dir),
+                "trans_scope": transform_scope,
                 "trans_exists": trans_path.exists(),
                 "trans_path": str(trans_path),
             }

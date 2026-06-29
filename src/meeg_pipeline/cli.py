@@ -30,6 +30,26 @@ from meeg_pipeline.events import (
 )
 from meeg_pipeline.project import init_project
 from meeg_pipeline.config import load_config
+from meeg_pipeline.workflow import (
+    find_recording,
+    iter_recordings,
+    recording_label,
+    recordings_to_dataframe,
+)
+from meeg_pipeline.source_modeling import (
+    apply_inverse_to_evokeds_for_recordings,
+    epoch_label_time_course_results_to_dataframe,
+    extract_epoch_label_time_courses_for_recordings,
+    extract_label_time_courses_for_recordings,
+    forward_results_to_dataframe,
+    inverse_operator_results_to_dataframe,
+    label_time_course_results_to_dataframe,
+    noise_covariance_results_to_dataframe,
+    source_estimate_results_to_dataframe,
+    write_forward_solutions_for_recordings,
+    write_inverse_operators_for_recordings,
+    write_noise_covariances_for_recordings,
+)
 
 
 def main() -> None:
@@ -222,6 +242,138 @@ def main() -> None:
         action="store_true",
         help="Overwrite existing template files.",
     )
+
+
+    list_recordings_parser = subparsers.add_parser(
+        "list-recordings",
+        help="List recordings discovered from raw BIDS for batch/cluster processing.",
+    )
+    list_recordings_parser.add_argument("--config", required=True)
+    list_recordings_parser.add_argument("--subjects", nargs="+", default=None)
+    list_recordings_parser.add_argument("--tasks", nargs="+", default=None)
+    list_recordings_parser.add_argument("--sessions", nargs="+", default=None)
+    list_recordings_parser.add_argument("--runs", nargs="+", default=None)
+    list_recordings_parser.add_argument(
+        "--tsv",
+        action="store_true",
+        help="Print tab-separated output instead of a pretty table.",
+    )
+
+    def add_recording_args(command_parser: argparse.ArgumentParser) -> None:
+        command_parser.add_argument("--config", required=True)
+        command_parser.add_argument("--subject", required=True)
+        command_parser.add_argument("--task", default=None)
+        command_parser.add_argument("--session", default=None)
+        command_parser.add_argument("--run", default=None)
+        command_parser.add_argument(
+            "--overwrite",
+            action="store_true",
+            help="Overwrite an existing output instead of skipping it.",
+        )
+        command_parser.add_argument(
+            "--verbose",
+            action="store_true",
+            help="Show verbose MNE output.",
+        )
+
+    source_forward_parser = subparsers.add_parser(
+        "source-forward",
+        help="Write the forward solution for one recording.",
+    )
+    add_recording_args(source_forward_parser)
+    source_forward_parser.add_argument("--spacing", default=None)
+    source_forward_parser.add_argument("--n-jobs", type=int, default=None)
+
+    source_noise_cov_parser = subparsers.add_parser(
+        "source-noise-cov",
+        help="Write the noise covariance for one recording.",
+    )
+    add_recording_args(source_noise_cov_parser)
+    source_noise_cov_parser.add_argument("--mode", default=None)
+    source_noise_cov_parser.add_argument("--method", default="empirical")
+
+    source_inverse_parser = subparsers.add_parser(
+        "source-inverse",
+        help="Write the inverse operator for one recording.",
+    )
+    add_recording_args(source_inverse_parser)
+    source_inverse_parser.add_argument("--spacing", default=None)
+    source_inverse_parser.add_argument("--noise-cov-mode", default=None)
+    source_inverse_parser.add_argument("--inverse-method", default=None)
+    source_inverse_parser.add_argument("--loose", default=0.2)
+    source_inverse_parser.add_argument("--depth", type=float, default=0.8)
+
+    source_apply_inverse_parser = subparsers.add_parser(
+        "source-apply-inverse",
+        help="Apply the inverse operator to evokeds for one recording.",
+    )
+    add_recording_args(source_apply_inverse_parser)
+    source_apply_inverse_parser.add_argument("--method", default=None)
+    source_apply_inverse_parser.add_argument("--snr", type=float, default=None)
+    source_apply_inverse_parser.add_argument("--lambda2", type=float, default=None)
+    source_apply_inverse_parser.add_argument("--conditions", nargs="+", default=None)
+    source_apply_inverse_parser.add_argument("--spacing", default=None)
+    source_apply_inverse_parser.add_argument("--noise-cov-mode", default=None)
+    source_apply_inverse_parser.add_argument("--pick-ori", default=None)
+
+    source_label_tc_parser = subparsers.add_parser(
+        "source-label-time-courses",
+        help="Extract evoked source-estimate label time courses for one recording.",
+    )
+    add_recording_args(source_label_tc_parser)
+    source_label_tc_parser.add_argument("--method", default=None)
+    source_label_tc_parser.add_argument("--parcellation", default=None)
+    source_label_tc_parser.add_argument("--extract-mode", default=None)
+    source_label_tc_parser.add_argument("--conditions", nargs="+", default=None)
+    source_label_tc_parser.add_argument("--target-labels", nargs="+", default=None)
+
+    source_epoch_label_tc_parser = subparsers.add_parser(
+        "source-label-time-courses-epochs",
+        help="Extract epoch-wise source-label time courses for one recording.",
+    )
+    add_recording_args(source_epoch_label_tc_parser)
+    source_epoch_label_tc_parser.add_argument("--method", default=None)
+    source_epoch_label_tc_parser.add_argument("--snr", type=float, default=None)
+    source_epoch_label_tc_parser.add_argument("--lambda2", type=float, default=None)
+    source_epoch_label_tc_parser.add_argument("--parcellation", default=None)
+    source_epoch_label_tc_parser.add_argument("--extract-mode", default=None)
+    source_epoch_label_tc_parser.add_argument("--target-labels", nargs="+", default=None)
+    source_epoch_label_tc_parser.add_argument("--spacing", default=None)
+    source_epoch_label_tc_parser.add_argument("--noise-cov-mode", default=None)
+    source_epoch_label_tc_parser.add_argument("--decim", type=int, default=None)
+    source_epoch_label_tc_parser.add_argument("--tmin", type=float, default=None)
+    source_epoch_label_tc_parser.add_argument("--tmax", type=float, default=None)
+    source_epoch_label_tc_parser.add_argument("--dtype", default=None)
+    source_epoch_label_tc_parser.add_argument(
+        "--allow-empty",
+        action="store_true",
+        help="Allow labels without vertices in the source space.",
+    )
+
+    def selected_recording_from_args(config, args):
+        recordings = list(
+            iter_recordings(
+                config,
+                subjects=[args.subject],
+                tasks=[args.task] if args.task is not None else None,
+                sessions=[args.session] if args.session is not None else None,
+                runs=[args.run] if args.run is not None else None,
+            )
+        )
+        return find_recording(
+            recordings,
+            subject=args.subject,
+            session=args.session,
+            task=args.task,
+            run=args.run,
+            require=True,
+        )
+
+    def print_results_table(df):
+        if df.empty:
+            print("No rows.")
+        else:
+            print(df.to_string(index=False))
 
     args = parser.parse_args()
 
@@ -459,6 +611,135 @@ def main() -> None:
             print(f"Unique IDs: {result.unique_ids}")
         print(f"Output: {result.output_path}")
     
+
+    elif args.command == "list-recordings":
+        config = load_config(args.config)
+        recordings = list(
+            iter_recordings(
+                config,
+                subjects=args.subjects,
+                tasks=args.tasks,
+                sessions=args.sessions,
+                runs=args.runs,
+            )
+        )
+        df = recordings_to_dataframe(recordings, include_index=True)
+        if args.tsv:
+            print(df.to_csv(sep="\t", index=False), end="")
+        else:
+            print_results_table(df)
+
+    elif args.command == "source-forward":
+        config = load_config(args.config)
+        recording = selected_recording_from_args(config, args)
+        print(f"Recording: {recording_label(recording)}")
+        results = write_forward_solutions_for_recordings(
+            config,
+            [recording],
+            on_existing="overwrite" if args.overwrite else "skip",
+            spacing=args.spacing,
+            n_jobs=args.n_jobs,
+            verbose=args.verbose,
+        )
+        print_results_table(forward_results_to_dataframe(results))
+
+    elif args.command == "source-noise-cov":
+        config = load_config(args.config)
+        recording = selected_recording_from_args(config, args)
+        print(f"Recording: {recording_label(recording)}")
+        results = write_noise_covariances_for_recordings(
+            config,
+            [recording],
+            on_existing="overwrite" if args.overwrite else "skip",
+            mode=args.mode,
+            method=args.method,
+            verbose=args.verbose,
+        )
+        print_results_table(noise_covariance_results_to_dataframe(results))
+
+    elif args.command == "source-inverse":
+        config = load_config(args.config)
+        recording = selected_recording_from_args(config, args)
+        print(f"Recording: {recording_label(recording)}")
+        loose = args.loose
+        try:
+            loose = float(loose)
+        except (TypeError, ValueError):
+            pass
+        results = write_inverse_operators_for_recordings(
+            config,
+            [recording],
+            on_existing="overwrite" if args.overwrite else "skip",
+            spacing=args.spacing,
+            noise_cov_mode=args.noise_cov_mode,
+            inverse_method=args.inverse_method,
+            loose=loose,
+            depth=args.depth,
+            verbose=args.verbose,
+        )
+        print_results_table(inverse_operator_results_to_dataframe(results))
+
+    elif args.command == "source-apply-inverse":
+        config = load_config(args.config)
+        recording = selected_recording_from_args(config, args)
+        print(f"Recording: {recording_label(recording)}")
+        results = apply_inverse_to_evokeds_for_recordings(
+            config,
+            [recording],
+            on_existing="overwrite" if args.overwrite else "skip",
+            method=args.method,
+            lambda2=args.lambda2,
+            snr=args.snr,
+            pick_conditions=args.conditions,
+            spacing=args.spacing,
+            noise_cov_mode=args.noise_cov_mode,
+            pick_ori=args.pick_ori,
+            verbose=args.verbose,
+        )
+        print_results_table(source_estimate_results_to_dataframe(results))
+
+    elif args.command == "source-label-time-courses":
+        config = load_config(args.config)
+        recording = selected_recording_from_args(config, args)
+        print(f"Recording: {recording_label(recording)}")
+        results = extract_label_time_courses_for_recordings(
+            config,
+            [recording],
+            on_existing="overwrite" if args.overwrite else "skip",
+            method=args.method,
+            parcellation=args.parcellation,
+            extract_mode=args.extract_mode,
+            pick_conditions=args.conditions,
+            target_labels=args.target_labels,
+            verbose=args.verbose,
+        )
+        print_results_table(label_time_course_results_to_dataframe(results))
+
+    elif args.command == "source-label-time-courses-epochs":
+        config = load_config(args.config)
+        recording = selected_recording_from_args(config, args)
+        print(f"Recording: {recording_label(recording)}")
+        results = extract_epoch_label_time_courses_for_recordings(
+            config,
+            [recording],
+            on_existing="overwrite" if args.overwrite else "skip",
+            method=args.method,
+            lambda2=args.lambda2,
+            snr=args.snr,
+            parcellation=args.parcellation,
+            extract_mode=args.extract_mode,
+            target_labels=args.target_labels,
+            spacing=args.spacing,
+            noise_cov_mode=args.noise_cov_mode,
+            decim=args.decim,
+            tmin=args.tmin,
+            tmax=args.tmax,
+            dtype=args.dtype,
+            allow_empty=args.allow_empty,
+            verbose=args.verbose,
+        )
+        print_results_table(epoch_label_time_course_results_to_dataframe(results))
+
     elif args.command == "init-project":
         result = init_project(
             args.project_name,

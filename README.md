@@ -296,13 +296,8 @@ A project should then be organized like this:
 ```text
 my-meeg-project/
   README.md
-
-  rawdata/
-    dataset_description.json
-    participants.tsv
-    sub-0001/
-      meg/
-        sub-0001_task-example_meg.fif
+  dataset_description.json
+  participants.tsv
 
   configs/
     local.yaml
@@ -317,12 +312,13 @@ my-meeg-project/
       04_coregistration.ipynb
 
     1B_meg_preprocessing/
-      01_raw_bids_and_events.ipynb
-      02_project_specific_events.ipynb
-      03_preprocessing.ipynb
-      04_artifact_annotation.ipynb
-      05_ica_cleaning.ipynb
-      06_epoching.ipynb
+      01_raw_bids_import.ipynb
+      02_bad_channels_and_events.ipynb
+      03_project_specific_events.ipynb
+      04_preprocessing.ipynb
+      05_artifact_annotation.ipynb
+      06_ica_cleaning.ipynb
+      07_epoching.ipynb
 
     2_sensor_analysis/
       01_evokeds.ipynb
@@ -333,16 +329,12 @@ my-meeg-project/
       01_forward_solution.ipynb
       02_noise_covariance.ipynb
       03_inverse_operator.ipynb
-      04_apply_inverse_evokeds.ipynb
-      05_morph_evoked_source_estimates_to_fsaverage.ipynb
-      06_extract_label_time_courses_evokeds.ipynb
-      07_extract_label_time_courses_epochs.ipynb
+      04_evoked_source_estimates.ipynb
+      05_evoked_label_time_courses.ipynb
+      06_epoch_label_time_courses.ipynb
 
     4_connectivity/
-      01_connectivity_inputs.ipynb
-      02_source_label_spectral_connectivity.ipynb
-      03_connectivity_qc_and_export.ipynb
-      04_connectivity_plots.ipynb
+      01_label_connectivity.ipynb
 
     5_decoding/
       01_sensor_decoding.ipynb
@@ -357,10 +349,6 @@ my-meeg-project/
         meg/
           task-example/
             README.md
-
-    emptyroom/
-      ses-YYYYMMDD/
-        <original_empty_room_file>.fif
 
     mri_raw/
       sub-0001/
@@ -405,7 +393,7 @@ project:
   name: "my-meeg-project"
 
 paths:
-  bids_root: "./rawdata"
+  bids_root: "."
   sourcedata_root: "./sourcedata"
   derivatives_root: "./derivatives/meeg-pipeline"
   mri_raw_root: "./sourcedata/mri_raw"
@@ -491,11 +479,11 @@ library.
 
 The project folder contains:
 
-- a raw BIDS dataset in `rawdata/`, configured as `paths.bids_root`
+- project-level BIDS files such as `dataset_description.json` and `participants.tsv`
 - project-specific configuration in `configs/`
 - workflow notebooks in `notebooks/`
 - original source files in `sourcedata/`
-- BIDS-compatible raw MEG/EEG files under `rawdata/sub-*/...`
+- raw BIDS files at the BIDS root
 - M/EEG processed outputs in `derivatives/meeg-pipeline/`
 - FreeSurfer anatomy outputs in `derivatives/freesurfer/subjects/`
 
@@ -513,12 +501,13 @@ notebooks/
     04_coregistration.ipynb
 
   1B_meg_preprocessing/
-    01_raw_bids_and_events.ipynb
-    02_project_specific_events.ipynb
-    03_preprocessing.ipynb
-    04_artifact_annotation.ipynb
-    05_ica_cleaning.ipynb
-    06_epoching.ipynb
+    01_raw_bids_import.ipynb
+    02_bad_channels_and_events.ipynb
+    03_project_specific_events.ipynb
+    04_preprocessing.ipynb
+    05_artifact_annotation.ipynb
+    06_ica_cleaning.ipynb
+    07_epoching.ipynb
 
   2_sensor_analysis/
     01_evokeds.ipynb
@@ -529,16 +518,12 @@ notebooks/
     01_forward_solution.ipynb
     02_noise_covariance.ipynb
     03_inverse_operator.ipynb
-    04_apply_inverse_evokeds.ipynb
-    05_morph_evoked_source_estimates_to_fsaverage.ipynb
-    06_extract_label_time_courses_evokeds.ipynb
-    07_extract_label_time_courses_epochs.ipynb
+    04_evoked_source_estimates.ipynb
+    05_evoked_label_time_courses.ipynb
+    06_epoch_label_time_courses.ipynb
 
   4_connectivity/
-    01_connectivity_inputs.ipynb
-    02_source_label_spectral_connectivity.ipynb
-    03_connectivity_qc_and_export.ipynb
-    04_connectivity_plots.ipynb
+    01_label_connectivity.ipynb
 
   5_decoding/
     01_sensor_decoding.ipynb
@@ -547,11 +532,12 @@ notebooks/
 
 `1A_anatomy` and `1B_meg_preprocessing` can often be run independently.
 `1B_meg_preprocessing` ends with cleaned epochs. `2_sensor_analysis` derives
-sensor-level products such as evoked responses. Anatomy, cleaned M/EEG
-derivatives, sensor-level evokeds, and empty-room or baseline noise data come
-together in `3_source_modeling`, where MEG/EEG recordings need anatomical source
-spaces, BEM solutions, coregistration transforms, noise covariance matrices,
-inverse operators, source estimates, fsaverage morphs, and label time courses.
+sensor-level analysis products such as evoked responses. Anatomy, cleaned
+M/EEG derivatives, sensor-level evokeds, and empty-room or baseline noise data
+come together later in `3_source_modeling`, where MEG/EEG recordings need
+anatomical source spaces, BEM solutions, coregistration transforms, noise
+covariance matrices, inverse operators, source estimates, and label time
+courses.
 
 Downstream workflows should treat source modeling as a feature-generation layer:
 evoked source estimates support source visualization, while epoch-level label
@@ -623,29 +609,26 @@ empty-room subject. Empty-room recordings do not require `events.tsv` files.
 
 ### Empty-room raw BIDS output
 
-After import, empty-room recordings are stored in the configured raw BIDS tree
-using a dedicated empty-room subject and acquisition-date session. With the
-recommended `paths.bids_root: "./rawdata"` layout:
+After import, empty-room recordings are stored in the raw BIDS tree using a
+dedicated empty-room subject and acquisition-date session:
 
 ```text
-rawdata/
-  sub-emptyroom/
-    ses-YYYYMMDD/
-      meg/
-        sub-emptyroom_ses-YYYYMMDD_task-noise_meg.fif
-        sub-emptyroom_ses-YYYYMMDD_task-noise_channels.tsv
-        sub-emptyroom_ses-YYYYMMDD_task-noise_meg.json
+sub-emptyroom/
+  ses-YYYYMMDD/
+    meg/
+      sub-emptyroom_ses-YYYYMMDD_task-noise_meg.fif
+      sub-emptyroom_ses-YYYYMMDD_task-noise_channels.tsv
+      sub-emptyroom_ses-YYYYMMDD_task-noise_meg.json
 ```
 
 If multiple empty-room recordings exist for the same day, BIDS runs are added:
 
 ```text
-rawdata/
-  sub-emptyroom/
-    ses-YYYYMMDD/
-      meg/
-        sub-emptyroom_ses-YYYYMMDD_task-noise_run-01_meg.fif
-        sub-emptyroom_ses-YYYYMMDD_task-noise_run-02_meg.fif
+sub-emptyroom/
+  ses-YYYYMMDD/
+    meg/
+      sub-emptyroom_ses-YYYYMMDD_task-noise_run-01_meg.fif
+      sub-emptyroom_ses-YYYYMMDD_task-noise_run-02_meg.fif
 ```
 
 ### Empty-room config
@@ -703,66 +686,14 @@ The source configuration controls which covariance mode is used:
 
 ```yaml
 source:
-  noise_cov:
-    mode: "erm"
+  noise_cov_mode: "erm"
 ```
-
-The older flat alias `source.noise_cov_mode` is still accepted for backward
-compatibility, but new configs should use `source.noise_cov.mode`.
 
 Empty-room data should be processed with a strategy compatible with the analyzed
 MEG recordings, including comparable channel selection, filtering, bad-channel
 handling, and any project-specific preprocessing decisions that affect the data
 rank. Source-space workflows then match the covariance channels to the recording
 used for the forward and inverse operators.
-
-
-### Empty-room preprocessing model
-
-Empty-room recordings are imported into raw BIDS as `sub-emptyroom`, but they are
-not processed through the regular subject preprocessing, ICA, epoching, or evoked
-workflow. For ERM-based covariance, the selected raw BIDS empty-room FIF is
-loaded during the noise-covariance step, MEG channels are picked, and the
-project-level notch, high-pass, and low-pass filter settings from
-`preprocessing.filtering` are applied in memory before `mne.compute_raw_covariance`
-is called.
-
-In other words, the regular experimental recordings follow this path:
-
-```text
-sourcedata -> raw BIDS -> preprocessing -> cleaning -> epochs -> evokeds/source
-```
-
-Empty-room recordings follow this shorter path:
-
-```text
-sourcedata/emptyroom -> raw BIDS sub-emptyroom -> in-memory filtering during noise covariance
-```
-
-The filtered empty-room raw object is not written as a derivative. If filter
-settings change, the raw BIDS empty-room FIF does not need to be regenerated, but
-all filter-dependent products derived from it should be recomputed, especially:
-
-```text
-cov/
-inverse/
-source_estimates/
-source_estimates_fsaverage/
-label_time_course/
-label_time_course_epochs/
-connectivity/
-derivatives/meeg-pipeline/qc/connectivity/
-```
-
-Regular experimental derivatives such as `preprocessing/`, `cleaning/`,
-`epochs/`, and `evokeds/` also need recomputation after a filter change. Geometry
-products such as BEM solutions, source spaces, forward solutions, and
-coregistration transforms usually do not depend on the filter settings and can be
-kept unless the anatomy or MEG-to-MRI transform changed.
-
-ERM-specific bad-channel QC is currently less explicit than regular recording
-QC. The covariance step matches covariance channels to the analyzed recording
-info, but a dedicated ERM-QC derivative is still a future improvement.
 
 ## Source modeling derivatives
 
@@ -779,15 +710,9 @@ derivatives/meeg-pipeline/sub-0001/ses-01/meg/
     sub-0001_ses-01_task-example_run-01_space-ico5_desc-ermDspm-inv.fif
   source_estimates/
     sub-0001_ses-01_task-example_run-01_space-source_desc-standardDspm-stc.h5
-  source_estimates_fsaverage/
-    sub-0001_ses-01_task-example_run-01_space-fsaverage_desc-standardDspm-stc.h5
   label_time_course/
-    sub-0001_ses-01_task-example_run-01_space-label_parc-aparcSub_desc-standardDspmmeanFlip-ltc.tsv
-  label_time_course_epochs/
-    sub-0001_ses-01_task-example_run-01_space-label_parc-aparcSub_desc-epochDspmmeanFlipdecim5-ltc.npy
-    sub-0001_ses-01_task-example_run-01_space-label_parc-aparcSub_desc-epochDspmmeanFlipdecim5-ltc_labels.tsv
-    sub-0001_ses-01_task-example_run-01_space-label_parc-aparcSub_desc-epochDspmmeanFlipdecim5-ltc_times.tsv
-    sub-0001_ses-01_task-example_run-01_space-label_parc-aparcSub_desc-epochDspmmeanFlipdecim5-ltc_epochs.tsv
+    sub-0001_ses-01_task-example_run-01_space-label_parc-aparcSub_desc-standardDspm-ltc.tsv
+    sub-0001_ses-01_task-example_run-01_space-label_parc-aparcSub_desc-epochDspm-ltc.h5
 ```
 
 The default source-modeling prerequisites are:
@@ -807,58 +732,6 @@ The default source-modeling prerequisites are:
 2_sensor_analysis:
   derivatives/meeg-pipeline/.../evokeds/*desc-*_ave.fif
 ```
-
-The recommended source configuration uses nested blocks. The older flat keys
-such as `noise_cov_mode`, `inverse_method`, `parcellation`, `extract_mode`, and
-`target_labels` are still accepted as compatibility aliases, but new projects
-should prefer the nested structure:
-
-```yaml
-source:
-  spacing: "ico5"
-
-  inverse:
-    method: "dSPM"
-    snr: 3.0
-    lambda2: null
-    pick_ori: null
-
-  labels:
-    parcellation: "aparc_sub"
-    extract_mode: "mean_flip"
-    target_labels: null
-
-  noise_cov:
-    mode: "erm"       # "erm" | "baseline" | "ad_hoc"
-
-  apply_inverse:
-    apply_to: "evoked"
-    pick_conditions: "all"
-    save_stcs: true
-    stc_format: "h5"
-
-  morph:
-    enabled: true
-    subject_to: "fsaverage"
-    spacing: null
-    smooth: null
-    method: null
-    pick_conditions: "all"
-    stc_format: "h5"
-
-  label_time_courses_epochs:
-    enabled: true
-    decim: 5
-    tmin: null
-    tmax: null
-    dtype: "float32"
-    save_format: "npy"
-```
-
-`mean_flip` is the recommended default for label time courses extracted from
-surface source estimates. It reduces cancellation that can occur when source
-orientations differ within a label. `mean` may be useful for special cases, but
-it is usually not the safest default for cortical-label time courses.
 
 Existing source-modeling outputs are skipped by default unless the corresponding
 step name is included in notebook-level `OVERWRITE_STEPS`. Missing inputs are
@@ -974,9 +847,9 @@ sourcedata/
       <original_empty_room_file>.fif
 ```
 
-These files are converted by `1B_meg_preprocessing/01_raw_bids_and_events.ipynb`
-to `rawdata/sub-emptyroom/ses-YYYYMMDD/meg/` when `paths.bids_root: "./rawdata"` is used.
-The original empty-room filename is arbitrary.
+These files are converted by `1B_meg_preprocessing/01_raw_bids_import.ipynb`
+to `sub-emptyroom/ses-YYYYMMDD/meg/` in the raw BIDS tree. The original empty-room
+filename is arbitrary.
 
 ### MRI inputs
 
@@ -1052,47 +925,29 @@ anatomy:
 ### Raw BIDS data
 
 The BIDS-formatted raw MEG/EEG data are stored outside `sourcedata/`, using BIDS
-naming. The recommended project layout keeps the raw BIDS dataset in a dedicated
-`rawdata/` folder:
-
-```yaml
-paths:
-  bids_root: "./rawdata"
-```
-
-In this layout, the project root is a working directory and `rawdata/` is the BIDS
-dataset root. BIDS tools should be pointed to `rawdata/`, not to the outer project
-folder. This keeps `sourcedata/`, `derivatives/`, `configs/`, and `notebooks/`
-as project-level siblings instead of mixing `sub-*` raw-data folders directly
-with workflow files.
+naming.
 
 With BIDS sessions:
 
 ```text
-rawdata/
-  dataset_description.json
-  participants.tsv
-  sub-0001/
-    ses-20260523/
-      meg/
-        sub-0001_ses-20260523_task-rest_meg.fif
-        sub-0001_ses-20260523_task-rest_meg.json
-        sub-0001_ses-20260523_task-rest_channels.tsv
-        sub-0001_ses-20260523_task-rest_events.tsv
+sub-0001/
+  ses-20260523/
+    meg/
+      sub-0001_ses-20260523_task-rest_meg.fif
+      sub-0001_ses-20260523_task-rest_meg.json
+      sub-0001_ses-20260523_task-rest_channels.tsv
+      sub-0001_ses-20260523_task-rest_events.tsv
 ```
 
 Without BIDS sessions:
 
 ```text
-rawdata/
-  dataset_description.json
-  participants.tsv
-  sub-0001/
-    meg/
-      sub-0001_task-rest_meg.fif
-      sub-0001_task-rest_meg.json
-      sub-0001_task-rest_channels.tsv
-      sub-0001_task-rest_events.tsv
+sub-0001/
+  meg/
+    sub-0001_task-rest_meg.fif
+    sub-0001_task-rest_meg.json
+    sub-0001_task-rest_channels.tsv
+    sub-0001_task-rest_events.tsv
 ```
 
 Raw BIDS FIF files are generated from the original source data, preferably using
@@ -1100,27 +955,21 @@ MNE-BIDS. They should be treated as immutable analysis inputs.
 
 The raw BIDS area should not contain intermediate preprocessing outputs.
 
-Using `rawdata/` is BIDS-compatible as long as `rawdata/` itself is treated as the BIDS
-dataset root and contains the required top-level BIDS files such as
-`dataset_description.json` and `participants.tsv`. The outer project folder is
-then a convenience workspace, not the BIDS dataset root.
-
 ### BIDS sidecars
 
 Some BIDS sidecar files are part of the raw BIDS dataset and may be updated when
 metadata decisions are made.
 
-For example, manual bad-channel decisions should update the `channels.tsv` file
-inside the configured raw BIDS root:
+For example, manual bad-channel decisions should update:
 
 ```text
-rawdata/sub-0001/meg/sub-0001_task-rest_channels.tsv
+sub-0001/meg/sub-0001_task-rest_channels.tsv
 ```
 
 or, with sessions:
 
 ```text
-rawdata/sub-0001/ses-20260523/meg/sub-0001_ses-20260523_task-rest_channels.tsv
+sub-0001/ses-20260523/meg/sub-0001_ses-20260523_task-rest_channels.tsv
 ```
 
 using the BIDS columns:
@@ -1357,10 +1206,7 @@ blocks.
 
 ## Minimal BIDS project files
 
-In the recommended layout, create BIDS metadata files at the root of the raw
-BIDS dataset, i.e. under `rawdata/`, not in the outer project folder.
-
-Create `rawdata/dataset_description.json`.
+At the project root, create a `dataset_description.json` file.
 
 Example:
 
@@ -1373,7 +1219,7 @@ Example:
 }
 ```
 
-Also create `rawdata/participants.tsv`.
+Also create a `participants.tsv` file.
 
 Example:
 
@@ -1383,7 +1229,7 @@ sub-0001
 sub-0002
 ```
 
-The participant IDs in `rawdata/participants.tsv` should match the `rawdata/sub-*` folders.
+The participant IDs in `participants.tsv` should match the `sub-*` folders.
 
 ## Minimal project config
 
@@ -1402,7 +1248,7 @@ project:
   name: "my-meeg-project"
 
 paths:
-  bids_root: "./rawdata"
+  bids_root: "."
   sourcedata_root: "./sourcedata"
   derivatives_root: "./derivatives/meeg-pipeline"
   mri_raw_root: "./sourcedata/mri_raw"
@@ -1413,9 +1259,6 @@ freesurfer:
   subjects_dir: "./derivatives/freesurfer/subjects"
 
 anatomy:
-  coregistration:
-    transform_scope: "recording"       # "recording" | "session" | "subject"
-    allow_compatible_fallback: true
   t1_patterns:
     - "{subject}/anat/T1.mgz"
     - "{subject}/anat/*T1w*.nii*"
@@ -1451,27 +1294,15 @@ anatomy:
 sourcedata:
   sessions: "ignore"  # "ignore" | "include" | "auto"
 
+runtime:
+  n_jobs: 4
+  thread_limits: true
+
 bids:
   datatype: "meg"
   task: null
   session: null
   run: null
-
-empty_room:
-  enabled: true
-  subject: "emptyroom"
-  task: "noise"
-  sourcedata_root: "./sourcedata/emptyroom"
-  sessions: "from_folders"
-  session_pattern: "ses-*"
-  file_patterns:
-    - "*.fif"
-    - "*.fif.gz"
-  matching:
-    strategy: "meas_date_nearest"
-    max_time_diff_hours: 24
-    allow_fallback: true
-    fallback_strategy: "session_date_nearest"
 
 events:
   extraction:
@@ -1489,10 +1320,6 @@ events:
     adjust_timeline_by_msec: 0.0
     tolerance_samples: 1
     mute_bad_annotations: true
-
-runtime:
-  n_jobs: 4
-  thread_limits: true
 
 preprocessing:
   filtering:
@@ -1523,82 +1350,13 @@ autoreject:
   n_interpolates: null
   subset: null
 
-conditions:
-  definitions:
-    first_deviant: "deviant == 1"
-    condition_a: "trial_type == 'condition_a'"
-
 source:
   spacing: "ico5"
-  inverse:
-    method: "dSPM"
-    snr: 3.0
-    lambda2: null
-    pick_ori: null
-  labels:
-    parcellation: "aparc_sub"
-    extract_mode: "mean_flip"
-    target_labels: null
-  noise_cov:
-    mode: "erm"
-  apply_inverse:
-    apply_to: "evoked"
-    pick_conditions: "all"
-    save_stcs: true
-    stc_format: "h5"
-  morph:
-    enabled: true
-    subject_to: "fsaverage"
-    spacing: null
-    smooth: null
-    method: null
-    pick_conditions: "all"
-    stc_format: "h5"
-  label_time_courses_epochs:
-    enabled: true
-    decim: 5
-    tmin: null
-    tmax: null
-    dtype: "float32"
-    save_format: "npy"
-
-connectivity:
-  enabled: true
-  input: "label_time_course_epochs"
-  space: "label"
+  noise_cov_mode: "erm"
+  target_labels: null
   parcellation: "aparc_sub"
-  methods:
-    - "imcoh"
-    - "wpli"
-  mode: "multitaper"
-  windows:
-    pre_window:
-      tmin: -0.75
-      tmax: 0.0
-    post_window:
-      tmin: 0.0
-      tmax: 0.75
-  bands:
-    beta:
-      fmin: 13.0
-      fmax: 30.0
-    low_gamma:
-      fmin: 30.0
-      fmax: 70.0
-  faverage: true
-  conditions:
-    - "first_deviant"
-  label_patterns:
-    - "transversetemporal"
-    - "superiortemporal"
-    - "bankssts"
-    - "middletemporal"
-    - "inferiortemporal"
-    - "supramarginal"
-    - "insula"
-  block_size: 1000
-  n_jobs: 4
-  save_format: "npz"
+  extract_mode: "mean"
+  inverse_method: "dSPM"
 ```
 
 To disable notch filtering, use:
@@ -2029,8 +1787,8 @@ Recommended workflow:
 Example files:
 
 ```text
-rawdata/sub-0001/meg/sub-0001_task-rest_meg.fif
-rawdata/sub-0001/meg/sub-0001_task-rest_channels.tsv
+sub-0001/meg/sub-0001_task-rest_meg.fif
+sub-0001/meg/sub-0001_task-rest_channels.tsv
 
 derivatives/meeg-pipeline/sub-0001/meg/qc/
   sub-0001_task-rest_desc-badchannels.json
@@ -2164,43 +1922,37 @@ Recommended workflow:
 7. Save `desc-cleaned_epo.fif`.
 
 Evokeds are created from saved epochs using project-specific condition
-definitions. Conditions can be simple event labels, old-style event-code lists,
-or pandas metadata queries.
+definitions.
 
 Recommended workflow:
 
 1. Load `desc-cleaned_epo.fif`.
 2. Inspect `epochs.metadata`.
-3. Define named condition definitions in `configs/local.yaml` when the same
-   selections should be reused across evokeds, source modeling, connectivity, or
-   decoding.
+3. Define project-specific conditions as metadata queries or old-style event ID
+   lists.
 4. Average selected epochs per condition.
 5. Save `desc-evoked_ave.fif`.
 
-Example central condition definitions:
-
-```yaml
-conditions:
-  definitions:
-    first_deviant: "deviant == 1"
-    key_change: "note_index == 0"
-    condition_a: "trial_type == 'condition_a'"
-```
-
-Downstream notebooks can then refer to the named conditions:
+Example condition definitions:
 
 ```python
-from meeg_pipeline.conditions import condition_definitions_from_config
-from meeg_pipeline.evokeds import configured_conditions
-
-condition_definitions = condition_definitions_from_config(config)
-conditions = configured_conditions(config)
+CONDITIONS = {
+    "condition_a": "trial_type == 'condition_a'",
+    "high_feature": "feature_value >= 5",
+}
 ```
 
-Projects that do not need derived metadata queries can still work directly with
-trigger/event labels such as `trial_type == 'tone'`, `event_name == 'deviant'`,
-or MNE event IDs. The central `conditions.definitions` block is optional, but it
-is recommended when a condition is reused by multiple analysis stages.
+Old-style event-code definitions are also possible:
+
+```python
+CONDITIONS = {
+    "some_condition": [1, 5, 9, 12],
+}
+```
+
+Condition definitions are project-specific, but they should usually be defined
+centrally in `configs/local.yaml` under `conditions.definitions` so evoked,
+source, connectivity, and decoding notebooks can use the same selections.
 
 ## Notebook workflow
 
@@ -2219,36 +1971,26 @@ notebooks/
     04_coregistration.ipynb
 
   1B_meg_preprocessing/
-    01_raw_bids_and_events.ipynb
-    02_project_specific_events.ipynb
-    03_preprocessing.ipynb
-    04_artifact_annotation.ipynb
-    05_ica_cleaning.ipynb
-    06_epoching.ipynb
+    01_raw_bids_import.ipynb
+    02_bad_channels_and_events.ipynb
+    03_project_specific_events.ipynb
+    04_preprocessing.ipynb
+    05_artifact_annotation.ipynb
+    06_ica_cleaning.ipynb
+    07_epoching.ipynb
 
   2_sensor_analysis/
     01_evokeds.ipynb
-    02_time_frequency.ipynb
-    03_sensor_decoding.ipynb
 
   3_source_modeling/
-    01_forward_solution.ipynb
-    02_noise_covariance.ipynb
-    03_inverse_operator.ipynb
-    04_apply_inverse_evokeds.ipynb
-    05_morph_evoked_source_estimates_to_fsaverage.ipynb
-    06_extract_label_time_courses_evokeds.ipynb
-    07_extract_label_time_courses_epochs.ipynb
+    # Forward solution, noise covariance, inverse operator, source estimates,
+    # morphing, and label time courses.
 
   4_connectivity/
-    01_connectivity_inputs.ipynb
-    02_source_label_spectral_connectivity.ipynb
-    03_connectivity_qc_and_export.ipynb
-    04_connectivity_plots.ipynb
+    # Label-level connectivity inputs, computation, QC, and plots.
 
   5_decoding/
-    01_sensor_decoding.ipynb
-    02_label_time_course_decoding.ipynb
+    # Project-specific decoding workflows.
 ```
 
 Suggested roles:
@@ -2280,92 +2022,66 @@ Suggested roles:
   Coregistration notebook.
   Opens the interactive MNE coregistration GUI and stores trans.fif derivatives.
 
-1B_meg_preprocessing/01_raw_bids_and_events.ipynb
-  Active raw-data, empty-room import, and bad-channel notebook.
-  Discovers regular sourcedata, converts it to raw BIDS, imports empty-room
-  recordings as `sub-emptyroom`, extracts trigger-derived events for regular
-  task recordings, inspects channels, performs manual bad-channel QC, and
-  updates channels.tsv.
+1B_meg_preprocessing/01_raw_bids_import.ipynb
+  Raw BIDS import notebook.
+  Discovers regular sourcedata, converts it to the configured raw BIDS root, and
+  imports empty-room recordings as `sub-emptyroom`. This notebook intentionally
+  does not perform manual bad-channel QC or event writing, so it can be run once
+  to create the raw BIDS dataset before recording-based QC notebooks select
+  recordings from that dataset.
 
-1B_meg_preprocessing/02_project_specific_events.ipynb
+1B_meg_preprocessing/02_bad_channels_and_events.ipynb
+  Bad-channel QC and raw-event notebook.
+  Selects recordings from the existing raw BIDS dataset, inspects channels,
+  performs manual bad-channel QC, updates `channels.tsv`, and writes
+  trigger-derived raw BIDS `events.tsv` files for regular task recordings.
+
+1B_meg_preprocessing/03_project_specific_events.ipynb
   Optional event-derivation notebook.
   Reads trigger-derived events.tsv files and derives project-specific analysis-
   ready event tables from trigger anchors and stimulus/task metadata. This
   notebook can be skipped when trigger-derived events are already the analysis
   events.
 
-1B_meg_preprocessing/03_preprocessing.ipynb
+1B_meg_preprocessing/04_preprocessing.ipynb
   Preprocessing notebook.
   Applies saved bad-channel decisions, filters data, and writes filtered raw
   derivatives.
 
-1B_meg_preprocessing/04_artifact_annotation.ipynb
+1B_meg_preprocessing/05_artifact_annotation.ipynb
   Bad-segment annotation notebook.
   Loads filtered data, interactively marks BAD_* time spans, and writes bad-
   segment annotation derivatives.
 
-1B_meg_preprocessing/05_ica_cleaning.ipynb
+1B_meg_preprocessing/06_ica_cleaning.ipynb
   ICA cleaning notebook.
   Fits ICA models, saves ICA component-exclusion decisions, and writes cleaned
   raw derivatives.
 
-1B_meg_preprocessing/06_epoching.ipynb
+1B_meg_preprocessing/07_epoching.ipynb
   Epoching notebook.
   Creates epochs from cleaned raw data and either analysis-event derivatives or
   raw BIDS events.
 
 2_sensor_analysis/01_evokeds.ipynb
   Evoked-response notebook.
-  Uses conditions from `configs/local.yaml` when available and writes evoked
+  Defines project-specific conditions from epoch metadata and writes evoked
   response files.
 
-3_source_modeling/01_forward_solution.ipynb
-  Creates or checks MEG forward solutions from anatomy, source space,
-  coregistration transform, and recording info.
+2_source_modeling/
+  Future source-modeling notebooks.
+  These will combine outputs from 1A and 1B: coregistration transforms, BEM
+  solutions, source spaces, cleaned data, epochs, evokeds, and noise covariance.
 
-3_source_modeling/02_noise_covariance.ipynb
-  Computes noise covariance matrices, preferably from matched empty-room
-  recordings. Empty-room data are filtered in memory using the project
-  preprocessing filter settings.
-
-3_source_modeling/03_inverse_operator.ipynb
-  Creates inverse operators from forward solution, covariance, and recording
-  info.
-
-3_source_modeling/04_apply_inverse_evokeds.ipynb
-  Applies inverse operators to evoked responses and writes native-space source
-  estimates.
-
-3_source_modeling/05_morph_evoked_source_estimates_to_fsaverage.ipynb
-  Morphs evoked source estimates to `fsaverage` for group-level visualization or
-  common-space summaries.
-
-3_source_modeling/06_extract_label_time_courses_evokeds.ipynb
-  Extracts label time courses from evoked source estimates.
-
-3_source_modeling/07_extract_label_time_courses_epochs.ipynb
-  Applies the inverse operator epoch-by-epoch and writes compact epoch-level
-  label time courses. These files are the preferred input for label-level
-  connectivity and source/label-level decoding.
-
-4_connectivity/01_connectivity_inputs.ipynb
-  Checks whether epoch-level label time courses, labels, metadata, and configured
-  windows/conditions are available.
-
-4_connectivity/02_source_label_spectral_connectivity.ipynb
-  Computes spectral connectivity from epoch-level label time courses for the
-  configured conditions, time windows, frequency bands, and methods.
-
-4_connectivity/03_connectivity_qc_and_export.ipynb
-  Summarizes connectivity outputs and writes QC tables.
-
-4_connectivity/04_connectivity_plots.ipynb
-  Creates project-specific exploratory plots and contrasts, for example
-  `post_window - pre_window` within a configured condition.
+3_analysis/
+  Project-specific analysis notebooks.
+  These should contain study-specific statistics, plotting, reports, and final
+  figures rather than reusable pipeline infrastructure.
 ```
 
 Notebook steps should call reusable library functions rather than implementing
 large processing logic directly inside notebooks.
+
 
 ## Notebook recording selection defaults
 
@@ -2497,24 +2213,6 @@ forward:
 
 noise_covariance:
   skip / overwrite
-
-inverse_operator:
-  skip / overwrite
-
-source_estimates:
-  skip / overwrite
-
-source_morph:
-  skip / overwrite
-
-label_time_courses_evokeds:
-  skip / overwrite
-
-label_time_courses_epochs:
-  skip / overwrite
-
-connectivity:
-  skip / overwrite
 ```
 
 For notebooks, a central variable can be used:
@@ -2536,12 +2234,6 @@ OVERWRITE_STEPS = ["ica_decision"]
 OVERWRITE_STEPS = ["cleaned_raw"]
 OVERWRITE_STEPS = ["epochs"]
 OVERWRITE_STEPS = ["evokeds"]
-OVERWRITE_STEPS = ["noise_covariance"]
-OVERWRITE_STEPS = ["inverse_operator"]
-OVERWRITE_STEPS = ["source_estimates"]
-OVERWRITE_STEPS = ["source_morph"]
-OVERWRITE_STEPS = ["label_time_courses_epochs"]
-OVERWRITE_STEPS = ["connectivity"]
 OVERWRITE_STEPS = ["ica_decision", "cleaned_raw"]
 OVERWRITE_STEPS = "all"
 ```
@@ -2577,13 +2269,6 @@ ica_decision    -> load existing ICA decisions
 cleaned_raw     -> skip existing cleaned raw derivatives
 epochs          -> skip existing epochs
 evokeds         -> skip existing evoked files
-noise_covariance -> skip existing covariance files
-inverse_operator -> skip existing inverse operators
-source_estimates -> skip existing source estimates
-source_morph     -> skip existing morphed source estimates
-label_time_courses_evokeds -> skip existing evoked label time courses
-label_time_courses_epochs  -> skip existing epoch label time courses
-connectivity     -> skip existing connectivity outputs
 ```
 
 To recompute a specific step, either delete the corresponding output file
@@ -2730,10 +2415,10 @@ sourcedata/mri_raw/sub-0001/T2/<many DICOM files>
 Do not modify these source files.
 
 If `sourcedata.sessions` is `include`, the corresponding raw BIDS files will be
-generated under the configured raw BIDS root:
+generated under:
 
 ```text
-rawdata/sub-0001/ses-20260523/meg/
+sub-0001/ses-20260523/meg/
 ```
 
 with filenames such as:
@@ -2744,10 +2429,10 @@ sub-0001_ses-20260523_task-auditory_meg.fif
 ```
 
 If `sourcedata.sessions` is `ignore`, the same source folders generate raw BIDS
-files without a session level under the configured raw BIDS root:
+files without a session level:
 
 ```text
-rawdata/sub-0001/meg/
+sub-0001/meg/
 ```
 
 with filenames such as:
@@ -2756,31 +2441,6 @@ with filenames such as:
 sub-0001_task-rest_meg.fif
 sub-0001_task-auditory_meg.fif
 ```
-
-## Moving an existing root-level raw BIDS dataset into `rawdata/`
-
-Older projects may have raw BIDS files directly in the project root, for example
-`dataset_description.json`, `participants.tsv`, `sub-0001/`, and
-`sub-emptyroom/`. To migrate such a project to the recommended layout, move only
-the raw BIDS dataset files into `rawdata/` and then set `paths.bids_root: "./rawdata"`
-in `configs/local.yaml`.
-
-Example migration from the project root:
-
-```bash
-mkdir -p raw
-mv dataset_description.json participants.tsv rawdata/
-mv sub-* rawdata/
-```
-
-Do not move `sourcedata/`, `derivatives/`, `configs/`, or `notebooks/`. If the
-raw BIDS files have already been moved, rerun:
-
-```bash
-meegpipe bids-info --config configs/local.yaml
-```
-
-The subject folders should then be discovered below `rawdata/`.
 
 ## Checking expected BIDS paths
 
@@ -2802,7 +2462,7 @@ meegpipe bids-path \
 Expected output path:
 
 ```text
-rawdata/sub-0001/ses-20260523/meg/sub-0001_ses-20260523_task-rest_meg.fif
+sub-0001/ses-20260523/meg/sub-0001_ses-20260523_task-rest_meg.fif
 ```
 
 Without sessions:
@@ -2818,12 +2478,12 @@ meegpipe bids-path \
 Expected output path:
 
 ```text
-rawdata/sub-0001/meg/sub-0001_task-rest_meg.fif
+sub-0001/meg/sub-0001_task-rest_meg.fif
 ```
 
 ## Development status
 
-Early but usable development.
+Early development.
 
 Currently implemented:
 
@@ -2842,8 +2502,6 @@ Currently implemented:
 - sourcedata discovery
 - conversion from `sourcedata_root` to raw BIDS
 - empty-room sourcedata discovery and conversion to `sub-emptyroom` raw BIDS
-- empty-room matching for source-modeling covariance
-- in-memory empty-room filtering for ERM covariance
 - MRI conversion helpers for DICOM/NIfTI/MGZ preparation
 - FreeSurfer recon-all helpers
 - FreeSurfer software provenance documentation
@@ -2852,7 +2510,6 @@ Currently implemented:
 - surface and volume source-space helpers
 - label morphing helpers
 - MNE coregistration helper/status utilities
-- configurable subject/session/task/run transform scope for coregistration
 - raw data loading via MNE-BIDS
 - status-oriented batch behavior for missing inputs and existing outputs
 - channel summaries
@@ -2873,33 +2530,21 @@ Currently implemented:
 - epoching utilities
 - optional autoreject-based epoch cleaning with training subsets
 - evoked-response utilities
-- central reusable condition definitions via `conditions.definitions`
-- forward-solution workflow
-- ERM, baseline, and ad-hoc noise-covariance workflow
-- inverse-operator workflow
-- evoked source-estimate workflow
-- morphing evoked source estimates to `fsaverage`
-- evoked label-time-course extraction
-- epoch-wise label-time-course extraction for connectivity/decoding
-- label-level spectral connectivity from epoch-wise label time courses
-- connectivity input overview, QC summaries, top-edge tables, and window contrasts
-- basic Slurm/HPC helper scripts for future batch workflows
+- existing-output policies for anatomy preparation, conversion, events,
+  analysis events, bad-channel QC, filtering, annotations, ICA, ICA decisions,
+  cleaned raw derivatives, epochs, and evokeds
 
-Important TODOs / not yet fully implemented:
+Not yet implemented:
 
-- automated tests for the newer source-modeling, condition, and connectivity helpers
-- project reports and HTML/PDF summaries
-- robust group-level statistics for connectivity and source/label analyses
-- permutation/cluster tests and multiple-comparison correction helpers
-- directed connectivity workflows such as PSI
-- richer time-frequency workflows outside connectivity
-- decoding workflows beyond initial notebook scaffolding
-- explicit ERM-specific QC derivatives and reporting
-- explicit provenance JSON files for each major derivative step
-- stronger validation of config migrations and backward-compatible aliases
-- end-to-end CLI commands for all notebook steps
-- hardened Slurm/HPC execution and job-dependency workflows
-- continuous integration across supported Python/MNE versions
+- SSP / empty-room based cleaning
+- inverse operator workflow
+- inverse operator workflow
+- source estimates
+- source morphing to fsaverage
+- label time courses
+- reports
+- HPC/Slurm execution
+- automated tests
 
 ## Dense scalp surface dependency
 

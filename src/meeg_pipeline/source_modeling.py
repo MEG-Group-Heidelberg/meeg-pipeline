@@ -7,6 +7,7 @@ import re
 from typing import Any, Iterable, Literal
 
 import mne
+import numpy as np
 import pandas as pd
 
 from meeg_pipeline.anatomy import (
@@ -2565,7 +2566,7 @@ def source_estimate_qc_to_dataframe(
             if not path.exists():
                 raise FileNotFoundError(path)
 
-            stc = mne.read_source_estimate(path, subject=str(row.get("subject", "")).removeprefix("sub-"))
+            stc = mne.read_source_estimate(path, subject=_subject_label(str(row.get("subject", ""))))
             data = stc.data
 
             rows.append(
@@ -2603,6 +2604,689 @@ def source_estimate_qc_to_dataframe(
                     "n_times": None,
                     "tmin": None,
                     "tmax": None,
+                    "max_abs": None,
+                    "mean_abs": None,
+                    "message": f"{type(exc).__name__}: {exc}",
+                }
+            )
+
+    return pd.DataFrame(rows)
+
+
+@dataclass(frozen=True)
+class LabelTimeCourseResult:
+    """Result row for one evoked label-time-course extraction job."""
+
+    subject: str
+    session: str | None
+    task: str | None
+    run: str | None
+    condition: str
+    path: str
+    status: str
+    stc_path: str = ""
+    labels_path: str = ""
+    times_path: str = ""
+    parcellation: str = ""
+    extract_mode: str = ""
+    n_labels: int | None = None
+    n_times: int | None = None
+    message: str = ""
+
+
+def label_time_course_config_to_dataframe(config: PipelineConfig) -> pd.DataFrame:
+    """Return effective label-time-course settings as a one-row table."""
+    return pd.DataFrame(
+        [
+            {
+                "parcellation": config.source.parcellation,
+                "extract_mode": config.source.extract_mode,
+                "target_labels": config.source.target_labels,
+                "inverse_method": config.source.inverse_method,
+                "source_spacing": _source_spacing(config),
+                "apply_inverse_method": _effective_apply_inverse_method(config, None),
+                "apply_inverse_pick_conditions": _effective_pick_conditions(config, None),
+            }
+        ]
+    )
+
+
+def _label_sidecar_paths(path: str | Path) -> tuple[Path, Path]:
+    """Return labels and times sidecar paths for one label-time-course table."""
+    path = Path(path)
+    name = path.name
+    if name.endswith("-ltc.tsv"):
+        labels_name = name.removesuffix("-ltc.tsv") + "-labels.tsv"
+        times_name = name.removesuffix("-ltc.tsv") + "-times.tsv"
+    else:
+        labels_name = path.stem + "_labels.tsv"
+        times_name = path.stem + "_times.tsv"
+    return path.with_name(labels_name), path.with_name(times_name)
+
+
+def _source_estimate_candidates(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    task: str | None = None,
+    session: str | None = None,
+    run: str | None = None,
+) -> list[Path]:
+    """Return matching evoked source-estimate files for one recording."""
+    directory = derivative_directory(
+        config,
+        subject=subject,
+        session=session,
+        kind="source_estimates",
+    )
+
+    subject_label = _subject_label(subject)
+    parts = [subject_label]
+    if session is not None:
+        parts.append(f"ses-{session}")
+    if task is not None:
+        parts.append(f"task-{task}")
+    if run is not None:
+        parts.append(f"run-{run}")
+
+    pattern = "_".join(parts + ["space-source_desc-*-stc.h5"])
+    return sorted(directory.glob(pattern))
+
+
+def _condition_from_source_estimate_path(
+    path: str | Path,
+    *,
+    inverse_method: str | None = None,
+) -> str:
+    """Parse the condition from a source-estimate path.
+
+    Source-estimate desc labels are written as ``<condition><method>``. This
+    function removes the method suffix when possible so the label-time-course
+    output uses the original condition entity.
+    """
+    desc = _parse_entity_from_filename(Path(path), "desc") or Path(path).stem
+    method = sanitize_bids_label(inverse_method or "")
+    if method and desc.lower().endswith(method.lower()):
+        return desc[: -len(method)]
+    return desc
+
+
+def _effective_target_labels(
+    config: PipelineConfig,
+    target_labels: tuple[str, ...] | list[str] | str | None = None,
+) -> tuple[str, ...] | None:
+    """Return effective target-label selection."""
+    configured = config.source.target_labels if target_labels is None else target_labels
+    if configured is None:
+        return None
+    if isinstance(configured, str):
+        return (configured,)
+    return tuple(str(label) for label in configured)
+
+
+def _load_labels_for_subject(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    parcellation: str | None = None,
+    target_labels: tuple[str, ...] | list[str] | str | None = None,
+) -> list[mne.Label]:
+    """Load and optionally filter cortical labels for one subject."""
+    subject_label = _subject_label(subject)
+    subjects_dir = _subjects_dir(config)
+    parc = str(parcellation or config.source.parcellation)
+
+    labels = mne.read_labels_from_annot(
+        subject=subject_label,
+        parc=parc,
+        subjects_dir=subjects_dir,
+        verbose=False,
+    )
+
+    selected = _effective_target_labels(config, target_labels)
+    if selected is None:
+        return labels
+
+    selected_set = set(selected)
+    filtered = []
+    for label in labels:
+        name = str(label.name)
+        bare = name.rsplit("-", 1)[0]
+        if name in selected_set or bare in selected_set:
+            filtered.append(label)
+
+    return filtered
+
+
+def find_source_estimate_inputs_for_recording(
+    config: PipelineConfig,
+    recording: Recording,
+    *,
+    method: str | None = None,
+    pick_conditions: tuple[str, ...] | list[str] | str | None = None,
+) -> list[dict[str, Any]]:
+    """Find saved evoked source estimates for one recording."""
+    entities = _recording_entities(recording)
+    effective_method = _effective_apply_inverse_method(config, method)
+    selected_conditions = _effective_pick_conditions(config, pick_conditions)
+
+    rows: list[dict[str, Any]] = []
+    for stc_path in _source_estimate_candidates(config, **entities):
+        condition = _condition_from_source_estimate_path(
+            stc_path,
+            inverse_method=effective_method,
+        )
+        if selected_conditions != "all" and condition not in selected_conditions:
+            continue
+        rows.append({"condition": condition, "stc_path": str(stc_path)})
+
+    return rows
+
+
+def label_time_course_input_overview_to_dataframe(
+    config: PipelineConfig,
+    recordings: Iterable[Recording],
+    *,
+    on_existing: ExistingOutputPolicy = "skip",
+    method: str | None = None,
+    pick_conditions: tuple[str, ...] | list[str] | str | None = None,
+    parcellation: str | None = None,
+    extract_mode: str | None = None,
+    target_labels: tuple[str, ...] | list[str] | str | None = None,
+) -> pd.DataFrame:
+    """Summarize source-estimate inputs and label-time-course outputs."""
+    rows: list[dict[str, Any]] = []
+    effective_method = _effective_apply_inverse_method(config, method)
+    effective_parc = str(parcellation or config.source.parcellation)
+    effective_mode = str(extract_mode or config.source.extract_mode)
+    effective_targets = _effective_target_labels(config, target_labels)
+
+    for recording in recordings:
+        entities = _recording_entities(recording)
+        subject = entities["subject"]
+        session = entities["session"]
+        task = entities["task"]
+        run = entities["run"]
+
+        stc_inputs = find_source_estimate_inputs_for_recording(
+            config,
+            recording,
+            method=effective_method,
+            pick_conditions=pick_conditions,
+        )
+
+        labels_status = "found"
+        labels_message = ""
+        n_labels: int | None = None
+        try:
+            labels = _load_labels_for_subject(
+                config,
+                subject=subject,
+                parcellation=effective_parc,
+                target_labels=effective_targets,
+            )
+            n_labels = len(labels)
+            if not labels:
+                labels_status = "missing"
+                labels_message = "No labels remained after filtering."
+        except Exception as exc:  # noqa: BLE001 - overview should report missing labels.
+            labels_status = "missing"
+            labels_message = f"{type(exc).__name__}: {exc}"
+
+        if not stc_inputs:
+            rows.append(
+                {
+                    "subject": _subject_label(subject),
+                    "session": session,
+                    "task": task,
+                    "run": run,
+                    "condition": None,
+                    "status": "missing_stc",
+                    "message": "No matching source-estimate files were found.",
+                    "stc_exists": False,
+                    "stc_path": "",
+                    "labels_status": labels_status,
+                    "labels_message": labels_message,
+                    "n_labels": n_labels,
+                    "ltc_exists": False,
+                    "ltc_path": "",
+                    "labels_path": "",
+                    "times_path": "",
+                    "parcellation": effective_parc,
+                    "extract_mode": effective_mode,
+                    "target_labels": effective_targets,
+                    "overwrite": on_existing == "overwrite",
+                }
+            )
+            continue
+
+        for stc_input in stc_inputs:
+            condition = str(stc_input["condition"])
+            stc_path = Path(stc_input["stc_path"])
+            ltc_path = make_evoked_label_time_course_path(
+                config,
+                **entities,
+                condition=condition,
+                parcellation=effective_parc,
+                inverse_method=effective_method,
+                extension=".tsv",
+            )
+            labels_path, times_path = _label_sidecar_paths(ltc_path)
+
+            missing = []
+            if not stc_path.exists():
+                missing.append("stc")
+            if labels_status != "found":
+                missing.append("labels")
+
+            if ltc_path.exists() and on_existing == "skip":
+                status = "exists"
+                message = "Label time course already exists."
+            elif missing:
+                status = "missing_" + "_".join(missing)
+                message = "Missing required input(s): " + ", ".join(missing)
+                if labels_message:
+                    message += f"; labels: {labels_message}"
+            else:
+                status = "ready"
+                message = labels_message
+
+            rows.append(
+                {
+                    "subject": _subject_label(subject),
+                    "session": session,
+                    "task": task,
+                    "run": run,
+                    "condition": condition,
+                    "status": status,
+                    "message": message,
+                    "stc_exists": stc_path.exists(),
+                    "stc_path": str(stc_path),
+                    "labels_status": labels_status,
+                    "labels_message": labels_message,
+                    "n_labels": n_labels,
+                    "ltc_exists": ltc_path.exists(),
+                    "ltc_path": str(ltc_path),
+                    "labels_path": str(labels_path),
+                    "times_path": str(times_path),
+                    "parcellation": effective_parc,
+                    "extract_mode": effective_mode,
+                    "target_labels": effective_targets,
+                    "overwrite": on_existing == "overwrite",
+                }
+            )
+
+    return pd.DataFrame(rows)
+
+
+def _write_label_time_course_tables(
+    *,
+    data: np.ndarray,
+    times: np.ndarray,
+    labels: list[mne.Label],
+    ltc_path: Path,
+    labels_path: Path,
+    times_path: Path,
+) -> None:
+    """Write label-time-course data and compact sidecar tables."""
+    ltc_path.parent.mkdir(parents=True, exist_ok=True)
+
+    time_columns = [f"t={time:.6f}" for time in times]
+    label_names = [label.name for label in labels]
+    hemis = [getattr(label, "hemi", "") for label in labels]
+
+    table = pd.DataFrame(data, columns=time_columns)
+    table.insert(0, "hemi", hemis)
+    table.insert(0, "label", label_names)
+    table.to_csv(ltc_path, sep="\t", index=False)
+
+    pd.DataFrame(
+        {
+            "label": label_names,
+            "hemi": hemis,
+            "n_vertices": [len(label.vertices) for label in labels],
+        }
+    ).to_csv(labels_path, sep="\t", index=False)
+
+    pd.DataFrame({"time_index": range(len(times)), "time_s": times}).to_csv(
+        times_path,
+        sep="\t",
+        index=False,
+    )
+
+
+def extract_label_time_courses_for_recording(
+    config: PipelineConfig,
+    recording: Recording,
+    *,
+    condition: str,
+    stc_path: str | Path | None = None,
+    on_existing: ExistingOutputPolicy = "skip",
+    method: str | None = None,
+    parcellation: str | None = None,
+    extract_mode: str | None = None,
+    target_labels: tuple[str, ...] | list[str] | str | None = None,
+    spacing: str | None = None,
+    allow_empty: bool | str = False,
+    verbose: bool | str | int | None = True,
+) -> LabelTimeCourseResult:
+    """Extract and save label time courses for one evoked source estimate."""
+    entities = _recording_entities(recording)
+    subject = entities["subject"]
+    session = entities["session"]
+    task = entities["task"]
+    run = entities["run"]
+    effective_method = _effective_apply_inverse_method(config, method)
+    effective_parc = str(parcellation or config.source.parcellation)
+    effective_mode = str(extract_mode or config.source.extract_mode)
+    effective_targets = _effective_target_labels(config, target_labels)
+
+    if stc_path is None:
+        stc_path = make_evoked_source_estimate_path(
+            config,
+            **entities,
+            condition=condition,
+            inverse_method=effective_method,
+        )
+    stc_path = Path(stc_path)
+
+    ltc_path = make_evoked_label_time_course_path(
+        config,
+        **entities,
+        condition=condition,
+        parcellation=effective_parc,
+        inverse_method=effective_method,
+        extension=".tsv",
+    )
+    labels_path, times_path = _label_sidecar_paths(ltc_path)
+
+    if ltc_path.exists() and on_existing == "skip":
+        return LabelTimeCourseResult(
+            subject=_subject_label(subject),
+            session=session,
+            task=task,
+            run=run,
+            condition=condition,
+            path=str(ltc_path),
+            status="skipped_existing",
+            stc_path=str(stc_path),
+            labels_path=str(labels_path),
+            times_path=str(times_path),
+            parcellation=effective_parc,
+            extract_mode=effective_mode,
+            message="Label time course already exists.",
+        )
+
+    if not stc_path.exists():
+        return LabelTimeCourseResult(
+            subject=_subject_label(subject),
+            session=session,
+            task=task,
+            run=run,
+            condition=condition,
+            path=str(ltc_path),
+            status="missing_stc",
+            stc_path=str(stc_path),
+            labels_path=str(labels_path),
+            times_path=str(times_path),
+            parcellation=effective_parc,
+            extract_mode=effective_mode,
+            message="Source estimate file does not exist.",
+        )
+
+    try:
+        labels = _load_labels_for_subject(
+            config,
+            subject=subject,
+            parcellation=effective_parc,
+            target_labels=effective_targets,
+        )
+        if not labels:
+            raise RuntimeError("No labels remained after filtering.")
+
+        subjects_dir = _subjects_dir(config)
+        src_path = source_space_path(
+            subjects_dir,
+            _subject_label(subject),
+            spacing=_source_spacing(config, spacing),
+        )
+        if not src_path.exists():
+            raise FileNotFoundError(src_path)
+
+        stc = mne.read_source_estimate(
+            stc_path,
+            subject=_subject_label(subject),
+        )
+        src = mne.read_source_spaces(src_path, verbose=verbose)
+
+        label_tc = mne.extract_label_time_course(
+            stc,
+            labels,
+            src,
+            mode=effective_mode,
+            allow_empty=allow_empty,
+            verbose=verbose,
+        )
+        label_tc = np.asarray(label_tc)
+
+        _write_label_time_course_tables(
+            data=label_tc,
+            times=np.asarray(stc.times),
+            labels=labels,
+            ltc_path=ltc_path,
+            labels_path=labels_path,
+            times_path=times_path,
+        )
+
+        return LabelTimeCourseResult(
+            subject=_subject_label(subject),
+            session=session,
+            task=task,
+            run=run,
+            condition=condition,
+            path=str(ltc_path),
+            status="written",
+            stc_path=str(stc_path),
+            labels_path=str(labels_path),
+            times_path=str(times_path),
+            parcellation=effective_parc,
+            extract_mode=effective_mode,
+            n_labels=int(label_tc.shape[0]),
+            n_times=int(label_tc.shape[1]) if label_tc.ndim == 2 else None,
+        )
+
+    except Exception as exc:  # noqa: BLE001 - batch notebooks should continue.
+        return LabelTimeCourseResult(
+            subject=_subject_label(subject),
+            session=session,
+            task=task,
+            run=run,
+            condition=condition,
+            path=str(ltc_path),
+            status="failed",
+            stc_path=str(stc_path),
+            labels_path=str(labels_path),
+            times_path=str(times_path),
+            parcellation=effective_parc,
+            extract_mode=effective_mode,
+            message=f"{type(exc).__name__}: {exc}",
+        )
+
+
+def extract_label_time_courses_for_recordings(
+    config: PipelineConfig,
+    recordings: Iterable[Recording],
+    *,
+    on_existing: ExistingOutputPolicy = "skip",
+    method: str | None = None,
+    pick_conditions: tuple[str, ...] | list[str] | str | None = None,
+    parcellation: str | None = None,
+    extract_mode: str | None = None,
+    target_labels: tuple[str, ...] | list[str] | str | None = None,
+    spacing: str | None = None,
+    allow_empty: bool | str = False,
+    verbose: bool | str | int | None = True,
+) -> list[LabelTimeCourseResult]:
+    """Extract label time courses for multiple recordings/source estimates."""
+    overview = label_time_course_input_overview_to_dataframe(
+        config,
+        recordings,
+        on_existing=on_existing,
+        method=method,
+        pick_conditions=pick_conditions,
+        parcellation=parcellation,
+        extract_mode=extract_mode,
+        target_labels=target_labels,
+    )
+
+    results: list[LabelTimeCourseResult] = []
+
+    for _, row in overview.iterrows():
+        if row["status"] == "exists" and on_existing == "skip":
+            results.append(
+                LabelTimeCourseResult(
+                    subject=str(row["subject"]),
+                    session=row.get("session"),
+                    task=row.get("task"),
+                    run=row.get("run"),
+                    condition=str(row.get("condition", "")),
+                    path=str(row.get("ltc_path", "")),
+                    status="skipped_existing",
+                    stc_path=str(row.get("stc_path", "")),
+                    labels_path=str(row.get("labels_path", "")),
+                    times_path=str(row.get("times_path", "")),
+                    parcellation=str(row.get("parcellation", "")),
+                    extract_mode=str(row.get("extract_mode", "")),
+                    n_labels=int(row["n_labels"]) if pd.notna(row.get("n_labels")) else None,
+                    message="Label time course already exists.",
+                )
+            )
+            continue
+
+        if row["status"] != "ready":
+            results.append(
+                LabelTimeCourseResult(
+                    subject=str(row["subject"]),
+                    session=row.get("session"),
+                    task=row.get("task"),
+                    run=row.get("run"),
+                    condition=str(row.get("condition", "")),
+                    path=str(row.get("ltc_path", "")),
+                    status=str(row["status"]),
+                    stc_path=str(row.get("stc_path", "")),
+                    labels_path=str(row.get("labels_path", "")),
+                    times_path=str(row.get("times_path", "")),
+                    parcellation=str(row.get("parcellation", "")),
+                    extract_mode=str(row.get("extract_mode", "")),
+                    n_labels=int(row["n_labels"]) if pd.notna(row.get("n_labels")) else None,
+                    message=str(row.get("message", "")),
+                )
+            )
+            continue
+
+        recording: Recording = {
+            "subject": str(row["subject"]).removeprefix("sub-"),
+            "session": row.get("session"),
+            "task": row.get("task"),
+            "run": row.get("run"),
+        }
+
+        result = extract_label_time_courses_for_recording(
+            config,
+            recording,
+            condition=str(row["condition"]),
+            stc_path=row["stc_path"],
+            on_existing=on_existing,
+            method=method,
+            parcellation=parcellation,
+            extract_mode=extract_mode,
+            target_labels=target_labels,
+            spacing=spacing,
+            allow_empty=allow_empty,
+            verbose=verbose,
+        )
+        results.append(result)
+
+    return results
+
+
+def label_time_course_results_to_dataframe(
+    results: Iterable[LabelTimeCourseResult],
+) -> pd.DataFrame:
+    """Convert label-time-course results to a status table."""
+    return pd.DataFrame([result.__dict__ for result in results])
+
+
+def label_time_course_qc_to_dataframe(
+    label_time_course_results: pd.DataFrame | Iterable[LabelTimeCourseResult | dict[str, Any]],
+    *,
+    max_rows: int | None = None,
+) -> pd.DataFrame:
+    """Read label-time-course tables and summarize basic QC metadata."""
+    if isinstance(label_time_course_results, pd.DataFrame):
+        table = label_time_course_results.copy()
+    else:
+        rows = []
+        for result in label_time_course_results:
+            if isinstance(result, LabelTimeCourseResult):
+                rows.append(result.__dict__)
+            else:
+                rows.append(dict(result))
+        table = pd.DataFrame(rows)
+
+    if table.empty:
+        return pd.DataFrame(
+            [{"status": "no_results", "message": "No label-time-course results to inspect."}]
+        )
+
+    if "path" not in table.columns:
+        raise KeyError(
+            f"label_time_course_results must contain a 'path' column. Columns: {list(table.columns)}"
+        )
+
+    candidate_table = table.copy()
+    if max_rows is not None:
+        candidate_table = candidate_table.head(max_rows)
+
+    rows: list[dict[str, Any]] = []
+    for _, row in candidate_table.iterrows():
+        path = Path(row["path"])
+        try:
+            if not path.exists():
+                raise FileNotFoundError(path)
+
+            data = pd.read_csv(path, sep="\t")
+            numeric = data.drop(columns=[col for col in ["label", "hemi"] if col in data.columns])
+            values = numeric.to_numpy(dtype=float, copy=False)
+
+            rows.append(
+                {
+                    "subject": row.get("subject"),
+                    "session": row.get("session"),
+                    "task": row.get("task"),
+                    "run": row.get("run"),
+                    "condition": row.get("condition"),
+                    "status": "ok",
+                    "path": str(path),
+                    "n_labels": int(values.shape[0]) if values.ndim == 2 else None,
+                    "n_times": int(values.shape[1]) if values.ndim == 2 else None,
+                    "max_abs": float(np.abs(values).max()) if values.size else None,
+                    "mean_abs": float(np.abs(values).mean()) if values.size else None,
+                    "message": "",
+                }
+            )
+        except Exception as exc:  # noqa: BLE001 - QC table should report all rows.
+            rows.append(
+                {
+                    "subject": row.get("subject"),
+                    "session": row.get("session"),
+                    "task": row.get("task"),
+                    "run": row.get("run"),
+                    "condition": row.get("condition"),
+                    "status": "failed",
+                    "path": str(path),
+                    "n_labels": None,
+                    "n_times": None,
                     "max_abs": None,
                     "mean_abs": None,
                     "message": f"{type(exc).__name__}: {exc}",

@@ -228,8 +228,30 @@ class AnatomyConfig:
 
 
 @dataclass(frozen=True)
+class SourceInverseConfig:
+    method: Literal["MNE", "dSPM", "sLORETA", "eLORETA"] = "dSPM"
+    snr: float = 3.0
+    lambda2: float | None = None
+    pick_ori: str | None = None
+
+
+@dataclass(frozen=True)
+class SourceLabelsConfig:
+    parcellation: str = "aparc_sub"
+    extract_mode: str = "mean_flip"
+    target_labels: tuple[str, ...] | None = None
+
+
+@dataclass(frozen=True)
+class SourceNoiseCovConfig:
+    mode: str = "erm"
+
+
+@dataclass(frozen=True)
 class SourceApplyInverseConfig:
     apply_to: Literal["evoked", "epochs"] = "evoked"
+    # Resolved from source.inverse by default. Kept here so step-specific
+    # overrides and older code paths can keep using config.source.apply_inverse.*.
     method: Literal["MNE", "dSPM", "sLORETA", "eLORETA"] = "dSPM"
     snr: float = 3.0
     lambda2: float | None = None
@@ -241,6 +263,9 @@ class SourceApplyInverseConfig:
 @dataclass(frozen=True)
 class SourceLabelTimeCoursesEpochsConfig:
     enabled: bool = True
+    # Resolved from source.inverse and source.labels by default. Step-specific
+    # overrides remain possible by setting these keys under
+    # source.label_time_courses_epochs.
     method: Literal["MNE", "dSPM", "sLORETA", "eLORETA"] = "dSPM"
     snr: float = 3.0
     lambda2: float | None = None
@@ -268,14 +293,34 @@ class SourceMorphConfig:
 @dataclass(frozen=True)
 class SourceConfig:
     spacing: str = "ico5"
-    noise_cov_mode: str = "erm"
-    target_labels: tuple[str, ...] | None = None
-    parcellation: str = "aparc_sub"
-    extract_mode: str = "mean"
-    inverse_method: str = "dSPM"
+    inverse: SourceInverseConfig = SourceInverseConfig()
+    labels: SourceLabelsConfig = SourceLabelsConfig()
+    noise_cov: SourceNoiseCovConfig = SourceNoiseCovConfig()
     apply_inverse: SourceApplyInverseConfig = SourceApplyInverseConfig()
     morph: SourceMorphConfig = SourceMorphConfig()
     label_time_courses_epochs: SourceLabelTimeCoursesEpochsConfig = SourceLabelTimeCoursesEpochsConfig()
+
+    # Backward-compatible aliases for older notebooks/helpers. Prefer the
+    # nested blocks above in new config files and new code.
+    @property
+    def noise_cov_mode(self) -> str:
+        return self.noise_cov.mode
+
+    @property
+    def inverse_method(self) -> str:
+        return self.inverse.method
+
+    @property
+    def parcellation(self) -> str:
+        return self.labels.parcellation
+
+    @property
+    def extract_mode(self) -> str:
+        return self.labels.extract_mode
+
+    @property
+    def target_labels(self) -> tuple[str, ...] | None:
+        return self.labels.target_labels
 
 
 @dataclass(frozen=True)
@@ -742,7 +787,68 @@ def load_config(config_path: str | Path) -> PipelineConfig:
     )
 
     source_raw = raw.get("source", {})
+    source_inverse_raw = source_raw.get("inverse", {})
+    source_labels_raw = source_raw.get("labels", {})
+    source_noise_cov_raw = source_raw.get("noise_cov", {})
     apply_inverse_raw = source_raw.get("apply_inverse", {})
+
+    valid_inverse_methods = {"MNE", "dSPM", "sLORETA", "eLORETA"}
+
+    inverse_method = str(
+        source_inverse_raw.get(
+            "method",
+            source_raw.get("inverse_method", "dSPM"),
+        )
+    )
+    if inverse_method not in valid_inverse_methods:
+        raise ValueError(
+            "source.inverse.method must be one of 'MNE', 'dSPM', "
+            f"'sLORETA', or 'eLORETA', got {inverse_method!r}."
+        )
+
+    inverse_snr = float(
+        source_inverse_raw.get(
+            "snr",
+            source_raw.get("snr", 3.0),
+        )
+    )
+    inverse_lambda2 = _optional_float(
+        source_inverse_raw.get(
+            "lambda2",
+            source_raw.get("lambda2", None),
+        )
+    )
+    inverse_pick_ori_raw = source_inverse_raw.get(
+        "pick_ori",
+        source_raw.get("pick_ori", None),
+    )
+    inverse_pick_ori = None if inverse_pick_ori_raw is None else str(inverse_pick_ori_raw)
+
+    labels_parcellation = str(
+        source_labels_raw.get(
+            "parcellation",
+            source_raw.get("parcellation", "aparc_sub"),
+        )
+    )
+    labels_extract_mode = str(
+        source_labels_raw.get(
+            "extract_mode",
+            source_raw.get("extract_mode", "mean_flip"),
+        )
+    )
+    labels_target_labels = _optional_str_tuple(
+        source_labels_raw.get(
+            "target_labels",
+            source_raw.get("target_labels", None),
+        )
+    )
+
+    noise_cov_mode = str(
+        source_noise_cov_raw.get(
+            "mode",
+            source_raw.get("noise_cov_mode", "erm"),
+        )
+    )
 
     apply_to = str(apply_inverse_raw.get("apply_to", "evoked"))
     if apply_to not in {"evoked", "epochs"}:
@@ -751,17 +857,17 @@ def load_config(config_path: str | Path) -> PipelineConfig:
             f"got {apply_to!r}."
         )
 
-    apply_inverse_method = str(
-        apply_inverse_raw.get(
-            "method",
-            source_raw.get("inverse_method", "dSPM"),
-        )
-    )
-    if apply_inverse_method not in {"MNE", "dSPM", "sLORETA", "eLORETA"}:
+    apply_inverse_method = str(apply_inverse_raw.get("method", inverse_method))
+    if apply_inverse_method not in valid_inverse_methods:
         raise ValueError(
             "source.apply_inverse.method must be one of 'MNE', 'dSPM', "
             f"'sLORETA', or 'eLORETA', got {apply_inverse_method!r}."
         )
+
+    apply_inverse_snr = float(apply_inverse_raw.get("snr", inverse_snr))
+    apply_inverse_lambda2 = _optional_float(
+        apply_inverse_raw.get("lambda2", inverse_lambda2)
+    )
 
     pick_conditions_raw = apply_inverse_raw.get("pick_conditions", "all")
     if pick_conditions_raw == "all":
@@ -780,7 +886,7 @@ def load_config(config_path: str | Path) -> PipelineConfig:
 
     morph_method_raw = morph_raw.get("method", None)
     morph_method = None if morph_method_raw is None else str(morph_method_raw)
-    if morph_method is not None and morph_method not in {"MNE", "dSPM", "sLORETA", "eLORETA"}:
+    if morph_method is not None and morph_method not in valid_inverse_methods:
         raise ValueError(
             "source.morph.method must be null or one of 'MNE', 'dSPM', "
             f"'sLORETA', or 'eLORETA', got {morph_method!r}."
@@ -804,10 +910,10 @@ def load_config(config_path: str | Path) -> PipelineConfig:
     ltc_epochs_method = str(
         label_time_courses_epochs_raw.get(
             "method",
-            apply_inverse_raw.get("method", source_raw.get("inverse_method", "dSPM")),
+            apply_inverse_method,
         )
     )
-    if ltc_epochs_method not in {"MNE", "dSPM", "sLORETA", "eLORETA"}:
+    if ltc_epochs_method not in valid_inverse_methods:
         raise ValueError(
             "source.label_time_courses_epochs.method must be one of 'MNE', "
             f"'dSPM', 'sLORETA', or 'eLORETA', got {ltc_epochs_method!r}."
@@ -833,16 +939,23 @@ def load_config(config_path: str | Path) -> PipelineConfig:
 
     source = SourceConfig(
         spacing=source_raw.get("spacing", "ico5"),
-        noise_cov_mode=source_raw.get("noise_cov_mode", "erm"),
-        target_labels=_optional_str_tuple(source_raw.get("target_labels", None)),
-        parcellation=source_raw.get("parcellation", "aparc_sub"),
-        extract_mode=source_raw.get("extract_mode", "mean"),
-        inverse_method=source_raw.get("inverse_method", "dSPM"),
+        inverse=SourceInverseConfig(
+            method=inverse_method,
+            snr=inverse_snr,
+            lambda2=inverse_lambda2,
+            pick_ori=inverse_pick_ori,
+        ),
+        labels=SourceLabelsConfig(
+            parcellation=labels_parcellation,
+            extract_mode=labels_extract_mode,
+            target_labels=labels_target_labels,
+        ),
+        noise_cov=SourceNoiseCovConfig(mode=noise_cov_mode),
         apply_inverse=SourceApplyInverseConfig(
             apply_to=apply_to,
             method=apply_inverse_method,
-            snr=float(apply_inverse_raw.get("snr", 3.0)),
-            lambda2=_optional_float(apply_inverse_raw.get("lambda2", None)),
+            snr=apply_inverse_snr,
+            lambda2=apply_inverse_lambda2,
             pick_conditions=pick_conditions,
             save_stcs=bool(apply_inverse_raw.get("save_stcs", True)),
             stc_format=stc_format,
@@ -859,8 +972,8 @@ def load_config(config_path: str | Path) -> PipelineConfig:
         label_time_courses_epochs=SourceLabelTimeCoursesEpochsConfig(
             enabled=bool(label_time_courses_epochs_raw.get("enabled", True)),
             method=ltc_epochs_method,
-            snr=float(label_time_courses_epochs_raw.get("snr", apply_inverse_raw.get("snr", 3.0))),
-            lambda2=_optional_float(label_time_courses_epochs_raw.get("lambda2", None)),
+            snr=float(label_time_courses_epochs_raw.get("snr", apply_inverse_snr)),
+            lambda2=_optional_float(label_time_courses_epochs_raw.get("lambda2", apply_inverse_lambda2)),
             parcellation=label_time_courses_epochs_raw.get("parcellation", None),
             extract_mode=label_time_courses_epochs_raw.get("extract_mode", None),
             target_labels=_optional_str_tuple(label_time_courses_epochs_raw.get("target_labels", None)),

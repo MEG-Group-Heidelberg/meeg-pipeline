@@ -244,12 +244,14 @@ def make_evoked_label_time_course_path(
     run: str | None = None,
     parcellation: str | None = None,
     inverse_method: str | None = None,
+    extract_mode: str | None = None,
     extension: str = ".tsv",
 ) -> Path:
     """Create the path for one evoked label-time-course table."""
     condition_label = sanitize_bids_label(condition)
     parc_label = sanitize_bids_label(parcellation or config.source.parcellation)
     method_label = sanitize_bids_label(inverse_method or config.source.inverse_method)
+    mode_label = sanitize_bids_label(extract_mode or config.source.extract_mode)
     extension = extension if extension.startswith(".") else f".{extension}"
 
     return derivative_path(
@@ -259,7 +261,7 @@ def make_evoked_label_time_course_path(
         task=task,
         run=run,
         kind="label_time_course",
-        suffix=f"space-label_parc-{parc_label}_desc-{condition_label}{method_label}-ltc{extension}",
+        suffix=f"space-label_parc-{parc_label}_desc-{condition_label}{method_label}{mode_label}-ltc{extension}",
     )
 
 
@@ -272,12 +274,14 @@ def make_epoch_label_time_course_path(
     run: str | None = None,
     parcellation: str | None = None,
     inverse_method: str | None = None,
+    extract_mode: str | None = None,
     decim: int | None = None,
     extension: str = ".npy",
 ) -> Path:
     """Create the path for epoch-level label time courses."""
     parc_label = sanitize_bids_label(parcellation or config.source.parcellation)
     method_label = sanitize_bids_label(inverse_method or config.source.inverse_method)
+    mode_label = sanitize_bids_label(extract_mode or config.source.extract_mode)
     decim_label = f"decim{decim}" if decim not in {None, 1} else ""
     extension = extension if extension.startswith(".") else f".{extension}"
 
@@ -288,7 +292,7 @@ def make_epoch_label_time_course_path(
         task=task,
         run=run,
         kind="label_time_course_epochs",
-        suffix=f"space-label_parc-{parc_label}_desc-epoch{method_label}{decim_label}-ltc{extension}",
+        suffix=f"space-label_parc-{parc_label}_desc-epoch{method_label}{mode_label}{decim_label}-ltc{extension}",
     )
 
 
@@ -3389,6 +3393,7 @@ def label_time_course_input_overview_to_dataframe(
                 condition=condition,
                 parcellation=effective_parc,
                 inverse_method=effective_method,
+                extract_mode=effective_mode,
                 extension=".tsv",
             )
             labels_path, times_path = _label_sidecar_paths(ltc_path)
@@ -3516,6 +3521,7 @@ def extract_label_time_courses_for_recording(
         condition=condition,
         parcellation=effective_parc,
         inverse_method=effective_method,
+        extract_mode=effective_mode,
         extension=".tsv",
     )
     labels_path, times_path = _label_sidecar_paths(ltc_path)
@@ -4065,6 +4071,7 @@ def epoch_label_time_course_input_overview_to_dataframe(
             **entities,
             parcellation=settings["parcellation"],
             inverse_method=settings["method"],
+            extract_mode=settings["extract_mode"],
             decim=settings["decim"],
             extension=".npy",
         )
@@ -4206,6 +4213,7 @@ def extract_epoch_label_time_courses_for_recording(
         **entities,
         parcellation=settings["parcellation"],
         inverse_method=settings["method"],
+        extract_mode=settings["extract_mode"],
         decim=settings["decim"],
         extension=".npy",
     )

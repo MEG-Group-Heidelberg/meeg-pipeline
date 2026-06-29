@@ -324,6 +324,53 @@ class SourceConfig:
 
 
 @dataclass(frozen=True)
+class ConnectivityWindowConfig:
+    tmin: float
+    tmax: float
+
+
+@dataclass(frozen=True)
+class ConnectivityBandConfig:
+    fmin: float
+    fmax: float
+
+
+@dataclass(frozen=True)
+class ConnectivityConfig:
+    enabled: bool = True
+    input: Literal["label_time_course_epochs"] = "label_time_course_epochs"
+    space: Literal["label"] = "label"
+    parcellation: str | None = None
+    methods: tuple[str, ...] = ("imcoh", "wpli")
+    mode: str = "multitaper"
+    windows: dict[str, ConnectivityWindowConfig] = None  # type: ignore[assignment]
+    bands: dict[str, ConnectivityBandConfig] = None  # type: ignore[assignment]
+    faverage: bool = True
+    conditions: tuple[str, ...] | Literal["all"] = "all"
+    label_patterns: tuple[str, ...] | None = None
+    block_size: int = 1000
+    n_jobs: int | None = None
+    save_format: Literal["npz"] = "npz"
+
+    def __post_init__(self) -> None:
+        if self.windows is None:
+            object.__setattr__(
+                self,
+                "windows",
+                {"note_early": ConnectivityWindowConfig(tmin=0.0, tmax=0.25)},
+            )
+        if self.bands is None:
+            object.__setattr__(
+                self,
+                "bands",
+                {
+                    "beta": ConnectivityBandConfig(fmin=13.0, fmax=30.0),
+                    "low_gamma": ConnectivityBandConfig(fmin=30.0, fmax=70.0),
+                },
+            )
+
+
+@dataclass(frozen=True)
 class PipelineConfig:
     project_name: str
     paths: ProjectPaths
@@ -339,6 +386,7 @@ class PipelineConfig:
     epochs: EpochsConfig
     autoreject: AutorejectConfig
     source: SourceConfig
+    connectivity: ConnectivityConfig = ConnectivityConfig()
 
 
 def _resolve_path(path: str | Path, *, base_dir: Path) -> Path:
@@ -786,6 +834,87 @@ def load_config(config_path: str | Path) -> PipelineConfig:
         subset=_optional_int(autoreject_raw.get("subset", None)),
     )
 
+
+    connectivity_raw = raw.get("connectivity", {})
+
+    connectivity_input = str(connectivity_raw.get("input", "label_time_course_epochs"))
+    if connectivity_input != "label_time_course_epochs":
+        raise ValueError(
+            "connectivity.input currently must be 'label_time_course_epochs', "
+            f"got {connectivity_input!r}."
+        )
+
+    connectivity_space = str(connectivity_raw.get("space", "label"))
+    if connectivity_space != "label":
+        raise ValueError(
+            "connectivity.space currently must be 'label', "
+            f"got {connectivity_space!r}."
+        )
+
+    connectivity_windows_raw = connectivity_raw.get(
+        "windows",
+        {"note_early": {"tmin": 0.0, "tmax": 0.25}},
+    )
+    connectivity_windows: dict[str, ConnectivityWindowConfig] = {}
+    for name, window_raw in connectivity_windows_raw.items():
+        connectivity_windows[str(name)] = ConnectivityWindowConfig(
+            tmin=float(window_raw["tmin"]),
+            tmax=float(window_raw["tmax"]),
+        )
+        if connectivity_windows[str(name)].tmax <= connectivity_windows[str(name)].tmin:
+            raise ValueError(f"connectivity.windows.{name}.tmax must be larger than tmin.")
+
+    connectivity_bands_raw = connectivity_raw.get(
+        "bands",
+        {
+            "beta": {"fmin": 13.0, "fmax": 30.0},
+            "low_gamma": {"fmin": 30.0, "fmax": 70.0},
+        },
+    )
+    connectivity_bands: dict[str, ConnectivityBandConfig] = {}
+    for name, band_raw in connectivity_bands_raw.items():
+        connectivity_bands[str(name)] = ConnectivityBandConfig(
+            fmin=float(band_raw["fmin"]),
+            fmax=float(band_raw["fmax"]),
+        )
+        if connectivity_bands[str(name)].fmax <= connectivity_bands[str(name)].fmin:
+            raise ValueError(f"connectivity.bands.{name}.fmax must be larger than fmin.")
+
+    connectivity_conditions_raw = connectivity_raw.get("conditions", "all")
+    if connectivity_conditions_raw == "all":
+        connectivity_conditions: tuple[str, ...] | Literal["all"] = "all"
+    else:
+        connectivity_conditions = _str_tuple(connectivity_conditions_raw, ())
+
+    connectivity_n_jobs_raw = connectivity_raw.get("n_jobs", None)
+    connectivity_n_jobs = (
+        None if connectivity_n_jobs_raw is None else int(connectivity_n_jobs_raw)
+    )
+
+    connectivity_save_format = str(connectivity_raw.get("save_format", "npz"))
+    if connectivity_save_format != "npz":
+        raise ValueError(
+            "connectivity.save_format currently must be 'npz', "
+            f"got {connectivity_save_format!r}."
+        )
+
+    connectivity = ConnectivityConfig(
+        enabled=bool(connectivity_raw.get("enabled", True)),
+        input=connectivity_input,
+        space=connectivity_space,
+        parcellation=connectivity_raw.get("parcellation", None),
+        methods=_str_tuple(connectivity_raw.get("methods", ["imcoh", "wpli"]), ("imcoh", "wpli")),
+        mode=str(connectivity_raw.get("mode", "multitaper")),
+        windows=connectivity_windows,
+        bands=connectivity_bands,
+        faverage=bool(connectivity_raw.get("faverage", True)),
+        conditions=connectivity_conditions,
+        label_patterns=_optional_str_tuple(connectivity_raw.get("label_patterns", None)),
+        block_size=int(connectivity_raw.get("block_size", 1000)),
+        n_jobs=connectivity_n_jobs,
+        save_format=connectivity_save_format,
+    )
+
     source_raw = raw.get("source", {})
     source_inverse_raw = source_raw.get("inverse", {})
     source_labels_raw = source_raw.get("labels", {})
@@ -1000,4 +1129,5 @@ def load_config(config_path: str | Path) -> PipelineConfig:
         epochs=epochs,
         autoreject=autoreject,
         source=source,
+        connectivity=connectivity,
     )

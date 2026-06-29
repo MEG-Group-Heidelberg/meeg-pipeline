@@ -14,6 +14,7 @@ authors = [
 dependencies = [
     "mne",
     "mne-bids",
+    "mne-connectivity",
     "numpy",
     "pandas",
     "pyyaml",

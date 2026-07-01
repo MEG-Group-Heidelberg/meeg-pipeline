@@ -3066,10 +3066,4 @@ Current status and TODOs:
 - Source modeling now guards against EEG/MEG+EEG forward models with a one-layer BEM configuration.
 - Empty-room covariance is guarded against EEG-only and MEG+EEG analysis configurations.
 - EEG montage/reference handling should be added only when explicitly configured.
-- Synthetic unit tests cover MEG-only, EEG-only, and MEG+EEG channel-selection behavior without requiring real EEG datasets.
-
-Run the lightweight M/EEG channel-configuration smoke tests with:
-
-```bash
-PYTHONPATH=src pytest tests/test_meeg_channel_config.py
-```
+- Lightweight synthetic smoke checks for MEG-only, EEG-only, and MEG+EEG channel-selection behavior were used during development. They do not require real EEG datasets and can be kept as local project checks if needed.

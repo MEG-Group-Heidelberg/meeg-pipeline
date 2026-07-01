@@ -8,6 +8,7 @@ import mne
 from mne.io import BaseRaw
 
 from meeg_pipeline.bids import read_raw_bids_recording_if_exists
+from meeg_pipeline.channels import pick_analysis_channels
 from meeg_pipeline.config import PipelineConfig
 from meeg_pipeline.paths import derivative_path
 from meeg_pipeline.qc import apply_bad_channels
@@ -99,10 +100,16 @@ def filter_raw(
     filtered = raw.copy().load_data()
     filtering = config.preprocessing.filtering
 
+    picks = pick_analysis_channels(filtered, config, exclude=[])
+    if not picks:
+        raise ValueError(
+            "No channels match channels.analysis; cannot filter raw data."
+        )
+
     if filtering.notch_freqs:
         filtered.notch_filter(
             freqs=list(filtering.notch_freqs),
-            picks="meg",
+            picks=picks,
             method=filtering.method,
             verbose=verbose,
         )
@@ -111,7 +118,7 @@ def filter_raw(
         filtered.filter(
             l_freq=filtering.l_freq,
             h_freq=filtering.h_freq,
-            picks="meg",
+            picks=picks,
             method=filtering.method,
             verbose=verbose,
         )

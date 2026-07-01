@@ -10,6 +10,7 @@ from mne.io import BaseRaw
 from mne.preprocessing import ICA
 
 from meeg_pipeline.annotations import apply_bad_annotations
+from meeg_pipeline.channels import pick_analysis_channels
 from meeg_pipeline.config import PipelineConfig
 from meeg_pipeline.preprocessing import make_filtered_raw_path
 from meeg_pipeline.paths import derivative_path
@@ -229,15 +230,11 @@ def fit_ica(
         max_iter=max_iter,
     )
 
-    picks = mne.pick_types(
-        raw_for_fit.info,
-        meg=True,
-        eeg=True,
-        eog=False,
-        ecg=False,
-        stim=False,
-        exclude="bads",
-    )
+    picks = pick_analysis_channels(raw_for_fit, config, exclude="bads")
+    if not picks:
+        raise ValueError(
+            "No good channels match channels.analysis; cannot fit ICA."
+        )
 
     ica.fit(
         raw_for_fit,

@@ -15,6 +15,7 @@ from meeg_pipeline.anatomy import (
     coregistration_trans_path,
     source_space_path,
 )
+from meeg_pipeline.channels import get_analysis_channel_types
 from meeg_pipeline.cleaning import make_cleaned_raw_path
 from meeg_pipeline.config import PipelineConfig
 from meeg_pipeline.conditions import (
@@ -923,6 +924,37 @@ def _noise_cov_mode(config: PipelineConfig, mode: str | None = None) -> str:
     return str(mode or config.source.noise_cov_mode)
 
 
+def _analysis_uses_meg(config: PipelineConfig) -> bool:
+    return "meg" in get_analysis_channel_types(config)
+
+
+def _analysis_uses_eeg(config: PipelineConfig) -> bool:
+    return "eeg" in get_analysis_channel_types(config)
+
+
+def _erm_noise_covariance_guard_message(config: PipelineConfig) -> str | None:
+    """Return a status message if ERM covariance is incompatible with config."""
+    uses_meg = _analysis_uses_meg(config)
+    uses_eeg = _analysis_uses_eeg(config)
+
+    if not uses_meg:
+        return (
+            "source.noise_cov.mode='erm' is only meaningful for MEG. "
+            "Use source.noise_cov.mode='epochs_baseline' or 'adhoc' for EEG-only "
+            "until an explicit EEG covariance strategy is configured."
+        )
+
+    if uses_eeg:
+        return (
+            "source.noise_cov.mode='erm' currently cannot create a joint "
+            "MEG+EEG covariance because empty-room recordings contain MEG noise "
+            "only. Use source.noise_cov.mode='epochs_baseline' for a joint "
+            "MEG+EEG covariance, or run a MEG-only source model."
+        )
+
+    return None
+
+
 def _covariance_baseline(config: PipelineConfig) -> tuple[float | None, float | None]:
     """Return the epoch baseline interval used for covariance estimation.
 
@@ -1588,6 +1620,20 @@ def write_noise_covariance_for_recording(
             mode=mode,
             message="Noise covariance already exists.",
         )
+
+    if mode == "erm":
+        guard_message = _erm_noise_covariance_guard_message(config)
+        if guard_message is not None:
+            return NoiseCovarianceResult(
+                subject=_subject_label(subject),
+                session=session,
+                task=task,
+                run=run,
+                path=str(cov_path),
+                status="unsupported_configuration",
+                mode=mode,
+                message=guard_message,
+            )
 
     overview = noise_covariance_input_overview_to_dataframe(
         config,

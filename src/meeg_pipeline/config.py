@@ -30,6 +30,36 @@ class BIDSConfig:
     run: str | None = None
 
 
+
+
+@dataclass(frozen=True)
+class ChannelAnalysisConfig:
+    meg: bool = True
+    eeg: bool = False
+    eog: bool = False
+    ecg: bool = False
+    stim: bool = False
+    misc: bool = False
+
+
+@dataclass(frozen=True)
+class ChannelReferenceConfig:
+    eeg: str | None = None
+
+
+@dataclass(frozen=True)
+class ChannelMontageConfig:
+    kind: str | None = None
+    dig: bool = True
+
+
+@dataclass(frozen=True)
+class ChannelConfig:
+    analysis: ChannelAnalysisConfig = field(default_factory=ChannelAnalysisConfig)
+    reference: ChannelReferenceConfig = field(default_factory=ChannelReferenceConfig)
+    montage: ChannelMontageConfig = field(default_factory=ChannelMontageConfig)
+
+
 @dataclass(frozen=True)
 class EventExtractionConfig:
     method: str = "binary_channels"
@@ -393,6 +423,7 @@ class PipelineConfig:
     paths: ProjectPaths
     runtime: RuntimeConfig
     bids: BIDSConfig
+    channels: ChannelConfig
     sourcedata: SourcedataConfig
     empty_room: EmptyRoomConfig
     freesurfer: FreeSurferConfig
@@ -677,11 +708,41 @@ def load_config(config_path: str | Path) -> PipelineConfig:
     )
 
     bids_raw = raw.get("bids", {})
+    bids_datatype = str(bids_raw.get("datatype", "meg"))
+    if bids_datatype not in {"meg", "eeg"}:
+        raise ValueError(
+            "bids.datatype must be one of 'meg' or 'eeg', "
+            f"got {bids_datatype!r}."
+        )
+
     bids = BIDSConfig(
-        datatype=bids_raw.get("datatype", "meg"),
+        datatype=bids_datatype,
         task=bids_raw.get("task"),
         session=bids_raw.get("session"),
         run=bids_raw.get("run"),
+    )
+
+    channels_raw = raw.get("channels", {}) or {}
+    analysis_raw = channels_raw.get("analysis", {}) or {}
+    reference_raw = channels_raw.get("reference", {}) or {}
+    montage_raw = channels_raw.get("montage", {}) or {}
+
+    channels = ChannelConfig(
+        analysis=ChannelAnalysisConfig(
+            meg=bool(analysis_raw.get("meg", True)),
+            eeg=bool(analysis_raw.get("eeg", False)),
+            eog=bool(analysis_raw.get("eog", False)),
+            ecg=bool(analysis_raw.get("ecg", False)),
+            stim=bool(analysis_raw.get("stim", False)),
+            misc=bool(analysis_raw.get("misc", False)),
+        ),
+        reference=ChannelReferenceConfig(
+            eeg=reference_raw.get("eeg", None),
+        ),
+        montage=ChannelMontageConfig(
+            kind=montage_raw.get("kind", None),
+            dig=bool(montage_raw.get("dig", True)),
+        ),
     )
 
     sourcedata_raw = raw.get("sourcedata", {})
@@ -1175,6 +1236,7 @@ def load_config(config_path: str | Path) -> PipelineConfig:
         paths=paths,
         runtime=runtime,
         bids=bids,
+        channels=channels,
         sourcedata=sourcedata,
         empty_room=empty_room,
         freesurfer=freesurfer,

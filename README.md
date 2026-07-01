@@ -2995,3 +2995,72 @@ or update the anatomy extra:
 pip install -e ".[dev,qt,autoreject,anatomy]"
 python -c "import nibabel, vtkmodules, pyvista; print('anatomy dependencies available')"
 ```
+
+
+## M/EEG channel and datatype configuration roadmap
+
+The preprocessing workflow is being generalized from a MEG-specific workflow into a shared M/EEG workflow. For now, the existing `1B_meg_preprocessing/` directory remains in place to avoid disrupting current reruns. Conceptually, this workflow should be treated as the future shared M/EEG preprocessing workflow rather than as a reason to create a separate `1C_eeg_processing/` pipeline.
+
+Two configuration layers are intentionally separate:
+
+- `bids.datatype` describes the BIDS datatype directory and filename suffix used for raw BIDS IO, currently `meg` or `eeg`.
+- `channels.analysis` describes which channel types are selected for analysis steps such as filtering and ICA.
+
+Conservative examples:
+
+```yaml
+# MEG-only, current default
+bids:
+  datatype: meg
+channels:
+  analysis:
+    meg: true
+    eeg: false
+```
+
+```yaml
+# EEG-only raw BIDS layout
+bids:
+  datatype: eeg
+channels:
+  analysis:
+    meg: false
+    eeg: true
+  reference:
+    eeg: null
+  montage:
+    kind: null
+    dig: true
+```
+
+```yaml
+# Combined MEG+EEG when EEG channels are stored in the MEG FIF recording
+bids:
+  datatype: meg
+channels:
+  analysis:
+    meg: true
+    eeg: true
+  reference:
+    eeg: null
+  montage:
+    kind: null
+    dig: true
+```
+
+For combined MEG+EEG data, this repository uses the conservative strategy that the BIDS datatype follows the actual raw BIDS file location/suffix. If the recording is a MEG FIF file that also contains EEG channels, use `bids.datatype: meg` and enable both `channels.analysis.meg` and `channels.analysis.eeg`. Do not assume that this covers every possible BIDS layout; validate concrete datasets with MNE-BIDS and the BIDS validator before treating them as final.
+
+Source modeling requirements differ by modality:
+
+- MEG-only source models can use a single-layer BEM model when scientifically appropriate.
+- EEG-only and MEG+EEG source models need an EEG-capable, typically three-layer, BEM model.
+- EEG source models require valid electrode positions, usually via digitization points or an explicit montage.
+
+Empty-room covariance (`source.noise_cov.mode: erm`) is MEG-specific. For EEG-only it should not be used. For MEG+EEG, avoid silently mixing MEG empty-room covariance with EEG channels; use a joint baseline covariance such as `source.noise_cov.mode: epochs_baseline` or run a MEG-only source model until a project-specific covariance strategy is explicit.
+
+Current TODOs:
+
+- Thread `channels.analysis` through all preprocessing, cleaning, epoching, evoked, and source-modeling calls.
+- Add explicit source-modeling channel flags derived from config.
+- Add EEG montage/reference handling only when explicitly configured.
+- Add small synthetic unit tests for MEG-only, EEG-only, and MEG+EEG channel-selection behavior.

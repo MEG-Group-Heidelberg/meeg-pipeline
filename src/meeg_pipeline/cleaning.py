@@ -188,6 +188,7 @@ def load_filtered_raw_for_cleaning(
 
 def fit_ica(
     raw: BaseRaw,
+    config: PipelineConfig | None = None,
     *,
     n_components: int | float | None = 0.99,
     method: str = "fastica",
@@ -230,11 +231,28 @@ def fit_ica(
         max_iter=max_iter,
     )
 
-    picks = pick_analysis_channels(raw_for_fit, config, exclude="bads")
-    if not picks:
-        raise ValueError(
+    if config is None:
+        picks = list(
+            mne.pick_types(
+                raw_for_fit.info,
+                meg=True,
+                eeg=False,
+                eog=False,
+                ecg=False,
+                stim=False,
+                misc=False,
+                exclude="bads",
+            )
+        )
+        no_picks_message = "No good MEG channels found; cannot fit ICA."
+    else:
+        picks = pick_analysis_channels(raw_for_fit, config, exclude="bads")
+        no_picks_message = (
             "No good channels match channels.analysis; cannot fit ICA."
         )
+
+    if not picks:
+        raise ValueError(no_picks_message)
 
     ica.fit(
         raw_for_fit,
@@ -303,6 +321,7 @@ def fit_ica_for_recording(
 
     ica = fit_ica(
         raw_result.raw,
+        config,
         n_components=n_components,
         method=method,
         random_state=random_state,

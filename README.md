@@ -3058,9 +3058,10 @@ Source modeling requirements differ by modality:
 
 Empty-room covariance (`source.noise_cov.mode: erm`) is MEG-specific. For EEG-only it should not be used. For MEG+EEG, avoid silently mixing MEG empty-room covariance with EEG channels; use a joint baseline covariance such as `source.noise_cov.mode: epochs_baseline` or run a MEG-only source model until a project-specific covariance strategy is explicit.
 
-Current TODOs:
+Current status and TODOs:
 
-- Thread `channels.analysis` through all preprocessing, cleaning, epoching, evoked, and source-modeling calls.
-- Add explicit source-modeling channel flags derived from config.
-- Add EEG montage/reference handling only when explicitly configured.
-- Add small synthetic unit tests for MEG-only, EEG-only, and MEG+EEG channel-selection behavior.
+- `channels.analysis` is used by filtering, ICA fitting, and the default epoching channel selection.
+- Evoked creation remains channel-agnostic and averages whichever channels are present in the saved epochs.
+- Source-modeling channel flags still need to be derived from config.
+- EEG montage/reference handling should be added only when explicitly configured.
+- Small synthetic unit tests for MEG-only, EEG-only, and MEG+EEG channel-selection behavior are still needed.

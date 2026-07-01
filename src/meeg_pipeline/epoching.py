@@ -13,6 +13,7 @@ from mne.io import BaseRaw
 
 from meeg_pipeline.bids import make_events_path
 from meeg_pipeline.cleaning import make_cleaned_raw_path
+from meeg_pipeline.channels import get_analysis_channel_types
 from meeg_pipeline.config import PipelineConfig
 from meeg_pipeline.event_derivatives import make_analysis_events_path
 from meeg_pipeline.paths import bids_path_to_path, derivative_path
@@ -196,13 +197,20 @@ def load_events_for_epoching(
 
 def prepare_raw_for_epoching(
     raw: BaseRaw,
+    config: PipelineConfig | None = None,
     *,
-    ch_types: list[str] | tuple[str, ...] | str | None = ("meg",),
+    ch_types: list[str] | tuple[str, ...] | str | None = None,
     ch_names: list[str] | tuple[str, ...] | str | None = "all",
     bad_interpolation: Literal["epochs", "evokeds"] | None = "epochs",
 ) -> BaseRaw:
     """Prepare a Raw object for epoching by applying channel selections."""
     raw = raw.copy()
+
+    if ch_types is None:
+        if config is None:
+            ch_types = ("meg",)
+        else:
+            ch_types = get_analysis_channel_types(config)
 
     if ch_types is not None:
         if isinstance(ch_types, str):
@@ -642,7 +650,7 @@ def write_epochs_for_recording(
     tmax: float | None = None,
     baseline: tuple[float | None, float | None] | None = None,
     event_code_mode: EventCodeMode = "trial_type",
-    ch_types: list[str] | tuple[str, ...] | str | None = ("meg",),
+    ch_types: list[str] | tuple[str, ...] | str | None = None,
     ch_names: list[str] | tuple[str, ...] | str | None = "all",
     bad_interpolation: Literal["epochs", "evokeds"] | None = "epochs",
     apply_proj: bool = True,
@@ -722,6 +730,7 @@ def write_epochs_for_recording(
 
     raw = prepare_raw_for_epoching(
         raw_result.raw,
+        config,
         ch_types=ch_types,
         ch_names=ch_names,
         bad_interpolation=bad_interpolation,
@@ -802,7 +811,7 @@ def write_epochs_for_recordings(
     tmax: float | None = None,
     baseline: tuple[float | None, float | None] | None = None,
     event_code_mode: EventCodeMode = "trial_type",
-    ch_types: list[str] | tuple[str, ...] | str | None = ("meg",),
+    ch_types: list[str] | tuple[str, ...] | str | None = None,
     ch_names: list[str] | tuple[str, ...] | str | None = "all",
     bad_interpolation: Literal["epochs", "evokeds"] | None = "epochs",
     apply_proj: bool = True,

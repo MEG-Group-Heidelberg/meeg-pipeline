@@ -9,13 +9,21 @@ paths:
   mri_root: "./sourcedata/mri"
 
 freesurfer:
+  # Set this to your local FreeSurfer installation, for example:
+  # home: "/Applications/freesurfer/8.2.0"
   home: null
   subjects_dir: "./derivatives/freesurfer/subjects"
 
 sourcedata:
-  sessions: "ignore"  # "ignore" | "include" | "auto"
+  # "ignore": allow source ses-* folders but omit BIDS session entities.
+  # "include": write source ses-* folders as BIDS sessions.
+  # "auto": include sessions only for subjects with more than one source session.
+  sessions: "ignore"
 
 bids:
+  # Raw BIDS datatype directory/file suffix used for IO.
+  # Use "meg" for MEG FIF files, including conservative MEG+EEG-in-FIF layouts.
+  # Use "eeg" for pure EEG raw BIDS layouts.
   datatype: "meg"  # "meg" | "eeg"
   task: null
   session: null
@@ -23,6 +31,9 @@ bids:
 
 channels:
   analysis:
+    # Conservative default: MEG-only analysis.
+    # For EEG-only: meg: false, eeg: true.
+    # For MEG+EEG in a MEG FIF file: meg: true, eeg: true.
     meg: true
     eeg: false
     eog: false
@@ -30,8 +41,10 @@ channels:
     stim: false
     misc: false
   reference:
+    # No automatic EEG reference is applied unless explicitly configured later.
     eeg: null
   montage:
+    # For EEG, set a standard montage or use digitization points when available.
     kind: null
     dig: true
 
@@ -46,7 +59,7 @@ empty_room:
     - "*.fif"
     - "*.fif.gz"
   matching:
-    strategy: "meas_date_nearest"
+    strategy: "meas_date_nearest"  # "auto" | "meas_date_nearest" | "session_exact" | "session_date_nearest"
     max_time_diff_hours: 24
     allow_fallback: true
     fallback_strategy: "session_date_nearest"
@@ -102,11 +115,17 @@ autoreject:
   subset: null
 
 conditions:
+  # Define reusable condition names here when they should be reused across
+  # evokeds, source modeling, connectivity, or decoding.
+  # Examples:
+  # definitions:
+  #   condition_a: "trial_type == 'condition_a'"
+  #   event_1: [1]
   definitions: {}
 
 anatomy:
   coregistration:
-    transform_scope: "recording"
+    transform_scope: "recording"       # "recording" | "session" | "subject"
     allow_compatible_fallback: true
   t1_patterns:
     - "{subject}/anat/T1.mgz"
@@ -126,6 +145,8 @@ anatomy:
     volume: "T1"
   bem:
     method: "watershed"
+    # MEG-only default. For EEG or MEG+EEG source modeling, use a three-layer
+    # conductivity such as [0.3, 0.006, 0.3].
     conductivity: [0.3]
     ico: 4
   source_space:
@@ -152,6 +173,8 @@ source:
     extract_mode: "mean_flip"
     target_labels: null
   noise_cov:
+    # "erm" is MEG-specific. For EEG-only or MEG+EEG, prefer a joint baseline
+    # covariance such as "epochs_baseline" after checking project assumptions.
     mode: "erm"
   apply_inverse:
     apply_to: "evoked"

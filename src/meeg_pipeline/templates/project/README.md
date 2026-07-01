@@ -1,39 +1,118 @@
 # {{ project_name }}
 
-This is a M/EEG project initialized with `meegpipe init-project`.
+This is a M/EEG analysis project initialized with `meegpipe init-project`.
 
-## Structure
+The outer project folder is an analysis workspace. It contains configs,
+notebooks, original source exports, and derivatives. The raw BIDS dataset lives
+inside `rawdata/`.
 
-This outer folder is the project workspace, not the raw BIDS dataset root.
+## Folder layout
 
-- `README.md` — project-level notes for the analysis workspace
-- `configs/local.yaml` — project configuration
-- `notebooks/` — project workflow notebooks
-- `sourcedata/` — original acquisition exports, kept unchanged
-- `rawdata/` — raw BIDS dataset root
-- `derivatives/meeg-pipeline/` — M/EEG pipeline outputs
-- `derivatives/freesurfer/` — FreeSurfer anatomy outputs
-
-The raw BIDS metadata files live under `rawdata/`, not in the outer project folder.
+```text
+{{ project_name }}/
+  README.md
+  configs/
+    local.yaml
+  notebooks/
+    00_project_summary.ipynb
+    1A_anatomy/
+    1B_meg_preprocessing/
+    2_sensor_analysis/
+    3_source_modeling/
+    4_connectivity/
+    5_decoding/
+  sourcedata/
+  rawdata/
+  derivatives/
+    meeg-pipeline/
+    freesurfer/
+```
 
 ## First steps
 
 1. Edit `configs/local.yaml`.
-2. Place original M/EEG files under `sourcedata/`.
-3. Place raw MRI exports under `sourcedata/mri_raw/` or standardized MRI inputs under `sourcedata/mri/`.
-4. Convert source files into the raw BIDS dataset under `rawdata/`.
-5. Open the notebooks in order.
+2. Put original M/EEG acquisition exports under `sourcedata/`.
+3. Put raw MRI exports under `sourcedata/mri_raw/`, or standardized MRI inputs
+   under `sourcedata/mri/`.
+4. Check the config and project layout:
 
-## Source data example
+   ```bash
+   meegpipe config-info --config configs/local.yaml
+   meegpipe sourcedata-info --config configs/local.yaml
+   meegpipe bids-info --config configs/local.yaml
+   ```
 
-Place original files under a folder structure like:
+5. Open `notebooks/00_project_summary.ipynb` and then proceed through the
+   workflow notebooks.
 
-    sourcedata/sub-0001/meg/task-example/<original_file>.fif
+## Raw BIDS root
 
-or, when you want to organize source files by acquisition date:
+`rawdata/` is the raw BIDS dataset root. BIDS metadata files such as
+`dataset_description.json`, `participants.tsv`, and `participants.json` belong in
+`rawdata/`, not in the outer project folder.
 
-    sourcedata/sub-0001/ses-20260523/meg/task-example/<original_file>.fif
+## Source data
 
-By default, `sourcedata.sessions` is set to `ignore`, so a single `ses-*` folder can be used for organization without creating a BIDS session entity. Set `sourcedata.sessions: "include"` for true multi-session BIDS datasets.
+`sourcedata/` contains original acquisition exports and should remain unchanged.
+The source-data folder structure encodes subject, optional source session, task,
+and optional run information.
 
-Do not modify original source files after placing them in `sourcedata_root`.
+Examples:
+
+```text
+sourcedata/sub-0001/meg/task-example/<original_file>.fif
+sourcedata/sub-0001/ses-20260523/meg/task-example/<original_file>.fif
+```
+
+By default, `sourcedata.sessions` is set to `ignore`, so source `ses-*` folders
+can be used for local organization without becoming BIDS session entities. Set
+`sourcedata.sessions: "include"` for true multi-session BIDS datasets.
+
+## MEG, EEG, and combined MEG+EEG
+
+Two config layers are intentionally separate:
+
+- `bids.datatype` describes the raw BIDS datatype directory and file suffix
+  currently used for IO, usually `meg` or `eeg`.
+- `channels.analysis` describes which channel types should be used in analysis
+  steps such as filtering, ICA, epoching, and source-modeling channel flags.
+
+The default template is conservative MEG-only:
+
+```yaml
+bids:
+  datatype: "meg"
+channels:
+  analysis:
+    meg: true
+    eeg: false
+```
+
+For pure EEG raw BIDS data, use `bids.datatype: "eeg"` and enable EEG analysis
+channels. For combined MEG+EEG in a MEG FIF recording, keep `bids.datatype:
+"meg"` and enable both `channels.analysis.meg` and `channels.analysis.eeg`.
+Validate concrete datasets with MNE-BIDS and the BIDS validator before treating a
+layout as final.
+
+## Anatomy and source modeling
+
+MEG-only source modeling can use a one-layer BEM when scientifically appropriate.
+EEG-only and combined MEG+EEG source modeling require an EEG-capable, typically
+three-layer, BEM and valid electrode positions from digitization points or an
+explicit montage.
+
+Empty-room covariance is MEG-specific. For EEG-only or combined MEG+EEG source
+models, prefer a project-specific baseline covariance strategy until the
+covariance model is explicit.
+
+## Notebook template status
+
+The notebook tree is part of the project template. The current folder name
+`1B_meg_preprocessing/` is retained for backward compatibility, but the workflow
+is intended to become the shared M/EEG preprocessing workflow. Do not create a
+separate `1C_eeg_processing/` workflow unless a future project has a strong
+reason to diverge.
+
+Notebook steps should stay thin: use reusable functions from `meeg_pipeline` for
+processing logic and keep project-specific choices in `configs/local.yaml` or in
+clearly marked project-specific notebook sections.

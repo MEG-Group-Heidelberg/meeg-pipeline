@@ -1,6 +1,6 @@
 {
   "participant_id": {
-    "Description": "Unique participant identifier"
+    "Description": "Unique participant identifier matching rawdata/sub-* folders"
   },
   "age": {
     "Description": "Age of the participant at time of testing",

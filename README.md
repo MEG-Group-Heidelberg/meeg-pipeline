@@ -215,26 +215,21 @@ my-meeg-project/
     5_decoding/
 
   sourcedata/
-    README.md
     sub-0001/
       meg/
         task-example/
-          README.md
       ses-20260523/
         meg/
           task-example/
-            README.md
     emptyroom/
       ses-YYYYMMDD/
-        README.md
     mri_raw/
       sub-0001/
         T1/
-          README.md
+        T2/
     mri/
       sub-0001/
         anat/
-          README.md
 
   rawdata/
     README
@@ -244,17 +239,14 @@ my-meeg-project/
 
   derivatives/
     meeg-pipeline/
-      README.md
     freesurfer/
-      README.md
       subjects/
-        README.md
 ```
 
-The example folders under `sourcedata/` are placeholders. Replace or extend them
-with real subject, session, task, run, empty-room, and MRI folders. The original
-source filename can usually remain arbitrary; the pipeline infers entities from
-the folder structure.
+The example folders under `sourcedata/` are empty starter folders. Replace or
+extend them with real subject, session, task, run, empty-room, and MRI folders.
+The original source filename can usually remain arbitrary; the pipeline infers
+entities from the folder structure.
 
 The raw BIDS metadata files belong in `rawdata/`, not in the outer project root:
 
@@ -777,9 +769,10 @@ When a change proves generally useful, port it into the template and remove
 project-specific assumptions such as local paths, subject IDs, task names,
 condition names, or exploratory plot choices.
 
-Template files should include placeholder files such as README files when empty
-folders are meaningful. Git does not track empty directories, so a folder that
-should be created by `init-project` needs at least one tracked file.
+Template directories that should exist in newly initialized projects are kept in
+the library with internal `_template_keep` files. `init-project` creates the
+directories but deliberately skips these internal files, so new projects do not
+get placeholder README files in every example folder.
 
 ## Development status
 

@@ -16,6 +16,12 @@ class InitProjectResult:
     dry_run: bool = False
 
 
+_TEMPLATE_INTERNAL_FILENAMES = {
+    ".DS_Store",
+    "_template_keep",
+}
+
+
 def _normalize_modality(modality: str | None) -> str:
     """Normalize init-project modality labels."""
     value = "meg" if modality is None else str(modality).lower().replace("+", "")
@@ -145,7 +151,10 @@ def _copy_project_template(
     with resources.as_file(template_resource) as template_root:
         template_root = Path(template_root)
         for source_path in sorted(template_root.rglob("*")):
-            if source_path.name == ".DS_Store" or "__pycache__" in source_path.parts:
+            if (
+                source_path.name in _TEMPLATE_INTERNAL_FILENAMES
+                or "__pycache__" in source_path.parts
+            ):
                 continue
 
             relative_path = source_path.relative_to(template_root)

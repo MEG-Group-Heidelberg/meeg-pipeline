@@ -155,6 +155,30 @@ def _source_forward_desc_from_config(config: PipelineConfig) -> str:
     return _source_forward_desc_from_flags(meg=meg, eeg=eeg)
 
 
+def source_forward_config_to_dataframe(config: PipelineConfig) -> pd.DataFrame:
+    """Return effective source-modeling channel settings as a one-row table."""
+    fwd_meg, fwd_eeg = source_forward_channel_flags_from_config(config)
+    bem_conductivity = tuple(config.anatomy.bem.conductivity)
+    guard_message = _source_modeling_configuration_guard_message(config)
+
+    return pd.DataFrame(
+        [
+            {
+                "bids_datatype": config.bids.datatype,
+                "analysis_channel_types": ",".join(get_analysis_channel_types(config)),
+                "fwd_desc": _source_forward_desc_from_flags(meg=fwd_meg, eeg=fwd_eeg),
+                "fwd_meg": fwd_meg,
+                "fwd_eeg": fwd_eeg,
+                "bem_n_layers": len(bem_conductivity),
+                "bem_conductivity": bem_conductivity,
+                "noise_cov_mode": config.source.noise_cov_mode,
+                "status": "unsupported_configuration" if guard_message else "ok",
+                "message": guard_message or "Source-modeling channel configuration is internally consistent.",
+            }
+        ]
+    )
+
+
 def _source_modeling_configuration_guard_message(config: PipelineConfig) -> str | None:
     """Return a status message for unsupported source-modeling configurations."""
     uses_meg, uses_eeg = source_forward_channel_flags_from_config(config)
@@ -1950,6 +1974,8 @@ def inverse_operator_input_overview_to_dataframe(
     """Summarize inverse-operator inputs and output status for recordings."""
     rows: list[dict[str, Any]] = []
     mode = _noise_cov_mode(config, noise_cov_mode)
+    fwd_meg, fwd_eeg = source_forward_channel_flags_from_config(config)
+    fwd_desc = _source_forward_desc_from_flags(meg=fwd_meg, eeg=fwd_eeg)
 
     for recording in recordings:
         entities = _recording_entities(recording)

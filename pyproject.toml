@@ -63,5 +63,8 @@ all = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+meeg_pipeline = ["templates/**/*"]
+
 [tool.ruff]
 line-length = 88

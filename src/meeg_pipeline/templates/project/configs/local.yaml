@@ -1,0 +1,202 @@
+project:
+  name: "{{ project_name }}"
+
+paths:
+  bids_root: "./rawdata"
+  sourcedata_root: "./sourcedata"
+  derivatives_root: "./derivatives/meeg-pipeline"
+  mri_raw_root: "./sourcedata/mri_raw"
+  mri_root: "./sourcedata/mri"
+
+freesurfer:
+  home: null
+  subjects_dir: "./derivatives/freesurfer/subjects"
+
+sourcedata:
+  sessions: "ignore"  # "ignore" | "include" | "auto"
+
+bids:
+  datatype: "meg"  # "meg" | "eeg"
+  task: null
+  session: null
+  run: null
+
+channels:
+  analysis:
+    meg: true
+    eeg: false
+    eog: false
+    ecg: false
+    stim: false
+    misc: false
+  reference:
+    eeg: null
+  montage:
+    kind: null
+    dig: true
+
+empty_room:
+  enabled: true
+  subject: "emptyroom"
+  task: "noise"
+  sourcedata_root: "./sourcedata/emptyroom"
+  sessions: "from_folders"
+  session_pattern: "ses-*"
+  file_patterns:
+    - "*.fif"
+    - "*.fif.gz"
+  matching:
+    strategy: "meas_date_nearest"
+    max_time_diff_hours: 24
+    allow_fallback: true
+    fallback_strategy: "session_date_nearest"
+
+runtime:
+  n_jobs: 1
+  thread_limits: true
+
+events:
+  extraction:
+    method: "binary_channels"
+    stim_channels:
+      - "STI 001"
+      - "STI 002"
+      - "STI 003"
+      - "STI 004"
+      - "STI 005"
+      - "STI 006"
+    min_duration: 0.0
+    shortest_event: 1
+    min_gap: 7000
+    adjust_timeline_by_msec: 0.0
+    tolerance_samples: 1
+    mute_bad_annotations: true
+
+preprocessing:
+  filtering:
+    notch_freqs: [50]
+    l_freq: 1.0
+    h_freq: 40.0
+    method: "fir"
+
+cleaning:
+  ica:
+    n_components: 0.99
+    method: "fastica"
+    random_state: 97
+    max_iter: "auto"
+    decim: null
+    fit_resample_sfreq: null
+
+epochs:
+  tmin: -1.0
+  tmax: 1.0
+  baseline: null
+  bad_interpolation: "epochs"
+
+autoreject:
+  enabled: false
+  use: null
+  consensus_percs: null
+  n_interpolates: null
+  subset: null
+
+conditions:
+  definitions: {}
+
+anatomy:
+  coregistration:
+    transform_scope: "recording"
+    allow_compatible_fallback: true
+  t1_patterns:
+    - "{subject}/anat/T1.mgz"
+    - "{subject}/anat/*T1w*.nii*"
+  t2_patterns:
+    - "{subject}/anat/T2.mgz"
+    - "{subject}/anat/*T2w*.nii*"
+  conversion:
+    converter: "dcm2niix"
+    t1_source_pattern: "{subject}/T1"
+    t2_source_pattern: "{subject}/T2"
+    make_mgz: true
+  recon:
+    use_t1: true
+    use_t2: false
+  watershed:
+    volume: "T1"
+  bem:
+    method: "watershed"
+    conductivity: [0.3]
+    ico: 4
+  source_space:
+    spacing: "ico5"
+    surface: "white"
+    add_dist: false
+  volume_source_space:
+    enabled: false
+    spacing: 5.0
+  labels:
+    morph_from: "fsaverage"
+    parcellations:
+      - "aparc_sub"
+
+source:
+  spacing: "ico5"
+  inverse:
+    method: "dSPM"
+    snr: 3.0
+    lambda2: null
+    pick_ori: null
+  labels:
+    parcellation: "aparc_sub"
+    extract_mode: "mean_flip"
+    target_labels: null
+  noise_cov:
+    mode: "erm"
+  apply_inverse:
+    apply_to: "evoked"
+    pick_conditions: "all"
+    save_stcs: true
+    stc_format: "h5"
+  morph:
+    enabled: true
+    subject_to: "fsaverage"
+    spacing: null
+    smooth: null
+    method: null
+    pick_conditions: "all"
+    stc_format: "h5"
+  label_time_courses_epochs:
+    enabled: true
+    decim: 5
+    tmin: null
+    tmax: null
+    dtype: "float32"
+    save_format: "npy"
+
+connectivity:
+  enabled: true
+  input: "label_time_course_epochs"
+  space: "label"
+  parcellation: "aparc_sub"
+  methods:
+    - "imcoh"
+    - "wpli"
+  mode: "multitaper"
+  windows:
+    example_window:
+      tmin: 0.0
+      tmax: 0.5
+  bands:
+    beta:
+      fmin: 13.0
+      fmax: 30.0
+    low_gamma:
+      fmin: 30.0
+      fmax: 70.0
+  faverage: true
+  conditions: "all"
+  label_patterns: null
+  block_size: 1000
+  n_jobs: null
+  save_format: "npz"

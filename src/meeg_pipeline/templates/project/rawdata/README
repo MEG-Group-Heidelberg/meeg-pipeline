@@ -1,0 +1,5 @@
+# {{ project_name }} raw BIDS dataset
+
+This directory is the raw BIDS dataset root for the outer project folder.
+
+Original acquisition exports are stored separately in the outer `sourcedata/` directory. Processed outputs are stored separately in the outer `derivatives/` directory.

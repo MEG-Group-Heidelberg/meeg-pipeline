@@ -243,6 +243,12 @@ def main() -> None:
         help="Overwrite existing template files.",
     )
 
+    init_project_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report which files would be created or skipped without writing anything.",
+    )
+
 
     list_recordings_parser = subparsers.add_parser(
         "list-recordings",
@@ -745,6 +751,7 @@ def main() -> None:
             args.project_name,
             base_dir=args.base_dir,
             overwrite=args.overwrite,
+            dry_run=args.dry_run,
         )
 
         print(f"Project root: {result.project_root}")

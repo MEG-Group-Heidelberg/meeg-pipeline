@@ -1,0 +1,6 @@
+{
+  "Name": "{{ project_name }}",
+  "BIDSVersion": "1.10.0",
+  "DatasetType": "raw",
+  "Authors": []
+}

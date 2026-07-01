@@ -64,7 +64,14 @@ all = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-meeg_pipeline = ["templates/**/*"]
+meeg_pipeline = [
+    "templates/**/*.ipynb",
+    "templates/**/*.json",
+    "templates/**/*.md",
+    "templates/**/*.tsv",
+    "templates/**/*.yaml",
+    "templates/**/README",
+]
 
 [tool.ruff]
 line-length = 88

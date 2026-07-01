@@ -16,6 +16,60 @@ class InitProjectResult:
     dry_run: bool = False
 
 
+def _normalize_modality(modality: str | None) -> str:
+    """Normalize init-project modality labels."""
+    value = "meg" if modality is None else str(modality).lower().replace("+", "")
+    aliases = {
+        "meg": "meg",
+        "eeg": "eeg",
+        "meeg": "meeg",
+        "megeeg": "meeg",
+        "meg&eeg": "meeg",
+    }
+    if value not in aliases:
+        raise ValueError(
+            "modality must be one of: 'meg', 'eeg', 'meeg', or 'meg+eeg'"
+        )
+    return aliases[value]
+
+
+def _modality_template_values(modality: str | None) -> dict[str, str]:
+    """Return string values used while rendering project templates."""
+    normalized = _normalize_modality(modality)
+
+    if normalized == "meg":
+        return {
+            "modality": "meg",
+            "bids_datatype": "meg",
+            "analysis_meg": "true",
+            "analysis_eeg": "false",
+            "empty_room_enabled": "true",
+            "bem_conductivity": "[0.3]",
+            "noise_cov_mode": "erm",
+        }
+
+    if normalized == "eeg":
+        return {
+            "modality": "eeg",
+            "bids_datatype": "eeg",
+            "analysis_meg": "false",
+            "analysis_eeg": "true",
+            "empty_room_enabled": "false",
+            "bem_conductivity": "[0.3, 0.006, 0.3]",
+            "noise_cov_mode": "baseline",
+        }
+
+    return {
+        "modality": "meeg",
+        "bids_datatype": "meg",
+        "analysis_meg": "true",
+        "analysis_eeg": "true",
+        "empty_room_enabled": "false",
+        "bem_conductivity": "[0.3, 0.006, 0.3]",
+        "noise_cov_mode": "baseline",
+    }
+
+
 def _write_text_if_missing(
     path: Path,
     content: str,
@@ -53,15 +107,24 @@ def _mkdir_if_missing(
     created_paths.append(str(path))
 
 
-def _render_template_text(content: str, *, project_name: str) -> str:
+def _render_template_text(
+    content: str,
+    *,
+    project_name: str,
+    modality: str | None = None,
+) -> str:
     """Render simple project-template placeholders."""
-    return content.replace("{{ project_name }}", project_name)
+    rendered = content.replace("{{ project_name }}", project_name)
+    for key, value in _modality_template_values(modality).items():
+        rendered = rendered.replace(f"{{{{ {key} }}}}", value)
+    return rendered
 
 
 def _copy_project_template(
     *,
     project_name: str,
     project_root: Path,
+    modality: str | None,
     overwrite: bool,
     dry_run: bool,
     created_paths: list[str],
@@ -98,7 +161,11 @@ def _copy_project_template(
                 continue
 
             content = source_path.read_text(encoding="utf-8")
-            rendered = _render_template_text(content, project_name=project_name)
+            rendered = _render_template_text(
+                content,
+                project_name=project_name,
+                modality=modality,
+            )
             _write_text_if_missing(
                 target_path,
                 rendered,
@@ -143,8 +210,9 @@ def _minimal_notebook(title: str, body: str) -> str:
     return json.dumps(notebook, indent=1, ensure_ascii=False)
 
 
-def make_local_yaml(project_name: str) -> str:
+def make_local_yaml(project_name: str, *, modality: str | None = None) -> str:
     """Create a default project config."""
+    values = _modality_template_values(modality)
     return f"""project:
   name: "{project_name}"
 
@@ -164,10 +232,24 @@ sourcedata:
   sessions: "ignore"
 
 bids:
-  datatype: "meg"
+  datatype: "{values['bids_datatype']}"
   task: null
   session: null
   run: null
+
+channels:
+  analysis:
+    meg: {values['analysis_meg']}
+    eeg: {values['analysis_eeg']}
+    eog: false
+    ecg: false
+    stim: false
+    misc: false
+  reference:
+    eeg: null
+  montage:
+    kind: null
+    dig: true
 
 events:
   extraction:
@@ -326,6 +408,7 @@ def init_project(
     project_name: str,
     *,
     base_dir: str | Path = ".",
+    modality: str | None = "meg",
     overwrite: bool = False,
     dry_run: bool = False,
 ) -> InitProjectResult:
@@ -337,6 +420,9 @@ def init_project(
         Name of the project folder to create.
     base_dir
         Directory in which the project folder should be created.
+    modality
+        Project modality. Use "meg" for MEG-only, "eeg" for EEG-only, and
+        "meeg" for combined MEG+EEG stored in a MEG FIF/BIDS layout.
     overwrite
         If True, existing template files are overwritten. Existing directories
         are never deleted.
@@ -344,6 +430,7 @@ def init_project(
         If True, report which paths would be created or skipped without writing
         files or creating directories.
     """
+    modality = _normalize_modality(modality)
     base_dir = Path(base_dir).expanduser().resolve()
     project_root = base_dir / project_name
 
@@ -360,6 +447,7 @@ def init_project(
     template_found = _copy_project_template(
         project_name=project_name,
         project_root=project_root,
+        modality=modality,
         overwrite=overwrite,
         dry_run=dry_run,
         created_paths=created_paths,

@@ -238,6 +238,17 @@ def main() -> None:
     )
 
     init_project_parser.add_argument(
+        "--modality",
+        default="meg",
+        choices=["meg", "eeg", "meeg", "meg+eeg"],
+        help=(
+            "Default project modality. 'meg' creates MEG-only defaults, "
+            "'eeg' creates EEG-only defaults, and 'meeg'/'meg+eeg' creates "
+            "combined MEG+EEG defaults using a MEG raw BIDS datatype."
+        ),
+    )
+
+    init_project_parser.add_argument(
         "--overwrite",
         action="store_true",
         help="Overwrite existing template files.",
@@ -750,6 +761,7 @@ def main() -> None:
         result = init_project(
             args.project_name,
             base_dir=args.base_dir,
+            modality=args.modality,
             overwrite=args.overwrite,
             dry_run=args.dry_run,
         )

@@ -24,7 +24,7 @@ bids:
   # Raw BIDS datatype directory/file suffix used for IO.
   # Use "meg" for MEG FIF files, including conservative MEG+EEG-in-FIF layouts.
   # Use "eeg" for pure EEG raw BIDS layouts.
-  datatype: "meg"  # "meg" | "eeg"
+  datatype: "{{ bids_datatype }}"  # "meg" | "eeg"
   task: null
   session: null
   run: null
@@ -34,8 +34,8 @@ channels:
     # Conservative default: MEG-only analysis.
     # For EEG-only: meg: false, eeg: true.
     # For MEG+EEG in a MEG FIF file: meg: true, eeg: true.
-    meg: true
-    eeg: false
+    meg: {{ analysis_meg }}
+    eeg: {{ analysis_eeg }}
     eog: false
     ecg: false
     stim: false
@@ -49,7 +49,7 @@ channels:
     dig: true
 
 empty_room:
-  enabled: true
+  enabled: {{ empty_room_enabled }}
   subject: "emptyroom"
   task: "noise"
   sourcedata_root: "./sourcedata/emptyroom"
@@ -147,7 +147,7 @@ anatomy:
     method: "watershed"
     # MEG-only default. For EEG or MEG+EEG source modeling, use a three-layer
     # conductivity such as [0.3, 0.006, 0.3].
-    conductivity: [0.3]
+    conductivity: {{ bem_conductivity }}
     ico: 4
   source_space:
     spacing: "ico5"
@@ -175,7 +175,7 @@ source:
   noise_cov:
     # "erm" is MEG-specific. For EEG-only or MEG+EEG, prefer a joint baseline
     # covariance such as "epochs_baseline" after checking project assumptions.
-    mode: "erm"
+    mode: "{{ noise_cov_mode }}"
   apply_inverse:
     apply_to: "evoked"
     pick_conditions: "all"

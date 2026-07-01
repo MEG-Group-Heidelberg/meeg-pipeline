@@ -250,7 +250,22 @@ meegpipe --version
 
 ## Creating a new project
 
-A new project can be initialized with the command-line interface.
+A new project can be initialized with the command-line interface. The command
+copies the versioned project template that is bundled with the installed Python
+package. This template contains the recommended project folder layout, a
+loadable default config, raw BIDS metadata placeholders, and notebook templates
+for the current workflow.
+
+The template files live in the library under:
+
+```text
+src/meeg_pipeline/templates/project/
+```
+
+They are ordinary version-controlled files. When a workflow notebook matures in
+a real project, review whether the change is project-specific or generally
+useful. Generally useful changes can be ported back into this template tree so
+future projects start from the improved notebook.
 
 First make sure that the pipeline package is installed in your active Python
 environment:
@@ -302,9 +317,10 @@ my-meeg-project/
     dataset_description.json
     participants.tsv
     participants.json
-    sub-0001/
-      meg/
-        sub-0001_task-example_meg.fif
+    # raw BIDS subject folders are added after import
+    # sub-0001/
+    #   meg/
+    #     sub-0001_task-example_meg.fif
 
   configs/
     local.yaml
@@ -329,8 +345,6 @@ my-meeg-project/
 
     2_sensor_analysis/
       01_evokeds.ipynb
-      02_time_frequency.ipynb
-      03_sensor_decoding.ipynb
 
     3_source_modeling/
       01_forward_solution.ipynb
@@ -369,8 +383,6 @@ my-meeg-project/
       sub-0001/
         T1/
           README.md
-        T2/
-          README.md
 
     mri/
       sub-0001/
@@ -383,11 +395,24 @@ my-meeg-project/
       subjects/
 ```
 
-Existing files are not overwritten by default. To recreate template files, use:
+Existing files are not overwritten by default. If a project folder already
+contains files, `init-project` reports them as skipped unless overwrite is
+requested. To preview what would be created without writing anything, use:
+
+```bash
+meegpipe init-project my-meeg-project --dry-run
+```
+
+To intentionally recreate or update template files, use:
 
 ```bash
 meegpipe init-project my-meeg-project --overwrite
 ```
+
+Use `--overwrite` carefully in existing projects: it is meant for template
+refreshes, not for preserving project-specific notebook edits. A safe workflow is
+to run `--dry-run`, inspect the listed paths, and commit or back up local project
+changes before overwriting generated template files.
 
 After creating the project, enter the project folder:
 
@@ -486,6 +511,33 @@ mne.gui.coregistration(...)
 If plots do not open in an external window, restart the notebook kernel, run the
 Qt setup cell before any plotting commands, and check that the selected kernel is
 the intended virtual environment.
+
+## Project templates and template maintenance
+
+`meegpipe init-project` uses the project template bundled with the installed
+package. The template is intended to be a maintained starting point, not a frozen
+example. The recommended development model is:
+
+```text
+real project notebooks, e.g. tonalkey/notebooks/
+  -> active project-specific workflow and experiments
+
+meeg-pipeline template notebooks
+  -> reviewed, generic starting point for new projects
+```
+
+When a notebook change proves generally useful, port it into
+`src/meeg_pipeline/templates/project/notebooks/` and remove project-specific
+assumptions such as concrete subject IDs, task names, local paths, condition
+names, or exploratory plot choices. Keep project-specific analysis notebooks in
+the project folder.
+
+The current template includes full workflow notebooks for project summaries,
+anatomy preparation, shared M/EEG preprocessing, sensor-level evokeds, source
+modeling, and connectivity. The `5_decoding/` notebooks are currently scaffold
+placeholders and should be treated as starting points until decoding workflows
+are hardened.
+
 
 ## Project organization
 
@@ -2681,7 +2733,7 @@ Show the installed version:
 meegpipe --version
 ```
 
-Create a new project scaffold:
+Create a new project from the bundled project template:
 
 ```bash
 meegpipe init-project my-meeg-project
@@ -2693,7 +2745,13 @@ Create a project scaffold in a specific directory:
 meegpipe init-project my-meeg-project --base-dir /Volumes/YourDrive/MEEG
 ```
 
-Overwrite existing template files:
+Preview project creation without writing files:
+
+```bash
+meegpipe init-project my-meeg-project --dry-run
+```
+
+Overwrite existing template files intentionally:
 
 ```bash
 meegpipe init-project my-meeg-project --overwrite
@@ -2912,6 +2970,8 @@ Currently implemented:
 - Python package structure
 - `meegpipe` command-line entry point
 - project scaffold creation with `meegpipe init-project`
+- bundled project templates with configs, raw BIDS metadata placeholders, and workflow notebooks
+- dry-run and overwrite modes for project initialization
 - project config loading
 - configurable `sourcedata_root`
 - configurable source-data session handling via `sourcedata.sessions`
@@ -2976,6 +3036,7 @@ Important TODOs / not yet fully implemented:
 - directed connectivity workflows such as PSI
 - richer time-frequency workflows outside connectivity
 - decoding workflows beyond initial notebook scaffolding
+- full replacement of the current decoding placeholder notebooks with reviewed templates
 - explicit ERM-specific QC derivatives and reporting
 - explicit provenance JSON files for each major derivative step
 - stronger validation of config migrations and backward-compatible aliases
@@ -3066,4 +3127,10 @@ Current status and TODOs:
 - Source modeling now guards against EEG/MEG+EEG forward models with a one-layer BEM configuration.
 - Empty-room covariance is guarded against EEG-only and MEG+EEG analysis configurations.
 - EEG montage/reference handling should be added only when explicitly configured.
-- Lightweight synthetic smoke checks for MEG-only, EEG-only, and MEG+EEG channel-selection behavior were used during development. They do not require real EEG datasets and can be kept as local project checks if needed.
+- Synthetic unit tests cover MEG-only, EEG-only, and MEG+EEG channel-selection behavior without requiring real EEG datasets.
+
+Run the lightweight M/EEG channel-configuration smoke tests with:
+
+```bash
+PYTHONPATH=src pytest tests/test_meeg_channel_config.py
+```

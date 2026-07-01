@@ -15,7 +15,10 @@ from meeg_pipeline.anatomy import (
     coregistration_trans_path,
     source_space_path,
 )
-from meeg_pipeline.channels import get_analysis_channel_types
+from meeg_pipeline.channels import (
+    analysis_pick_kwargs_from_config,
+    get_analysis_channel_types,
+)
 from meeg_pipeline.cleaning import make_cleaned_raw_path
 from meeg_pipeline.config import PipelineConfig
 from meeg_pipeline.conditions import (
@@ -113,6 +116,114 @@ def _subjects_dir(config: PipelineConfig) -> Path:
     return Path(config.freesurfer.subjects_dir).expanduser().resolve()
 
 
+def source_forward_channel_flags_from_config(config: PipelineConfig) -> tuple[bool, bool]:
+    """Return ``(meg, eeg)`` forward-solution flags from ``channels.analysis``.
+
+    Only MEG and EEG data channels are valid source-model channels here. EOG,
+    ECG, stim, and misc channels may be useful during preprocessing, but they
+    should not request forward-model columns.
+    """
+    channel_types = set(get_analysis_channel_types(config))
+    return "meg" in channel_types, "eeg" in channel_types
+
+
+def _resolve_source_forward_channel_flags(
+    config: PipelineConfig,
+    *,
+    meg: bool | None = None,
+    eeg: bool | None = None,
+) -> tuple[bool, bool]:
+    """Resolve explicit forward flags with config-derived defaults."""
+    config_meg, config_eeg = source_forward_channel_flags_from_config(config)
+    return (config_meg if meg is None else bool(meg), config_eeg if eeg is None else bool(eeg))
+
+
+def _source_forward_desc_from_flags(*, meg: bool, eeg: bool) -> str:
+    """Return a compact derivative desc label for source-model channel flags."""
+    if meg and eeg:
+        return "meeg"
+    if eeg:
+        return "eeg"
+    if meg:
+        return "meg"
+    return "nochannels"
+
+
+def _source_forward_desc_from_config(config: PipelineConfig) -> str:
+    """Return the default forward derivative desc label from config."""
+    meg, eeg = source_forward_channel_flags_from_config(config)
+    return _source_forward_desc_from_flags(meg=meg, eeg=eeg)
+
+
+def _source_modeling_configuration_guard_message(config: PipelineConfig) -> str | None:
+    """Return a status message for unsupported source-modeling configurations."""
+    uses_meg, uses_eeg = source_forward_channel_flags_from_config(config)
+
+    if not uses_meg and not uses_eeg:
+        return (
+            "Source modeling requires MEG and/or EEG analysis channels. "
+            "Enable channels.analysis.meg and/or channels.analysis.eeg."
+        )
+
+    if uses_eeg and len(tuple(config.anatomy.bem.conductivity)) < 3:
+        return (
+            "EEG or MEG+EEG source modeling requires a three-layer BEM. "
+            "Set anatomy.bem.conductivity to a three-value tuple such as "
+            "[0.3, 0.006, 0.3] and generate the matching BEM solution."
+        )
+
+    return None
+
+
+def _pick_info_analysis_channels(config: PipelineConfig, info: mne.Info) -> mne.Info:
+    """Return a copy of ``info`` restricted to configured analysis channels."""
+    picks = mne.pick_types(
+        info,
+        **analysis_pick_kwargs_from_config(config),
+        exclude="bads",
+    )
+    if len(picks) == 0:
+        raise ValueError("No channels match channels.analysis for this recording.")
+    return mne.pick_info(info.copy(), picks, copy=True)
+
+
+def _has_eeg_positions(info: mne.Info) -> bool:
+    """Return whether EEG channels appear to have usable locations/dig points."""
+    eeg_picks = mne.pick_types(info, meg=False, eeg=True, exclude=[])
+    if len(eeg_picks) == 0:
+        return False
+
+    if info.get("dig"):
+        return True
+
+    for pick in eeg_picks:
+        loc = np.asarray(info["chs"][pick].get("loc", np.zeros(12))[:3], dtype=float)
+        if np.isfinite(loc).all() and float(np.linalg.norm(loc)) > 0.0:
+            return True
+
+    return False
+
+
+def _source_info_guard_message(info: mne.Info, *, meg: bool, eeg: bool) -> str | None:
+    """Return a status message if info does not support requested source flags."""
+    has_meg = len(mne.pick_types(info, meg=True, eeg=False, exclude=[])) > 0
+    has_eeg = len(mne.pick_types(info, meg=False, eeg=True, exclude=[])) > 0
+
+    if meg and not has_meg:
+        return "MEG source modeling was requested, but the selected info has no MEG channels."
+
+    if eeg and not has_eeg:
+        return "EEG source modeling was requested, but the selected info has no EEG channels."
+
+    if eeg and not _has_eeg_positions(info):
+        return (
+            "EEG source modeling requires electrode positions or digitization points "
+            "in the recording info. Configure/import a montage before forward modeling."
+        )
+
+    return None
+
+
 def make_forward_path(
     config: PipelineConfig,
     *,
@@ -121,11 +232,11 @@ def make_forward_path(
     session: str | None = None,
     run: str | None = None,
     spacing: str | None = None,
-    desc: str = "meg",
+    desc: str | None = None,
 ) -> Path:
     """Create the derivative path for a forward solution."""
     spacing_label = sanitize_bids_label(_source_spacing(config, spacing))
-    desc_label = sanitize_bids_label(desc)
+    desc_label = sanitize_bids_label(desc or _source_forward_desc_from_config(config))
 
     return derivative_path(
         config,
@@ -693,9 +804,14 @@ def forward_input_overview_to_dataframe(
     on_existing: ExistingOutputPolicy = "skip",
     spacing: str | None = None,
     trans_desc: str = "coreg",
+    meg: bool | None = None,
+    eeg: bool | None = None,
 ) -> pd.DataFrame:
     """Summarize forward-solution inputs and output status for recordings."""
     rows: list[dict[str, Any]] = []
+    fwd_meg, fwd_eeg = _resolve_source_forward_channel_flags(config, meg=meg, eeg=eeg)
+    fwd_desc = _source_forward_desc_from_flags(meg=fwd_meg, eeg=fwd_eeg)
+    config_guard = _source_modeling_configuration_guard_message(config)
 
     for recording in recordings:
         entities = _recording_entities(recording)
@@ -709,7 +825,7 @@ def forward_input_overview_to_dataframe(
         trans_path = Path(trans_input.path)
         src_path = find_source_space_path(config, subject, spacing=spacing)
         bem_path = find_bem_solution_path(config, subject)
-        fwd_path = make_forward_path(config, **entities, spacing=spacing)
+        fwd_path = make_forward_path(config, **entities, spacing=spacing, desc=fwd_desc)
 
         missing = []
         if info_input.status != "found":
@@ -724,6 +840,9 @@ def forward_input_overview_to_dataframe(
         if fwd_path.exists() and on_existing == "skip":
             status = "exists"
             message = "Forward solution already exists."
+        elif config_guard:
+            status = "unsupported_configuration"
+            message = config_guard
         elif missing:
             status = "missing_" + "_".join(missing)
             message = "Missing required input(s): " + ", ".join(missing)
@@ -755,6 +874,9 @@ def forward_input_overview_to_dataframe(
                 "bem_path": str(bem_path),
                 "fwd_exists": fwd_path.exists(),
                 "fwd_path": str(fwd_path),
+                "fwd_desc": fwd_desc,
+                "fwd_meg": fwd_meg,
+                "fwd_eeg": fwd_eeg,
                 "overwrite": on_existing == "overwrite",
             }
         )
@@ -769,8 +891,8 @@ def write_forward_solution_for_recording(
     on_existing: ExistingOutputPolicy = "skip",
     spacing: str | None = None,
     trans_desc: str = "coreg",
-    meg: bool = True,
-    eeg: bool = False,
+    meg: bool | None = None,
+    eeg: bool | None = None,
     mindist: float = 5.0,
     n_jobs: int | None = None,
     verbose: bool | str | int | None = True,
@@ -786,7 +908,9 @@ def write_forward_solution_for_recording(
     task = entities["task"]
     run = entities["run"]
 
-    fwd_path = make_forward_path(config, **entities, spacing=spacing)
+    fwd_meg, fwd_eeg = _resolve_source_forward_channel_flags(config, meg=meg, eeg=eeg)
+    fwd_desc = _source_forward_desc_from_flags(meg=fwd_meg, eeg=fwd_eeg)
+    fwd_path = make_forward_path(config, **entities, spacing=spacing, desc=fwd_desc)
 
     if fwd_path.exists() and on_existing == "skip":
         return ForwardSolutionResult(
@@ -805,6 +929,8 @@ def write_forward_solution_for_recording(
         on_existing="overwrite",
         spacing=spacing,
         trans_desc=trans_desc,
+        meg=fwd_meg,
+        eeg=fwd_eeg,
     ).iloc[0]
 
     if overview["status"] != "ready":
@@ -827,6 +953,24 @@ def write_forward_solution_for_recording(
         overview["info_input"],
         str(overview["info_input_kind"]),
     )
+    info = _pick_info_analysis_channels(config, info)
+
+    info_guard = _source_info_guard_message(info, meg=fwd_meg, eeg=fwd_eeg)
+    if info_guard:
+        return ForwardSolutionResult(
+            subject=_subject_label(subject),
+            session=session,
+            task=task,
+            run=run,
+            path=str(fwd_path),
+            status="unsupported_configuration",
+            info_input=str(overview["info_input"]),
+            info_input_kind=str(overview["info_input_kind"]),
+            trans_path=str(overview["trans_path"]),
+            src_path=str(overview["src_path"]),
+            bem_path=str(overview["bem_path"]),
+            message=info_guard,
+        )
 
     src = mne.read_source_spaces(overview["src_path"], verbose=verbose)
 
@@ -835,8 +979,8 @@ def write_forward_solution_for_recording(
         trans=overview["trans_path"],
         src=src,
         bem=overview["bem_path"],
-        meg=meg,
-        eeg=eeg,
+        meg=fwd_meg,
+        eeg=fwd_eeg,
         mindist=mindist,
         n_jobs=config.runtime.n_jobs if n_jobs is None else n_jobs,
         verbose=verbose,
@@ -872,8 +1016,8 @@ def write_forward_solutions_for_recordings(
     on_existing: ExistingOutputPolicy = "skip",
     spacing: str | None = None,
     trans_desc: str = "coreg",
-    meg: bool = True,
-    eeg: bool = False,
+    meg: bool | None = None,
+    eeg: bool | None = None,
     mindist: float = 5.0,
     n_jobs: int | None = None,
     verbose: bool | str | int | None = True,
@@ -897,12 +1041,14 @@ def write_forward_solutions_for_recordings(
             )
         except Exception as exc:  # noqa: BLE001 - batch notebooks should continue.
             entities = _recording_entities(recording)
+            fwd_meg, fwd_eeg = _resolve_source_forward_channel_flags(config, meg=meg, eeg=eeg)
+            fwd_desc = _source_forward_desc_from_flags(meg=fwd_meg, eeg=fwd_eeg)
             result = ForwardSolutionResult(
                 subject=_subject_label(str(entities["subject"])),
                 session=entities["session"],
                 task=entities["task"],
                 run=entities["run"],
-                path=str(make_forward_path(config, **entities, spacing=spacing)),
+                path=str(make_forward_path(config, **entities, spacing=spacing, desc=fwd_desc)),
                 status="failed",
                 message=f"{type(exc).__name__}: {exc}",
             )
@@ -1510,6 +1656,8 @@ def _compute_epochs_baseline_covariance(
         verbose=verbose,
     )
 
+    epochs.pick(mne.pick_types(epochs.info, **analysis_pick_kwargs_from_config(config), exclude="bads"))
+
     tmin, tmax = _covariance_baseline(config)
 
     return mne.compute_covariance(
@@ -1523,11 +1671,13 @@ def _compute_epochs_baseline_covariance(
 
 
 def _compute_ad_hoc_covariance(
+    config: PipelineConfig,
     info_path: str | Path,
     info_kind: str,
 ) -> mne.Covariance:
-    """Create an ad-hoc covariance matrix from recording info."""
+    """Create an ad-hoc covariance matrix from configured analysis channels."""
     info = _read_info_from_input(info_path, info_kind)
+    info = _pick_info_analysis_channels(config, info)
     return mne.make_ad_hoc_cov(info)
 
 
@@ -1688,7 +1838,7 @@ def write_noise_covariance_for_recording(
         )
     elif mode == "adhoc":
         info_input = find_info_input_path(config, **entities)
-        cov = _compute_ad_hoc_covariance(info_input.path, info_input.kind)
+        cov = _compute_ad_hoc_covariance(config, info_input.path, info_input.kind)
     else:
         return NoiseCovarianceResult(
             subject=_subject_label(subject),

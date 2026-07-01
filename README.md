@@ -3060,8 +3060,9 @@ Empty-room covariance (`source.noise_cov.mode: erm`) is MEG-specific. For EEG-on
 
 Current status and TODOs:
 
-- `channels.analysis` is used by filtering, ICA fitting, and the default epoching channel selection.
+- `channels.analysis` is used by filtering, ICA fitting, default epoching channel selection, source forward flags, baseline/ad-hoc covariance channel restriction, and forward-path `desc` labels.
 - Evoked creation remains channel-agnostic and averages whichever channels are present in the saved epochs.
-- Source-modeling channel flags still need to be derived from config.
+- Source modeling now guards against EEG/MEG+EEG forward models with a one-layer BEM configuration.
+- Empty-room covariance is guarded against EEG-only and MEG+EEG analysis configurations.
 - EEG montage/reference handling should be added only when explicitly configured.
 - Small synthetic unit tests for MEG-only, EEG-only, and MEG+EEG channel-selection behavior are still needed.

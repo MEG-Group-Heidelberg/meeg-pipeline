@@ -76,6 +76,99 @@ def _modality_template_values(modality: str | None) -> dict[str, str]:
     }
 
 
+
+
+def _example_sourcedata_datatypes(modality: str | None) -> list[str]:
+    """Return source-data datatype folders to create for init-project examples."""
+    normalized = _normalize_modality(modality)
+    if normalized == "eeg":
+        return ["eeg"]
+    if normalized == "meeg":
+        return ["meg", "eeg"]
+    return ["meg"]
+
+
+def _is_managed_example_template_path(relative_path: Path) -> bool:
+    """Return True for template paths that are created programmatically.
+
+    The library template uses internal `_template_keep` files so that Git and
+    package-data keep intentionally empty directories. We do not want those
+    implementation details, or stale modality-specific example folders, to leak
+    into generated projects. Source-data and derivative example directories are
+    therefore created explicitly from the selected modality.
+    """
+    if not relative_path.parts:
+        return False
+    return relative_path.parts[0] in {"sourcedata", "derivatives"}
+
+
+def _mkdir_many(
+    paths: list[Path],
+    *,
+    created_paths: list[str],
+    skipped_paths: list[str],
+    dry_run: bool,
+) -> None:
+    """Create multiple directories using the standard init-project accounting."""
+    for path in paths:
+        _mkdir_if_missing(
+            path,
+            created_paths=created_paths,
+            skipped_paths=skipped_paths,
+            dry_run=dry_run,
+        )
+
+
+def _create_modality_example_directories(
+    *,
+    project_root: Path,
+    modality: str | None,
+    created_paths: list[str],
+    skipped_paths: list[str],
+    dry_run: bool,
+) -> None:
+    """Create clean example source-data and derivative directories.
+
+    MEG projects get MEG example source folders. EEG projects get EEG example
+    source folders. Combined M/EEG projects get both. No README or placeholder
+    files are written into generated project subfolders.
+    """
+    sourcedata_root = project_root / "sourcedata"
+    derivative_root = project_root / "derivatives"
+
+    directories = [
+        sourcedata_root,
+        derivative_root,
+        derivative_root / "meeg-pipeline",
+        derivative_root / "freesurfer",
+        derivative_root / "freesurfer" / "subjects",
+        sourcedata_root / "mri_raw" / "sub-0001" / "T1",
+        sourcedata_root / "mri_raw" / "sub-0001" / "T2",
+        sourcedata_root / "mri" / "sub-0001" / "anat",
+    ]
+
+    for datatype in _example_sourcedata_datatypes(modality):
+        directories.extend(
+            [
+                sourcedata_root / "sub-0001" / datatype / "task-example",
+                sourcedata_root
+                / "sub-0001"
+                / "ses-20260523"
+                / datatype
+                / "task-example",
+            ]
+        )
+
+    if _normalize_modality(modality) == "meg":
+        directories.append(sourcedata_root / "emptyroom" / "ses-YYYYMMDD")
+
+    _mkdir_many(
+        directories,
+        created_paths=created_paths,
+        skipped_paths=skipped_paths,
+        dry_run=dry_run,
+    )
+
 def _write_text_if_missing(
     path: Path,
     content: str,
@@ -151,13 +244,15 @@ def _copy_project_template(
     with resources.as_file(template_resource) as template_root:
         template_root = Path(template_root)
         for source_path in sorted(template_root.rglob("*")):
+            relative_path = source_path.relative_to(template_root)
+
             if (
                 source_path.name in _TEMPLATE_INTERNAL_FILENAMES
                 or "__pycache__" in source_path.parts
+                or _is_managed_example_template_path(relative_path)
             ):
                 continue
 
-            relative_path = source_path.relative_to(template_root)
             target_path = project_root / relative_path
 
             if source_path.is_dir():
@@ -461,6 +556,14 @@ def init_project(
         dry_run=dry_run,
         created_paths=created_paths,
         skipped_paths=skipped_paths,
+    )
+
+    _create_modality_example_directories(
+        project_root=project_root,
+        modality=modality,
+        created_paths=created_paths,
+        skipped_paths=skipped_paths,
+        dry_run=dry_run,
     )
 
     if not template_found:

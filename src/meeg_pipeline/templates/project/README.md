@@ -16,7 +16,7 @@ inside `rawdata/`.
   notebooks/
     00_project_summary.ipynb
     1A_anatomy/
-    1B_meg_preprocessing/
+    1B_preprocessing/
     2_sensor_analysis/
     3_source_modeling/
     4_connectivity/
@@ -57,12 +57,25 @@ inside `rawdata/`.
 The source-data folder structure encodes subject, optional source session, task,
 and optional run information.
 
-Examples:
+Examples for a MEG project:
 
 ```text
 sourcedata/sub-0001/meg/task-example/<original_file>.fif
 sourcedata/sub-0001/ses-20260523/meg/task-example/<original_file>.fif
 ```
+
+Examples for an EEG project:
+
+```text
+sourcedata/sub-0001/eeg/task-example/<original_file>.vhdr
+sourcedata/sub-0001/eeg/task-example/<original_file>.eeg
+sourcedata/sub-0001/eeg/task-example/<original_file>.vmrk
+sourcedata/sub-0001/ses-20260523/eeg/task-example/<original_file>.vhdr
+```
+
+For a combined M/EEG project, `init-project --modality meeg` creates both `meg/`
+and `eeg/` example folders. Use the folder matching the original source export
+for each recording.
 
 By default, `sourcedata.sessions` is set to `ignore`, so source `ses-*` folders
 can be used for local organization without becoming BIDS session entities. Set
@@ -77,7 +90,7 @@ Two config layers are intentionally separate:
 - `channels.analysis` describes which channel types should be used in analysis
   steps such as filtering, ICA, epoching, and source-modeling channel flags.
 
-The default template is conservative MEG-only:
+The default project is conservative MEG-only unless `--modality` is passed:
 
 ```yaml
 bids:
@@ -108,7 +121,7 @@ covariance model is explicit.
 ## Notebook template status
 
 The notebook tree is part of the project template. The current folder name
-`1B_meg_preprocessing/` is retained for backward compatibility, but the workflow
+`1B_preprocessing/` is retained for backward compatibility, but the workflow
 is intended to become the shared M/EEG preprocessing workflow. Do not create a
 separate `1C_eeg_processing/` workflow unless a future project has a strong
 reason to diverge.

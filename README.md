@@ -137,10 +137,13 @@ Supported modality values are:
 
 ```text
 meg   -> BIDS datatype meg, analysis channels meg=true, eeg=false
+         creates example sourcedata folders under meg/
 
 eeg   -> BIDS datatype eeg, analysis channels meg=false, eeg=true
+         creates example sourcedata folders under eeg/
 
 meeg  -> BIDS datatype meg, analysis channels meg=true, eeg=true
+         creates example sourcedata folders under both meg/ and eeg/
 ```
 
 For combined MEG+EEG, the template uses `bids.datatype: "meg"` because the
@@ -208,7 +211,7 @@ my-meeg-project/
   notebooks/
     00_project_summary.ipynb
     1A_anatomy/
-    1B_meg_preprocessing/
+    1B_preprocessing/
     2_sensor_analysis/
     3_source_modeling/
     4_connectivity/
@@ -216,12 +219,16 @@ my-meeg-project/
 
   sourcedata/
     sub-0001/
-      meg/
+      meg/                  # for --modality meg or --modality meeg
+        task-example/
+      eeg/                  # for --modality eeg or --modality meeg
         task-example/
       ses-20260523/
-        meg/
+        meg/                # for --modality meg or --modality meeg
           task-example/
-    emptyroom/
+        eeg/                # for --modality eeg or --modality meeg
+          task-example/
+    emptyroom/              # created for MEG-only defaults
       ses-YYYYMMDD/
     mri_raw/
       sub-0001/
@@ -243,9 +250,11 @@ my-meeg-project/
       subjects/
 ```
 
-The example folders under `sourcedata/` are empty starter folders. Replace or
-extend them with real subject, session, task, run, empty-room, and MRI folders.
-The original source filename can usually remain arbitrary; the pipeline infers
+The example folders under `sourcedata/` are empty starter folders. Their datatype
+subfolders follow the selected `--modality`: MEG projects get `meg/`, EEG
+projects get `eeg/`, and combined M/EEG projects get both. Replace or extend the
+examples with real subject, session, task, run, empty-room, and MRI folders. The
+original source filename can usually remain arbitrary; the pipeline infers
 entities from the folder structure.
 
 The raw BIDS metadata files belong in `rawdata/`, not in the outer project root:
@@ -351,7 +360,7 @@ notebooks/
     03_anatomy_setup.ipynb
     04_coregistration.ipynb
 
-  1B_meg_preprocessing/
+  1B_preprocessing/
     01_raw_bids_import.ipynb
     02_bad_channels_and_events.ipynb
     03_project_specific_events.ipynb
@@ -383,7 +392,7 @@ notebooks/
     02_label_time_course_decoding.ipynb
 ```
 
-`1A_anatomy` and `1B_meg_preprocessing` can often be started independently.
+`1A_anatomy` and `1B_preprocessing` can often be started independently.
 Source modeling needs outputs from anatomy, preprocessing/epoching, evokeds, and
 noise covariance. Connectivity uses epoch-level label time courses from source
 modeling.
@@ -533,6 +542,33 @@ cleaned_raw, epochs, evokeds, forward, noise_covariance, inverse_operator,
 source_estimates, source_morph, label_time_courses_evokeds,
 label_time_courses_epochs, connectivity
 ```
+
+## Using fsaverage without individual MRIs
+
+The current default template assumes subject-specific MRI anatomy for source
+modeling. In projects without individual MRIs, a future config profile should
+allow an `fsaverage`-only workflow. Conceptually, that changes the anatomy/source
+modeling assumptions:
+
+```text
+with individual MRI:
+  subject T1 -> recon-all -> subject BEM/source space -> recording coregistration
+
+without individual MRI:
+  fsaverage anatomy -> approximate/template source space and BEM -> approximate transform
+```
+
+This can be useful for exploratory sensor-to-source analyses, teaching, or data
+sets where no MRI was collected, but it is less anatomically precise than
+individual MRI-based source modeling. It should be documented explicitly in the
+project methods.
+
+As of the current template, there is no fully reviewed `--anatomy fsaverage`
+init option yet. Treat fsaverage-only source modeling as the next feature to add,
+not as a silent default. The likely implementation should add a config field such
+as `anatomy.mode: individual_mri | fsaverage`, skip MRI conversion and recon-all
+when using fsaverage, and adjust source-modeling notebooks to create or reuse
+fsaverage geometry and compatible transforms.
 
 ## FreeSurfer and MRI setup
 

@@ -121,10 +121,20 @@ Equivalent explicit form:
 meegpipe init-project my-meeg-project --modality meg
 ```
 
-EEG-only project:
+EEG-only project with individual MRI defaults:
 
 ```bash
 meegpipe init-project my-eeg-project --modality eeg
+```
+
+EEG-only project without individual MRIs, using `fsaverage` and a standard
+10-20 montage as template-based source-modeling defaults:
+
+```bash
+meegpipe init-project my-eeg-project \
+  --modality eeg \
+  --anatomy fsaverage \
+  --montage standard_1020
 ```
 
 Combined MEG+EEG project, for example EEG channels stored in MEG FIF files:
@@ -145,6 +155,21 @@ eeg   -> BIDS datatype eeg, analysis channels meg=false, eeg=true
 meeg  -> BIDS datatype meg, analysis channels meg=true, eeg=true
          creates example sourcedata folders under both meg/ and eeg/
 ```
+
+Supported anatomy defaults are:
+
+```text
+individual_mri -> subject-specific MRI workflow with MRI conversion, recon-all,
+                  BEM/source-space setup, and recording coregistration
+
+fsaverage      -> template anatomy defaults for projects without individual MRI;
+                  intended primarily for EEG projects with a standard montage
+```
+
+`--montage` records the intended EEG montage in `configs/local.yaml`, for
+example `--montage standard_1020`. For template-based EEG projects, this also
+sets `channels.montage.dig: false` because no individual digitization is
+expected by default.
 
 For combined MEG+EEG, the template uses `bids.datatype: "meg"` because the
 conservative default assumes a MEG FIF file that also contains EEG channels.
@@ -545,30 +570,61 @@ label_time_courses_epochs, connectivity
 
 ## Using fsaverage without individual MRIs
 
-The current default template assumes subject-specific MRI anatomy for source
-modeling. In projects without individual MRIs, a future config profile should
-allow an `fsaverage`-only workflow. Conceptually, that changes the anatomy/source
-modeling assumptions:
+The default template still assumes subject-specific MRI anatomy for source
+modeling. For projects without individual MRIs, `init-project` can record a
+template-based anatomy strategy instead:
+
+```bash
+meegpipe init-project my-eeg-project \
+  --modality eeg \
+  --anatomy fsaverage \
+  --montage standard_1020
+```
+
+This writes the intended strategy into `configs/local.yaml`:
+
+```yaml
+anatomy:
+  mode: "fsaverage"
+channels:
+  montage:
+    kind: "standard_1020"
+    dig: false
+```
+
+Conceptually, this changes the anatomy/source-modeling assumptions:
 
 ```text
 with individual MRI:
   subject T1 -> recon-all -> subject BEM/source space -> recording coregistration
 
-without individual MRI:
-  fsaverage anatomy -> approximate/template source space and BEM -> approximate transform
+with fsaverage/template anatomy:
+  fsaverage anatomy -> template source space and BEM -> montage/template-based transform
 ```
 
-This can be useful for exploratory sensor-to-source analyses, teaching, or data
-sets where no MRI was collected, but it is less anatomically precise than
-individual MRI-based source modeling. It should be documented explicitly in the
-project methods.
+For `anatomy.mode: "fsaverage"`, the MRI-preparation notebooks are not all
+required:
 
-As of the current template, there is no fully reviewed `--anatomy fsaverage`
-init option yet. Treat fsaverage-only source modeling as the next feature to add,
-not as a silent default. The likely implementation should add a config field such
-as `anatomy.mode: individual_mri | fsaverage`, skip MRI conversion and recon-all
-when using fsaverage, and adjust source-modeling notebooks to create or reuse
-fsaverage geometry and compatible transforms.
+```text
+1A_anatomy/01_convert_mri.ipynb      not required
+1A_anatomy/02_recon.ipynb            not required
+1A_anatomy/03_anatomy_setup.ipynb    still relevant: ensure fsaverage geometry
+1A_anatomy/04_coregistration.ipynb   different strategy: standard montage /
+                                     template-based alignment, not individual
+                                     MEG-style coregistration
+```
+
+This is most plausible for pure EEG projects with a standard or approximately
+equidistant cap. It is much less appropriate as a silent default for MEG without
+individual MRI, where sensor-head geometry and head-position information are
+more critical. Source-level results based on `fsaverage` should be reported as
+template-based and less anatomically precise than individual MRI-based source
+localization.
+
+The init/config support is intentionally separate from the full source-modeling
+implementation. Forward-solution notebooks and downstream source steps must still
+check `anatomy.mode` and handle fsaverage/template geometry explicitly before a
+project treats fsaverage source estimates as fully reviewed pipeline outputs.
 
 ## FreeSurfer and MRI setup
 
@@ -733,6 +789,7 @@ Create projects:
 ```bash
 meegpipe init-project my-meeg-project
 meegpipe init-project my-eeg-project --modality eeg
+meegpipe init-project my-eeg-project --modality eeg --anatomy fsaverage --montage standard_1020
 meegpipe init-project my-meeg-eeg-project --modality meeg
 meegpipe init-project my-meeg-project --base-dir /Volumes/YourDrive/MEEG
 meegpipe init-project my-meeg-project --dry-run
@@ -816,13 +873,14 @@ Current stable internal milestone:
 
 ```text
 v0.1.0  Initial project template release
+v0.1.1  Improved project init templates and modality defaults
 ```
 
 Implemented:
 
 - Python package structure and `meegpipe` CLI
 - `meegpipe init-project` with bundled templates
-- `--dry-run`, `--overwrite`, and modality-aware defaults
+- `--dry-run`, `--overwrite`, modality-aware defaults, and anatomy init defaults
 - configurable project paths and raw BIDS root under `rawdata/`
 - source-data discovery and conversion to raw BIDS
 - empty-room discovery/import and matching for MEG covariance

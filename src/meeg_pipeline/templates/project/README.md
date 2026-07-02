@@ -109,6 +109,44 @@ layout as final.
 
 ## Anatomy and source modeling
 
+The `anatomy.mode` field in `configs/local.yaml` records whether the project is
+intended to use subject-specific anatomy or template anatomy:
+
+```yaml
+anatomy:
+  mode: "individual_mri"  # "individual_mri" | "fsaverage"
+```
+
+With `anatomy.mode: "individual_mri"`, the normal anatomy sequence is:
+
+```text
+1A_anatomy/01_convert_mri.ipynb
+1A_anatomy/02_recon.ipynb
+1A_anatomy/03_anatomy_setup.ipynb
+1A_anatomy/04_coregistration.ipynb
+```
+
+With `anatomy.mode: "fsaverage"`, individual MRI conversion and recon-all are
+not required. Treat the anatomy notebooks as:
+
+```text
+1A_anatomy/01_convert_mri.ipynb      not required
+1A_anatomy/02_recon.ipynb            not required
+1A_anatomy/03_anatomy_setup.ipynb    still relevant: ensure fsaverage geometry
+1A_anatomy/04_coregistration.ipynb   different strategy: standard montage /
+                                     template-based alignment
+```
+
+`fsaverage` is most plausible for pure EEG projects with a standard or
+approximately equidistant cap, for example a project initialized with:
+
+```bash
+meegpipe init-project my-eeg-project \
+  --modality eeg \
+  --anatomy fsaverage \
+  --montage standard_1020
+```
+
 MEG-only source modeling can use a one-layer BEM when scientifically appropriate.
 EEG-only and combined MEG+EEG source modeling require an EEG-capable, typically
 three-layer, BEM and valid electrode positions from digitization points or an
@@ -117,6 +155,9 @@ explicit montage.
 Empty-room covariance is MEG-specific. For EEG-only or combined MEG+EEG source
 models, prefer a project-specific baseline covariance strategy until the
 covariance model is explicit.
+
+Source-level results based on `fsaverage` should be reported as template-based
+and less anatomically precise than individual MRI-based source localization.
 
 ## Notebook template status
 

@@ -42,3 +42,5 @@ logs/
 *.mat
 *.nii
 *.nii.gz
+# Local tests
+/tests/

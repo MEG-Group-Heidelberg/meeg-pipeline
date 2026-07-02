@@ -44,3 +44,6 @@ logs/
 *.nii.gz
 # Local tests
 /tests/
+
+# Local tests
+/tests/

@@ -127,6 +127,9 @@ class AutorejectConfig:
     consensus_percs: tuple[float, ...] | None = None
     n_interpolates: tuple[int, ...] | None = None
     subset: int | None = None
+    tmin: float | None = None
+    tmax: float | None = None
+    crop_to_epochs: bool = True
 
 
 @dataclass(frozen=True)
@@ -920,6 +923,9 @@ def load_config(config_path: str | Path) -> PipelineConfig:
             autoreject_raw.get("n_interpolates", None)
         ),
         subset=_optional_int(autoreject_raw.get("subset", None)),
+        tmin=_optional_float(autoreject_raw.get("tmin", None)),
+        tmax=_optional_float(autoreject_raw.get("tmax", None)),
+        crop_to_epochs=bool(autoreject_raw.get("crop_to_epochs", True)),
     )
 
 

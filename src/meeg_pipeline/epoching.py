@@ -51,6 +51,97 @@ class EpochingResult:
     message: str = ""
 
 
+@dataclass(frozen=True)
+class EpochingWindows:
+    """Resolved epoching windows for fitting/QC and saved output."""
+
+    saved_tmin: float
+    saved_tmax: float
+    work_tmin: float
+    work_tmax: float
+    crop_to_saved: bool
+
+    @property
+    def uses_split_window(self) -> bool:
+        return (
+            self.work_tmin != self.saved_tmin
+            or self.work_tmax != self.saved_tmax
+        )
+
+
+def resolve_epoching_windows(
+    config: PipelineConfig,
+    *,
+    tmin: float | None = None,
+    tmax: float | None = None,
+    use_autoreject: Literal["Interpolation", "Threshold"] | str | None = None,
+    autoreject_tmin: float | None = None,
+    autoreject_tmax: float | None = None,
+    crop_to_epochs: bool | None = None,
+) -> EpochingWindows:
+    """Resolve saved and autoreject/QC epoch windows.
+
+    ``config.epochs`` defines the output window that is written to disk.
+    ``config.autoreject.tmin`` / ``config.autoreject.tmax`` can define a longer
+    window used only while fitting/applying autoreject. When autoreject is not
+    used, the autoreject-specific window is ignored for backward compatibility.
+    """
+    saved_tmin = config.epochs.tmin if tmin is None else float(tmin)
+    saved_tmax = config.epochs.tmax if tmax is None else float(tmax)
+
+    if saved_tmin >= saved_tmax:
+        raise ValueError(
+            "Epoch output window must satisfy tmin < tmax, "
+            f"got tmin={saved_tmin}, tmax={saved_tmax}."
+        )
+
+    if use_autoreject is None:
+        return EpochingWindows(
+            saved_tmin=saved_tmin,
+            saved_tmax=saved_tmax,
+            work_tmin=saved_tmin,
+            work_tmax=saved_tmax,
+            crop_to_saved=False,
+        )
+
+    if autoreject_tmin is None:
+        autoreject_tmin = config.autoreject.tmin
+    if autoreject_tmax is None:
+        autoreject_tmax = config.autoreject.tmax
+
+    work_tmin = saved_tmin if autoreject_tmin is None else float(autoreject_tmin)
+    work_tmax = saved_tmax if autoreject_tmax is None else float(autoreject_tmax)
+
+    if work_tmin >= work_tmax:
+        raise ValueError(
+            "Autoreject/QC epoch window must satisfy tmin < tmax, "
+            f"got tmin={work_tmin}, tmax={work_tmax}."
+        )
+
+    if crop_to_epochs is None:
+        crop_to_epochs = config.autoreject.crop_to_epochs
+
+    crop_to_saved = bool(crop_to_epochs) and (
+        work_tmin != saved_tmin or work_tmax != saved_tmax
+    )
+
+    if crop_to_saved and (work_tmin > saved_tmin or work_tmax < saved_tmax):
+        raise ValueError(
+            "Autoreject/QC epoch window must contain the saved epoch window "
+            "when crop_to_epochs is true. Got "
+            f"autoreject=({work_tmin}, {work_tmax}) and "
+            f"epochs=({saved_tmin}, {saved_tmax})."
+        )
+
+    return EpochingWindows(
+        saved_tmin=saved_tmin,
+        saved_tmax=saved_tmax,
+        work_tmin=work_tmin,
+        work_tmax=work_tmax,
+        crop_to_saved=crop_to_saved,
+    )
+
+
 def make_epochs_path(
     config: PipelineConfig,
     *,
@@ -662,6 +753,9 @@ def write_epochs_for_recording(
     consensus_percs: list[float] | tuple[float, ...] | None = None,
     n_interpolates: list[int] | tuple[int, ...] | None = None,
     autoreject_subset: int | float | None = None,
+    autoreject_tmin: float | None = None,
+    autoreject_tmax: float | None = None,
+    autoreject_crop_to_epochs: bool | None = None,
     autoreject_verbose: bool | str | int | None = False,
     n_jobs: int = 1,
     verbose: bool | str | int | None = True,
@@ -759,11 +853,29 @@ def write_epochs_for_recording(
         verbose=verbose,
     )
 
+    windows = resolve_epoching_windows(
+        config,
+        tmin=tmin,
+        tmax=tmax,
+        use_autoreject=use_autoreject,
+        autoreject_tmin=autoreject_tmin,
+        autoreject_tmax=autoreject_tmax,
+        crop_to_epochs=autoreject_crop_to_epochs,
+    )
+
+    if verbose:
+        print(
+            "Epoch windows: "
+            f"saved=({windows.saved_tmin:g}, {windows.saved_tmax:g}), "
+            f"work=({windows.work_tmin:g}, {windows.work_tmax:g}), "
+            f"crop_to_saved={windows.crop_to_saved}"
+        )
+
     epochs = make_epochs(
         raw,
         events_result.events,
-        tmin=config.epochs.tmin if tmin is None else tmin,
-        tmax=config.epochs.tmax if tmax is None else tmax,
+        tmin=windows.work_tmin,
+        tmax=windows.work_tmax,
         baseline=config.epochs.baseline if baseline is None else baseline,
         event_code_mode=event_code_mode,
         apply_proj=apply_proj,
@@ -786,6 +898,17 @@ def write_epochs_for_recording(
         autoreject_verbose=autoreject_verbose,
     )
 
+    if windows.crop_to_saved:
+        if verbose:
+            print(
+                "Cropping cleaned epochs to saved window: "
+                f"({windows.saved_tmin:g}, {windows.saved_tmax:g})."
+            )
+        epochs = epochs.copy().crop(
+            tmin=windows.saved_tmin,
+            tmax=windows.saved_tmax,
+        )
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     epochs.save(output_path, overwrite=on_existing == "overwrite")
 
@@ -799,6 +922,11 @@ def write_epochs_for_recording(
         n_events=len(events_result.events),
         n_event_ids=len(epochs.event_id),
         events_kind=events_result.kind,
+        message=(
+            f"saved_window=({windows.saved_tmin:g}, {windows.saved_tmax:g}); "
+            f"work_window=({windows.work_tmin:g}, {windows.work_tmax:g}); "
+            f"crop_to_saved={windows.crop_to_saved}"
+        ),
     )
 
 
@@ -823,6 +951,9 @@ def write_epochs_for_recordings(
     consensus_percs: list[float] | tuple[float, ...] | None = None,
     n_interpolates: list[int] | tuple[int, ...] | None = None,
     autoreject_subset: int | float | None = None,
+    autoreject_tmin: float | None = None,
+    autoreject_tmax: float | None = None,
+    autoreject_crop_to_epochs: bool | None = None,
     autoreject_verbose: bool | str | int | None = False,
     n_jobs: int = 1,
     verbose: bool | str | int | None = True,
@@ -852,6 +983,9 @@ def write_epochs_for_recordings(
             consensus_percs=consensus_percs,
             n_interpolates=n_interpolates,
             autoreject_subset=autoreject_subset,
+            autoreject_tmin=autoreject_tmin,
+            autoreject_tmax=autoreject_tmax,
+            autoreject_crop_to_epochs=autoreject_crop_to_epochs,
             autoreject_verbose=autoreject_verbose,
             n_jobs=n_jobs,
             verbose=verbose,

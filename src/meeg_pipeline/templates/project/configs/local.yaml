@@ -102,8 +102,11 @@ cleaning:
     fit_resample_sfreq: null
 
 epochs:
-  tmin: -1.0
-  tmax: 1.0
+  # Saved epoch window. For dense note-level paradigms, this can be shorter
+  # than the autoreject/QC window below to avoid writing unnecessarily large
+  # epoch files.
+  tmin: -0.1
+  tmax: 0.6
   baseline: null
   bad_interpolation: "epochs"
 
@@ -113,6 +116,11 @@ autoreject:
   consensus_percs: null
   n_interpolates: null
   subset: null
+  # Optional longer window used only for autoreject fitting/transform.
+  # If null, the saved epochs.tmin/tmax window is used.
+  tmin: -1.0
+  tmax: 1.0
+  crop_to_epochs: true
 
 conditions:
   # Define reusable condition names here when they should be reused across

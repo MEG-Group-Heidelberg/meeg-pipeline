@@ -249,6 +249,26 @@ def main() -> None:
     )
 
     init_project_parser.add_argument(
+        "--anatomy",
+        default="individual_mri",
+        choices=["individual_mri", "fsaverage"],
+        help=(
+            "Default anatomy strategy. 'individual_mri' creates standard "
+            "project-specific MRI defaults. 'fsaverage' records a template "
+            "anatomy strategy for EEG/template-anatomy projects."
+        ),
+    )
+
+    init_project_parser.add_argument(
+        "--montage",
+        default=None,
+        help=(
+            "Optional MNE standard montage name to write into the config, "
+            "for example 'standard_1020' for EEG template-anatomy projects."
+        ),
+    )
+
+    init_project_parser.add_argument(
         "--overwrite",
         action="store_true",
         help="Overwrite existing template files.",
@@ -762,6 +782,8 @@ def main() -> None:
             args.project_name,
             base_dir=args.base_dir,
             modality=args.modality,
+            anatomy=args.anatomy,
+            montage=args.montage,
             overwrite=args.overwrite,
             dry_run=args.dry_run,
         )

@@ -229,6 +229,7 @@ class AnatomyCoregistrationConfig:
 
 @dataclass(frozen=True)
 class AnatomyConfig:
+    mode: Literal["individual_mri", "fsaverage"] = "individual_mri"
     t1_patterns: tuple[str, ...] = (
         "{subject}/anat/T1.mgz",
         "{subject}/anat/*T1w*.nii*",
@@ -612,6 +613,13 @@ def load_config(config_path: str | Path) -> PipelineConfig:
     anatomy_labels_raw = anatomy_raw.get("labels", {})
     anatomy_coregistration_raw = anatomy_raw.get("coregistration", {})
 
+    anatomy_mode = str(anatomy_raw.get("mode", "individual_mri"))
+    if anatomy_mode not in {"individual_mri", "fsaverage"}:
+        raise ValueError(
+            "anatomy.mode must be one of 'individual_mri' or 'fsaverage', "
+            f"got {anatomy_mode!r}."
+        )
+
     bem_method = anatomy_bem_raw.get("method", "watershed")
     if bem_method not in {"watershed", "flash"}:
         raise ValueError(
@@ -638,6 +646,7 @@ def load_config(config_path: str | Path) -> PipelineConfig:
         )
 
     anatomy = AnatomyConfig(
+        mode=anatomy_mode,
         t1_patterns=_anatomy_patterns(
             anatomy_raw,
             plural_key="t1_patterns",

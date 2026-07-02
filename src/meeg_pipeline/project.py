@@ -39,12 +39,44 @@ def _normalize_modality(modality: str | None) -> str:
     return aliases[value]
 
 
-def _modality_template_values(modality: str | None) -> dict[str, str]:
+def _normalize_anatomy_mode(anatomy: str | None) -> str:
+    """Normalize init-project anatomy-mode labels."""
+    value = (
+        "individual_mri"
+        if anatomy is None
+        else str(anatomy).lower().replace("-", "_")
+    )
+    aliases = {
+        "individual_mri": "individual_mri",
+        "individual": "individual_mri",
+        "mri": "individual_mri",
+        "fsaverage": "fsaverage",
+        "template": "fsaverage",
+    }
+    if value not in aliases:
+        raise ValueError("anatomy must be one of: 'individual_mri' or 'fsaverage'")
+    return aliases[value]
+
+
+def _template_scalar(value: str | None) -> str:
+    """Render a YAML scalar for simple template placeholders."""
+    if value is None:
+        return "null"
+    return json.dumps(str(value), ensure_ascii=False)
+
+
+def _modality_template_values(
+    modality: str | None,
+    *,
+    anatomy: str | None = None,
+    montage: str | None = None,
+) -> dict[str, str]:
     """Return string values used while rendering project templates."""
     normalized = _normalize_modality(modality)
+    anatomy_mode = _normalize_anatomy_mode(anatomy)
 
     if normalized == "meg":
-        return {
+        values = {
             "modality": "meg",
             "bids_datatype": "meg",
             "analysis_meg": "true",
@@ -53,9 +85,8 @@ def _modality_template_values(modality: str | None) -> dict[str, str]:
             "bem_conductivity": "[0.3]",
             "noise_cov_mode": "erm",
         }
-
-    if normalized == "eeg":
-        return {
+    elif normalized == "eeg":
+        values = {
             "modality": "eeg",
             "bids_datatype": "eeg",
             "analysis_meg": "false",
@@ -64,18 +95,25 @@ def _modality_template_values(modality: str | None) -> dict[str, str]:
             "bem_conductivity": "[0.3, 0.006, 0.3]",
             "noise_cov_mode": "baseline",
         }
+    else:
+        values = {
+            "modality": "meeg",
+            "bids_datatype": "meg",
+            "analysis_meg": "true",
+            "analysis_eeg": "true",
+            "empty_room_enabled": "false",
+            "bem_conductivity": "[0.3, 0.006, 0.3]",
+            "noise_cov_mode": "baseline",
+        }
 
-    return {
-        "modality": "meeg",
-        "bids_datatype": "meg",
-        "analysis_meg": "true",
-        "analysis_eeg": "true",
-        "empty_room_enabled": "false",
-        "bem_conductivity": "[0.3, 0.006, 0.3]",
-        "noise_cov_mode": "baseline",
-    }
-
-
+    values.update(
+        {
+            "anatomy_mode": anatomy_mode,
+            "montage_kind": _template_scalar(montage),
+            "montage_dig": "false" if montage is not None else "true",
+        }
+    )
+    return values
 
 
 def _example_sourcedata_datatypes(modality: str | None) -> list[str]:
@@ -169,6 +207,7 @@ def _create_modality_example_directories(
         dry_run=dry_run,
     )
 
+
 def _write_text_if_missing(
     path: Path,
     content: str,
@@ -211,10 +250,16 @@ def _render_template_text(
     *,
     project_name: str,
     modality: str | None = None,
+    anatomy: str | None = None,
+    montage: str | None = None,
 ) -> str:
     """Render simple project-template placeholders."""
     rendered = content.replace("{{ project_name }}", project_name)
-    for key, value in _modality_template_values(modality).items():
+    for key, value in _modality_template_values(
+        modality,
+        anatomy=anatomy,
+        montage=montage,
+    ).items():
         rendered = rendered.replace(f"{{{{ {key} }}}}", value)
     return rendered
 
@@ -224,6 +269,8 @@ def _copy_project_template(
     project_name: str,
     project_root: Path,
     modality: str | None,
+    anatomy: str | None,
+    montage: str | None,
     overwrite: bool,
     dry_run: bool,
     created_paths: list[str],
@@ -269,6 +316,8 @@ def _copy_project_template(
                 content,
                 project_name=project_name,
                 modality=modality,
+                anatomy=anatomy,
+                montage=montage,
             )
             _write_text_if_missing(
                 target_path,
@@ -314,9 +363,19 @@ def _minimal_notebook(title: str, body: str) -> str:
     return json.dumps(notebook, indent=1, ensure_ascii=False)
 
 
-def make_local_yaml(project_name: str, *, modality: str | None = None) -> str:
+def make_local_yaml(
+    project_name: str,
+    *,
+    modality: str | None = None,
+    anatomy: str | None = None,
+    montage: str | None = None,
+) -> str:
     """Create a default project config."""
-    values = _modality_template_values(modality)
+    values = _modality_template_values(
+        modality,
+        anatomy=anatomy,
+        montage=montage,
+    )
     return f"""project:
   name: "{project_name}"
 
@@ -352,8 +411,17 @@ channels:
   reference:
     eeg: null
   montage:
-    kind: null
-    dig: true
+    kind: {values['montage_kind']}
+    dig: {values['montage_dig']}
+
+anatomy:
+  mode: "{values['anatomy_mode']}"
+  bem:
+    conductivity: {values['bem_conductivity']}
+
+source:
+  noise_cov:
+    mode: "{values['noise_cov_mode']}"
 
 events:
   extraction:
@@ -513,6 +581,8 @@ def init_project(
     *,
     base_dir: str | Path = ".",
     modality: str | None = "meg",
+    anatomy: str | None = "individual_mri",
+    montage: str | None = None,
     overwrite: bool = False,
     dry_run: bool = False,
 ) -> InitProjectResult:
@@ -527,6 +597,13 @@ def init_project(
     modality
         Project modality. Use "meg" for MEG-only, "eeg" for EEG-only, and
         "meeg" for combined MEG+EEG stored in a MEG FIF/BIDS layout.
+    anatomy
+        Anatomy strategy. Use "individual_mri" for project-specific structural
+        MRI workflows and "fsaverage" for template-anatomy workflows.
+    montage
+        Optional MNE standard montage name for EEG projects, e.g.
+        "standard_1020". When set, generated configs disable digitization-based
+        montage lookup by default.
     overwrite
         If True, existing template files are overwritten. Existing directories
         are never deleted.
@@ -535,6 +612,7 @@ def init_project(
         files or creating directories.
     """
     modality = _normalize_modality(modality)
+    anatomy = _normalize_anatomy_mode(anatomy)
     base_dir = Path(base_dir).expanduser().resolve()
     project_root = base_dir / project_name
 
@@ -552,6 +630,8 @@ def init_project(
         project_name=project_name,
         project_root=project_root,
         modality=modality,
+        anatomy=anatomy,
+        montage=montage,
         overwrite=overwrite,
         dry_run=dry_run,
         created_paths=created_paths,
@@ -617,7 +697,12 @@ def init_project(
 
         _write_text_if_missing(
             project_root / "configs" / "local.yaml",
-            make_local_yaml(project_name),
+            make_local_yaml(
+                project_name,
+                modality=modality,
+                anatomy=anatomy,
+                montage=montage,
+            ),
             overwrite=overwrite,
             created_paths=created_paths,
             skipped_paths=skipped_paths,

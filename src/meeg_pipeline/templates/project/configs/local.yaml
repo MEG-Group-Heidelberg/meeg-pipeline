@@ -45,8 +45,8 @@ channels:
     eeg: null
   montage:
     # For EEG, set a standard montage or use digitization points when available.
-    kind: null
-    dig: true
+    kind: {{ montage_kind }}
+    dig: {{ montage_dig }}
 
 empty_room:
   enabled: {{ empty_room_enabled }}
@@ -124,6 +124,7 @@ conditions:
   definitions: {}
 
 anatomy:
+  mode: "{{ anatomy_mode }}"  # "individual_mri" | "fsaverage"
   coregistration:
     transform_scope: "recording"       # "recording" | "session" | "subject"
     allow_compatible_fallback: true

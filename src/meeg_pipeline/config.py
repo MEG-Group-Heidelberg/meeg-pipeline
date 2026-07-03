@@ -99,6 +99,7 @@ class PreprocessingConfig:
 
 @dataclass(frozen=True)
 class ICAConfig:
+    enabled: bool = True
     n_components: int | float | None = 0.99
     method: str = "fastica"
     random_state: int = 97
@@ -114,6 +115,7 @@ class CleaningConfig:
 
 @dataclass(frozen=True)
 class EpochsConfig:
+    input: Literal["auto", "cleaned", "filtered"] = "auto"
     tmin: float = -1.0
     tmax: float = 1.0
     baseline: tuple[float | None, float | None] | None = None
@@ -893,6 +895,7 @@ def load_config(config_path: str | Path) -> PipelineConfig:
 
     cleaning = CleaningConfig(
         ica=ICAConfig(
+            enabled=bool(ica_raw.get("enabled", True)),
             n_components=_ica_n_components(ica_raw.get("n_components", 0.99)),
             method=ica_raw.get("method", "fastica"),
             random_state=int(ica_raw.get("random_state", 97)),
@@ -905,7 +908,15 @@ def load_config(config_path: str | Path) -> PipelineConfig:
     )
 
     epochs_raw = raw.get("epochs", {})
+    epochs_input = str(epochs_raw.get("input", "auto"))
+    if epochs_input not in {"auto", "cleaned", "filtered"}:
+        raise ValueError(
+            "epochs.input must be one of 'auto', 'cleaned', or 'filtered', "
+            f"got {epochs_input!r}."
+        )
+
     epochs = EpochsConfig(
+        input=epochs_input,
         tmin=float(epochs_raw.get("tmin", -1.0)),
         tmax=float(epochs_raw.get("tmax", 1.0)),
         baseline=_optional_baseline(epochs_raw.get("baseline", None)),

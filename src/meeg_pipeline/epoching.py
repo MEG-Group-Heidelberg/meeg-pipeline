@@ -13,6 +13,7 @@ from mne.io import BaseRaw
 
 from meeg_pipeline.bids import make_events_path
 from meeg_pipeline.cleaning import make_cleaned_raw_path
+from meeg_pipeline.preprocessing import make_filtered_raw_path
 from meeg_pipeline.channels import get_analysis_channel_types
 from meeg_pipeline.config import PipelineConfig
 from meeg_pipeline.event_derivatives import make_analysis_events_path
@@ -28,6 +29,7 @@ class LoadRawResult:
     raw: BaseRaw | None
     path: str
     status: str
+    kind: str = ""
     message: str = ""
 
 
@@ -142,6 +144,67 @@ def resolve_epoching_windows(
     )
 
 
+def resolve_epoching_raw_input_stage(config: PipelineConfig) -> Literal["cleaned", "filtered"]:
+    """Resolve the continuous raw derivative stage used for epoching.
+
+    ``epochs.input`` controls which derivative is loaded:
+
+    - ``cleaned``: use ICA-cleaned raw derivatives.
+    - ``filtered``: use filtered raw derivatives.
+    - ``auto``: use ``cleaned`` when ``cleaning.ica.enabled`` is true, otherwise
+      use ``filtered``.
+    """
+    input_stage = config.epochs.input
+
+    if input_stage == "auto":
+        return "cleaned" if config.cleaning.ica.enabled else "filtered"
+
+    if input_stage in {"cleaned", "filtered"}:
+        return input_stage
+
+    raise ValueError(
+        "epochs.input must be one of 'auto', 'cleaned', or 'filtered', "
+        f"got {input_stage!r}."
+    )
+
+
+def make_epoching_raw_input_path(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    task: str | None = None,
+    session: str | None = None,
+    run: str | None = None,
+    input_stage: Literal["cleaned", "filtered"] | None = None,
+) -> Path:
+    """Create the continuous raw derivative path used for epoching."""
+    if input_stage is None:
+        input_stage = resolve_epoching_raw_input_stage(config)
+
+    if input_stage == "cleaned":
+        return make_cleaned_raw_path(
+            config,
+            subject=subject,
+            session=session,
+            task=task,
+            run=run,
+        )
+
+    if input_stage == "filtered":
+        return make_filtered_raw_path(
+            config,
+            subject=subject,
+            session=session,
+            task=task,
+            run=run,
+        )
+
+    raise ValueError(
+        "input_stage must be one of 'cleaned' or 'filtered', "
+        f"got {input_stage!r}."
+    )
+
+
 def make_epochs_path(
     config: PipelineConfig,
     *,
@@ -149,9 +212,12 @@ def make_epochs_path(
     task: str | None = None,
     session: str | None = None,
     run: str | None = None,
-    desc: str = "cleaned",
+    desc: str | None = None,
 ) -> Path:
     """Create derivative path for epoched data."""
+    if desc is None:
+        desc = resolve_epoching_raw_input_stage(config)
+
     return derivative_path(
         config,
         subject=subject,
@@ -184,22 +250,27 @@ def make_reject_log_path(
     )
 
 
-def load_cleaned_raw_for_epoching(
+def load_raw_for_epoching(
     config: PipelineConfig,
     *,
     subject: str,
     task: str | None = None,
     session: str | None = None,
     run: str | None = None,
+    input_stage: Literal["cleaned", "filtered"] | None = None,
     preload: bool = True,
 ) -> LoadRawResult:
-    """Load cleaned raw data if it exists."""
-    path = make_cleaned_raw_path(
+    """Load the continuous raw derivative selected for epoching."""
+    if input_stage is None:
+        input_stage = resolve_epoching_raw_input_stage(config)
+
+    path = make_epoching_raw_input_path(
         config,
         subject=subject,
         session=session,
         task=task,
         run=run,
+        input_stage=input_stage,
     )
 
     if not path.exists():
@@ -207,7 +278,8 @@ def load_cleaned_raw_for_epoching(
             raw=None,
             path=str(path),
             status="missing_input",
-            message="Cleaned raw derivative does not exist.",
+            kind=input_stage,
+            message=f"{input_stage.capitalize()} raw derivative does not exist.",
         )
 
     raw = mne.io.read_raw_fif(
@@ -220,8 +292,29 @@ def load_cleaned_raw_for_epoching(
         raw=raw,
         path=str(path),
         status="loaded",
+        kind=input_stage,
     )
 
+
+def load_cleaned_raw_for_epoching(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    task: str | None = None,
+    session: str | None = None,
+    run: str | None = None,
+    preload: bool = True,
+) -> LoadRawResult:
+    """Load ICA-cleaned raw data for backward compatibility."""
+    return load_raw_for_epoching(
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
+        input_stage="cleaned",
+        preload=preload,
+    )
 
 def load_events_for_epoching(
     config: PipelineConfig,
@@ -782,7 +875,12 @@ def write_epochs_for_recording(
             message="Epochs file already exists.",
         )
 
-    raw_result = load_cleaned_raw_for_epoching(
+    raw_input_stage = resolve_epoching_raw_input_stage(config)
+
+    if verbose:
+        print(f"Epoching raw input: {raw_input_stage}")
+
+    raw_result = load_raw_for_epoching(
         config,
         subject=subject,
         session=session,
@@ -923,6 +1021,7 @@ def write_epochs_for_recording(
         n_event_ids=len(epochs.event_id),
         events_kind=events_result.kind,
         message=(
+            f"raw_input={raw_result.kind}; "
             f"saved_window=({windows.saved_tmin:g}, {windows.saved_tmax:g}); "
             f"work_window=({windows.work_tmin:g}, {windows.work_tmax:g}); "
             f"crop_to_saved={windows.crop_to_saved}"

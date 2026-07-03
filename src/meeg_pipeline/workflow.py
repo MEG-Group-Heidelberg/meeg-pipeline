@@ -892,9 +892,10 @@ def epoching_input_overview_to_dataframe(
     ``events.tsv`` files are used.
     """
     from meeg_pipeline.epoching import (
-        load_cleaned_raw_for_epoching,
         load_events_for_epoching,
+        load_raw_for_epoching,
         make_epochs_path,
+        resolve_epoching_raw_input_stage,
     )
 
     rows = []
@@ -902,7 +903,9 @@ def epoching_input_overview_to_dataframe(
     for recording in recordings:
         entities = _recording_entities(recording)
 
-        raw_result = load_cleaned_raw_for_epoching(
+        raw_input_stage = resolve_epoching_raw_input_stage(config)
+
+        raw_result = load_raw_for_epoching(
             config,
             **entities,
             preload=preload_raw,
@@ -915,12 +918,13 @@ def epoching_input_overview_to_dataframe(
         rows.append(
             {
                 "recording": recording_label(recording),
-                "cleaned_raw_status": raw_result.status,
+                "raw_input": raw_result.kind or raw_input_stage,
+                "raw_status": raw_result.status,
                 "events_status": events_result.status,
                 "events_kind": events_result.kind,
                 "n_events": n_events,
                 "epochs_exists": epochs_path.exists(),
-                "cleaned_raw_path": raw_result.path,
+                "raw_path": raw_result.path,
                 "events_path": events_result.path,
                 "epochs_path": str(epochs_path),
                 "message": raw_result.message or events_result.message,

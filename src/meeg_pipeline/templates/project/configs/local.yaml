@@ -94,6 +94,8 @@ preprocessing:
 
 cleaning:
   ica:
+    # If false, epochs.input: "auto" uses filtered raw derivatives directly.
+    enabled: true
     n_components: 0.99
     method: "fastica"
     random_state: 97
@@ -102,6 +104,12 @@ cleaning:
     fit_resample_sfreq: null
 
 epochs:
+  # Continuous raw input stage for epoching:
+  # - auto: cleaned if cleaning.ica.enabled is true, otherwise filtered
+  # - cleaned: always use desc-cleaned raw derivatives
+  # - filtered: always use desc-filtered raw derivatives
+  input: "auto"
+
   # Saved epoch window. For dense note-level paradigms, this can be shorter
   # than the autoreject/QC window below to avoid writing unnecessarily large
   # epoch files.

@@ -296,6 +296,13 @@ def fit_ica_for_recording(
         run=run,
     )
 
+    if not config.cleaning.ica.enabled:
+        return ICAFitResult(
+            path=str(output_path),
+            status="skipped_disabled",
+            message="ICA is disabled in config.cleaning.ica.enabled.",
+        )
+
     if output_path.exists() and on_existing == "skip":
         return ICAFitResult(
             path=str(output_path),
@@ -560,6 +567,13 @@ def write_cleaned_raw_for_recording(
         task=task,
         run=run,
     )
+
+    if not config.cleaning.ica.enabled:
+        return CleanedRawResult(
+            path=str(output_path),
+            status="skipped_disabled",
+            message="ICA is disabled in config.cleaning.ica.enabled.",
+        )
 
     if output_path.exists() and on_existing == "skip":
         return CleanedRawResult(

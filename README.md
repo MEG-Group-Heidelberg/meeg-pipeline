@@ -17,6 +17,7 @@ package as a library.
 - [First data import](#first-data-import)
 - [Running the workflow](#running-the-workflow)
 - [Configuration basics](#configuration-basics)
+- [Preprocessing, ICA, and epoching inputs](#preprocessing-ica-and-epoching-inputs)
 - [FreeSurfer and MRI setup](#freesurfer-and-mri-setup)
 - [Source modeling and connectivity](#source-modeling-and-connectivity)
 - [Command-line tools](#command-line-tools)
@@ -420,7 +421,9 @@ notebooks/
 `1A_anatomy` and `1B_preprocessing` can often be started independently.
 Source modeling needs outputs from anatomy, preprocessing/epoching, evokeds, and
 noise covariance. Connectivity uses epoch-level label time courses from source
-modeling.
+modeling. The ICA-cleaning notebook can be skipped for projects that set
+`cleaning.ica.enabled: false`; in that case epoching can use filtered raw
+derivatives directly via `epochs.input: auto` or `epochs.input: filtered`.
 
 `5_decoding/` is currently scaffold-only. Treat those notebooks as placeholders
 until the decoding workflow is hardened.
@@ -537,6 +540,80 @@ conditions:
 
 These names can be reused by evokeds, source modeling, connectivity, and later
 decoding workflows.
+
+### Preprocessing, ICA, and epoching inputs
+
+The preprocessing workflow can run either with an ICA-cleaning step or directly
+from filtered raw derivatives. This is controlled in the project config.
+
+By default, new projects use ICA-cleaned data for epoching:
+
+```yaml
+cleaning:
+  ica:
+    enabled: true
+
+epochs:
+  input: "auto"  # "auto" | "cleaned" | "filtered"
+```
+
+With `epochs.input: "auto"`, the epoching input is resolved from the ICA
+setting:
+
+```text
+cleaning.ica.enabled: true   -> use desc-cleaned_<datatype>.fif
+cleaning.ica.enabled: false  -> use desc-filtered_<datatype>.fif
+```
+
+For test runs or projects that intentionally skip ICA, either disable ICA and
+keep `epochs.input: "auto"`:
+
+```yaml
+cleaning:
+  ica:
+    enabled: false
+
+epochs:
+  input: "auto"
+```
+
+or override the epoching input explicitly:
+
+```yaml
+epochs:
+  input: "filtered"
+```
+
+Use `epochs.input: "cleaned"` to require ICA-cleaned raw derivatives even when
+`cleaning.ica.enabled` is false. Epoch outputs include the resolved input stage
+in their descriptor, for example `desc-cleaned_epo.fif` or
+`desc-filtered_epo.fif`, so downstream analyses can distinguish whether epochs
+were created from ICA-cleaned or only filtered data.
+
+Autoreject can use a longer QC window than the final saved epochs:
+
+```yaml
+epochs:
+  input: "auto"
+  tmin: -0.25
+  tmax: 0.75
+  baseline: null
+  bad_interpolation: epochs
+
+autoreject:
+  enabled: true
+  use: Interpolation
+  subset: 4
+  tmin: -1.0
+  tmax: 1.0
+  crop_to_epochs: true
+```
+
+Here, AutoReject is fit/applied on `-1.0..1.0 s` epochs, and the cleaned epochs
+are cropped to the saved `epochs.tmin..epochs.tmax` window before writing.
+`autoreject.subset` is a pipeline convenience setting for fitting AutoReject on
+a subset of epochs; in the current workflow, an integer value means every n-th
+epoch is used for the AutoReject fit. Set it to `null` to fit on all epochs.
 
 ### Existing-output policy
 
@@ -887,7 +964,8 @@ Implemented:
 - M/EEG channel-analysis configuration
 - MRI conversion helpers and FreeSurfer workflow helpers
 - BEM/source-space/coregistration helpers
-- bad-channel QC, annotations, filtering, ICA, epoching, and evokeds
+- bad-channel QC, annotations, filtering, optional ICA, configurable epoching
+  input stages, split AutoReject/saved epoch windows, and evokeds
 - source-modeling workflow through label time courses
 - label-level spectral connectivity workflow
 - notebook templates for project summary, anatomy, preprocessing, sensor

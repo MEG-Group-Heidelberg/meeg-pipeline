@@ -128,7 +128,7 @@ class AutorejectConfig:
     use: str | None = None
     consensus_percs: tuple[float, ...] | None = None
     n_interpolates: tuple[int, ...] | None = None
-    subset: int | None = None
+    subset: int | float | None = None
     tmin: float | None = None
     tmax: float | None = None
     crop_to_epochs: bool = True
@@ -465,6 +465,29 @@ def _optional_int(value: Any) -> int | None:
         return None
 
     return int(value)
+
+
+def _optional_int_or_float(value: Any) -> int | float | None:
+    if value is None:
+        return None
+
+    if isinstance(value, bool):
+        raise ValueError(
+            "Expected int, float, or null, got boolean value "
+            f"{value!r}."
+        )
+
+    if isinstance(value, int):
+        return int(value)
+
+    if isinstance(value, float):
+        return float(value)
+
+    text = str(value)
+    if "." in text:
+        return float(text)
+
+    return int(text)
 
 
 def _optional_float_tuple(value: Any) -> tuple[float, ...] | None:
@@ -933,7 +956,7 @@ def load_config(config_path: str | Path) -> PipelineConfig:
         n_interpolates=_optional_int_tuple(
             autoreject_raw.get("n_interpolates", None)
         ),
-        subset=_optional_int(autoreject_raw.get("subset", None)),
+        subset=_optional_int_or_float(autoreject_raw.get("subset", None)),
         tmin=_optional_float(autoreject_raw.get("tmin", None)),
         tmax=_optional_float(autoreject_raw.get("tmax", None)),
         crop_to_epochs=bool(autoreject_raw.get("crop_to_epochs", True)),

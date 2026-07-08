@@ -878,7 +878,7 @@ def write_epochs_for_recording(
     raw_input_stage = resolve_epoching_raw_input_stage(config)
 
     if verbose:
-        print(f"Epoching raw input: {raw_input_stage} for subject={subject}, session={session}, task={task}, run={run}.")
+        print(f"Epoching {raw_input_stage} raw input for subject={subject}, session={session}, task={task}, run={run}.")
 
     raw_result = load_raw_for_epoching(
         config,

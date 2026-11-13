@@ -8,12 +8,8 @@ The package contains reusable pipeline code and a versioned project template.
 Concrete research projects should live outside this repository and use this
 package as a library.
 
-New to the pipeline? Start with the step-by-step guide in
-[docs/getting-started.md](docs/getting-started.md).
-
 ## Contents
 
-- [Getting started (step-by-step guide)](docs/getting-started.md)
 - [What this repository is](#what-this-repository-is)
 - [Installation](#installation)
 - [Creating a project](#creating-a-project)
@@ -25,6 +21,7 @@ New to the pipeline? Start with the step-by-step guide in
 - [FreeSurfer and MRI setup](#freesurfer-and-mri-setup)
 - [Source modeling and connectivity](#source-modeling-and-connectivity)
 - [Command-line tools](#command-line-tools)
+- [Troubleshooting](#when-something-goes-wrong)
 - [Template maintenance](#template-maintenance)
 - [Development status](#development-status)
 
@@ -65,45 +62,96 @@ one-off analysis notebooks.
 
 ## Installation
 
-Clone the repository:
+Requires Python 3.11 or newer and Git. The result is one folder `~/MEEG` that
+holds the Python environment, this repository, and your projects (see
+[What this repository is](#what-this-repository-is)).
+
+macOS / Linux (Terminal), one block, run in order:
 
 ```bash
+mkdir -p ~/MEEG && cd ~/MEEG
 git clone https://github.com/MEG-Group-Heidelberg/meeg-pipeline.git
-cd meeg-pipeline
-```
-
-Create and activate a Python environment:
-
-```bash
-cd ~/MEEG
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-```
-
-Install the package in editable mode with development and interactive plotting
-support:
-
-```bash
-cd ~/MEEG/meeg-pipeline
+cd meeg-pipeline
 pip install -e ".[dev,qt]"
 ```
 
-Optional extras:
+Windows (PowerShell), one block, run in order:
 
-```bash
-# Autoreject-based epoch cleaning
-pip install -e ".[dev,qt,autoreject]"
-
-# Anatomy helpers that need VTK/PyVista/nibabel
-pip install -e ".[dev,qt,autoreject,anatomy]"
+```powershell
+mkdir ~\MEEG; cd ~\MEEG
+git clone https://github.com/MEG-Group-Heidelberg/meeg-pipeline.git
+py -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+cd meeg-pipeline
+pip install -e ".[dev,qt]"
 ```
 
-Check the installation:
+If PowerShell refuses to run `Activate.ps1`, allow local scripts once with
+`Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+
+### Windows notes
+
+The Python part of the pipeline (BIDS import, events, preprocessing, ICA,
+epoching, evokeds, forward/inverse modeling, label time courses, connectivity)
+uses portable paths and should run on Windows. It has not been tested there
+yet, so report anything that fails.
+
+FreeSurfer does not run natively on Windows. For the steps that need it
+(`recon-all`, BEM from watershed, `mri_convert`), use one of:
+
+1. **WSL2** (Ubuntu inside Windows): install FreeSurfer and the pipeline inside
+   WSL2 and work from there. Keep the project on the Linux side (`~/MEEG`), not
+   under `/mnt/c`, which is slow.
+2. **Prepare the anatomy on a Mac or Linux machine** and copy
+   `derivatives/freesurfer/subjects/` into the project on Windows.
+3. **Skip FreeSurfer** with `anatomy.mode: "scaled_template"` or `"template"`.
+   The scaling itself is pure Python.
+
+Practical points on Windows:
+
+- Write paths in `local.yaml` with forward slashes (`D:/data/my-project`) or in
+  single quotes. A backslash inside double quotes is an escape character in
+  YAML.
+- The multi-line commands in this README end lines with `\`. In
+  PowerShell, write them on one line (or end lines with a backtick).
+- `freesurfer.home` has no useful default on Windows; leave it `null` unless you
+  use option 1 or 2.
+- Avoid very long project paths (Windows limits them to about 260 characters in
+  many programs).
+
+Check the installation (the environment must be active):
 
 ```bash
-python -c "import meeg_pipeline; print(meeg_pipeline.__version__)"
 meegpipe --version
+```
+
+In every new terminal, activate the environment again
+(`source ~/MEEG/.venv/bin/activate` on macOS/Linux, `~\MEEG\.venv\Scripts\Activate.ps1`
+on Windows) before using `meegpipe`.
+
+Optional extras. Each block is complete on its own (macOS/Linux; on Windows
+use `cd ~\MEEG\meeg-pipeline` instead). Install only what you need:
+
+Autoreject-based epoch cleaning:
+
+```bash
+cd ~/MEEG/meeg-pipeline && pip install -e ".[dev,qt,autoreject]"
+```
+
+Anatomy helpers that need VTK/PyVista/nibabel:
+
+```bash
+cd ~/MEEG/meeg-pipeline && pip install -e ".[dev,qt,anatomy]"
+```
+
+Both:
+
+```bash
+cd ~/MEEG/meeg-pipeline && pip install -e ".[dev,qt,autoreject,anatomy]"
 ```
 
 The `qt` extra installs packages needed for interactive MNE browser windows,
@@ -434,6 +482,32 @@ derivatives directly via `epochs.input: auto` or `epochs.input: filtered`.
 `5_decoding/` is currently scaffold-only. Treat those notebooks as placeholders
 until the decoding workflow is hardened.
 
+### Step by step
+
+Replace `configs/local.yaml` paths and IDs with your own. Run all commands from
+the project folder.
+
+| # | Goal | Notebook | Command | You set / check |
+| --- | --- | --- | --- | --- |
+| 1 | Create the project | - | `meegpipe init-project my-project` | modality, anatomy (`--anatomy template` if no MRIs) |
+| 2 | Put the original files in place | - | - | `sourcedata/sub-XXXX/meg/task-NAME/*.fif`, empty-room files in `sourcedata/emptyroom/` |
+| 3 | Fill in the config | - | `meegpipe config-info --config configs/local.yaml` | the [required fields](#required-config-fields) |
+| 4 | Check what was found | `00_project_summary` | `meegpipe sourcedata-info --config configs/local.yaml` | every recording you expect is listed |
+| 5 | Convert to BIDS | `1B_preprocessing/01_raw_bids_import` | `meegpipe convert-to-bids --config configs/local.yaml` | `rawdata/` now contains the recordings |
+| 6 | Mark bad channels, write trigger events | `1B_preprocessing/02_bad_channels_and_events` | `meegpipe write-events --config configs/local.yaml --subject XXXX --task NAME` | trigger channels in `events.extraction`; event counts look right |
+| 7 | Optional: project-specific events or stimulus log | `03_project_specific_events`, `03b_join_stimulus_log` | `meegpipe events-join-stimulus-log ...` | only if the trigger alone does not describe the trial |
+| 8 | Filter, mark bad segments, clean with ICA | `04_preprocessing`, `05_artifact_annotation`, `06_ica_cleaning` | - | filter limits in `preprocessing.filtering`; ICA can be switched off with `cleaning.ica.enabled: false` |
+| 9 | Anatomy | `1A_anatomy/01` to `04` | `meegpipe anatomy-info --config configs/local.yaml` | see [Using fsaverage without individual MRIs](#using-fsaverage-without-individual-mris) |
+| 10 | Epoch | `1B_preprocessing/07_epoching` | - | `epochs.tmin`, `epochs.tmax`, `conditions.definitions` |
+| 11 | Evoked responses | `2_sensor_analysis/01_evokeds` | - | condition definitions |
+| 12 | Forward solution | `3_source_modeling/01_forward_solution` | `meegpipe source-forward ...` | transform and BEM exist (status table) |
+| 13 | Noise covariance, inverse | `02_noise_covariance`, `03_inverse_operator` | `meegpipe source-noise-cov ...`, `meegpipe source-inverse ...` | `source.noise_cov.mode` |
+| 14 | Source estimates and label time courses | `04` to `07` | `meegpipe source-apply-inverse ...`, `source-label-time-courses ...` | `source.labels.parcellation` |
+| 15 | Continuous source time courses (e.g. reverse correlation) | `08_apply_inverse_raw_labels` | `meegpipe source-apply-inverse-raw ...` | `source.apply_inverse.raw` |
+
+Run notebook `00_project_summary` at any time. It is read-only and shows which
+steps are finished for which recording.
+
 ### Interactive plotting setup
 
 In Jupyter or VS Code, select the Python kernel from the environment where the
@@ -490,6 +564,30 @@ paths:
 ```
 
 Relative paths are resolved relative to the project root.
+
+### Required config fields
+
+`meegpipe init-project` writes a working `configs/local.yaml`. These are the
+values you normally have to touch; everything else has a sensible default.
+
+| Field | Meaning |
+| --- | --- |
+| `freesurfer.home` | FreeSurfer installation, only for anatomy from MRI |
+| `bids.datatype` | `meg` or `eeg` |
+| `events.extraction.stim_channels` | trigger channels of your system |
+| `events.extraction.min_gap_s` | drop triggers closer than this (seconds); 0 keeps all |
+| `preprocessing.filtering` | notch frequencies and band limits |
+| `epochs.tmin`, `epochs.tmax` | epoch window in seconds |
+| `conditions.definitions` | names and rules of your conditions |
+| `anatomy.mode`, `anatomy.subjects` | where each subject's anatomy comes from |
+| `source.noise_cov.mode` | `erm` (empty room) for MEG; `baseline` for EEG |
+
+All time values in the config end in `_s` and are in seconds. MNE-style
+`tmin`, `tmax` and `baseline` keep their names. If you mistype a key or use an
+old one, `meegpipe` prints a warning such as
+`local.yaml contains keys the pipeline does not use (renamed or misspelled?):
+events.extraction.min_gap`; fix the key, because the setting is otherwise
+ignored.
 
 ### Modality and channel defaults
 
@@ -795,6 +893,8 @@ DICOM folders:
 brew install dcm2niix
 ```
 
+On Linux, use the package manager (e.g. `sudo apt install dcm2niix`).
+
 Optional faster compression:
 
 ```bash
@@ -886,15 +986,47 @@ Show the installed version:
 meegpipe --version
 ```
 
-Create projects:
+Create projects (each block is one alternative; run only one):
+
+Default MEG project:
 
 ```bash
 meegpipe init-project my-meeg-project
+```
+
+EEG-only project:
+
+```bash
 meegpipe init-project my-eeg-project --modality eeg
+```
+
+EEG-only project without individual MRIs, using the template anatomy:
+
+```bash
 meegpipe init-project my-eeg-project --modality eeg --anatomy template --montage standard_1020
+```
+
+Combined MEG+EEG project:
+
+```bash
 meegpipe init-project my-meeg-eeg-project --modality meeg
+```
+
+Create the project in another folder:
+
+```bash
 meegpipe init-project my-meeg-project --base-dir /Volumes/YourDrive/MEEG
+```
+
+Preview without writing anything:
+
+```bash
 meegpipe init-project my-meeg-project --dry-run
+```
+
+Overwrite an existing scaffold:
+
+```bash
 meegpipe init-project my-meeg-project --overwrite
 ```
 
@@ -965,10 +1097,32 @@ meegpipe source-label-time-courses --config configs/local.yaml --subject 0001 --
 meegpipe source-label-time-courses-epochs --config configs/local.yaml --subject 0001 --task rest
 ```
 
-Interactive QC (bad channels, artifact annotation, ICA, coregistration) and the
-preprocessing, epoching, and evoked steps are notebook-only. The table in
-[docs/getting-started.md](docs/getting-started.md#which-steps-have-a-command)
-lists which step has a command.
+### Which steps have a command
+
+| Area | Command line | Notebook only |
+| --- | --- | --- |
+| Inspection | `config-info`, `sourcedata-info`, `bids-info`, `list-recordings`, `raw-info`, `channels-info`, `events-info` | summary dashboard |
+| Import and events | `convert-to-bids`, `write-events`, `events-join-stimulus-log` | bad channels, project-specific events |
+| Anatomy | `anatomy-info`, `anatomy-scaled-template` | MRI conversion, `recon-all`, BEM, source space, coregistration |
+| Preprocessing | - | filtering, artifact annotation, ICA, epoching, evokeds |
+| Source modeling | `source-forward`, `source-noise-cov`, `source-inverse`, `source-apply-inverse`, `source-apply-inverse-raw`, `source-label-time-courses`, `source-label-time-courses-epochs` | morphing to fsaverage |
+| Connectivity, decoding | - | all notebooks (decoding is a placeholder) |
+
+The interactive steps (bad channels, artifact annotation, ICA, coregistration)
+need a person looking at the data and stay in notebooks on purpose.
+
+## When something goes wrong
+
+| Symptom | Likely cause and fix |
+| --- | --- |
+| `meegpipe: command not found` (Windows: `not recognized`) | the environment is not active; activate it as described under [Installation](#installation) |
+| warning `contains keys the pipeline does not use` | the listed key is misspelled or was renamed; compare with the config template |
+| a recording is missing from `sourcedata-info` | wrong folder layout; compare with [First data import](#first-data-import) |
+| no or too many events | check `events.extraction.stim_channels` and `min_gap_s`; inspect with `meegpipe events-info` |
+| step is skipped with status `exists` | by design; rerun with `OVERWRITE_STEPS` or `--overwrite` |
+| `scale_mri` or FreeSurfer fails on files like `._xyz` | macOS metadata files on external drives; delete them on the Mac: `find <project> -name '._*' -delete` |
+| interactive plot does not open | restart the kernel and run the Qt setup cell first ([Interactive plotting setup](#interactive-plotting-setup)) |
+| source step reports a missing input | the previous step has not run for this recording; the status table names it |
 
 ## Template maintenance
 

@@ -62,9 +62,48 @@ one-off analysis notebooks.
 
 ## Installation
 
-Requires Python 3.11 or newer and Git. The result is one folder `~/MEEG` that
-holds the Python environment, this repository, and your projects (see
+The result is one folder `~/MEEG` that holds the Python environment, this
+repository, and your projects (see
 [What this repository is](#what-this-repository-is)).
+
+### Step 1: Check Python and Git
+
+The pipeline needs **Python 3.11 or newer** (3.12 or 3.13 recommended) and
+[Git](https://git-scm.com/downloads). The most common installation failure is an
+older Python, so check this first.
+
+macOS / Linux:
+
+```bash
+python3 --version
+```
+
+Windows (PowerShell):
+
+```powershell
+py --version
+```
+
+If the version is 3.11 or newer, continue with step 2. If it is older (for
+example the 3.9 that ships with macOS) or the command is not found, install a
+current Python. Choose one way:
+
+| System | Way | Command or link |
+| --- | --- | --- |
+| Windows | installer | [python.org/downloads](https://www.python.org/downloads/windows/); tick "Add python.exe to PATH" |
+| Windows | winget | `winget install Python.Python.3.13` |
+| macOS | installer | [python.org/downloads](https://www.python.org/downloads/macos/) |
+| macOS | Homebrew ([brew.sh](https://brew.sh)) | `brew install python@3.13` |
+| Linux | package manager | `sudo apt install python3 python3-venv python3-pip` (Ubuntu 24.04 or newer ships 3.12); for older releases use the [deadsnakes PPA](https://launchpad.net/~deadsnakes/+archive/ubuntu/ppa) |
+| any | [uv](https://docs.astral.sh/uv/getting-started/installation/) | `uv python install 3.13` |
+| any | [Miniforge (conda)](https://github.com/conda-forge/miniforge) | create an environment with `python=3.13` |
+
+Open a **new terminal** afterwards and check again. Several Python versions can
+live side by side. If `python3 --version` still shows the old one, call the new
+one by its full name: `python3.13` on macOS/Linux, `py -3.13` on Windows. Use
+that name in the `venv` line of step 2 instead of `python3` or `py`.
+
+### Step 2: Install the pipeline
 
 macOS / Linux (Terminal), one block, run in order:
 
@@ -123,7 +162,12 @@ Practical points on Windows:
 - Avoid very long project paths (Windows limits them to about 260 characters in
   many programs).
 
-Check the installation (the environment must be active):
+Check the installation (the environment must be active, the prompt starts with
+`(.venv)`). The first command must show 3.11 or newer:
+
+```bash
+python --version
+```
 
 ```bash
 meegpipe --version
@@ -1115,6 +1159,12 @@ need a person looking at the data and stay in notebooks on purpose.
 
 | Symptom | Likely cause and fix |
 | --- | --- |
+| `ERROR: Package 'meeg-pipeline' requires a different Python: 3.9.6 not in '>=3.11'` during `pip install` | the environment was built with an old Python. Install Python 3.11 or newer ([Step 1](#step-1-check-python-and-git)), delete the folder `~/MEEG/.venv`, and recreate it with the versioned command (`python3.13 -m venv .venv`, Windows `py -3.13 -m venv .venv`) |
+| `python --version` inside the environment is still old | the environment keeps the Python it was created with, also after you install a newer one; delete `.venv` and create it again |
+| `python: command not found` (macOS/Linux) | use `python3`; inside an active environment `python` works |
+| Windows opens the Microsoft Store when you type `python` | turn off the "App execution aliases" for python.exe in Windows Settings, or use `py` |
+| Linux: `ensurepip is not available` or `No module named venv` | `sudo apt install python3-venv` (for a specific version, e.g. `python3.13-venv`) |
+| `python3.13: command not found` right after installing | open a new terminal; with Homebrew run `brew link python@3.13` |
 | `meegpipe: command not found` (Windows: `not recognized`) | the environment is not active; activate it as described under [Installation](#installation) |
 | warning `contains keys the pipeline does not use` | the listed key is misspelled or was renamed; compare with the config template |
 | a recording is missing from `sourcedata-info` | wrong folder layout; compare with [First data import](#first-data-import) |

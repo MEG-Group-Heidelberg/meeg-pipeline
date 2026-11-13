@@ -50,11 +50,10 @@ def _normalize_anatomy_mode(anatomy: str | None) -> str:
         "individual_mri": "individual_mri",
         "individual": "individual_mri",
         "mri": "individual_mri",
-        "fsaverage": "fsaverage",
-        "template": "fsaverage",
+        "template": "template",
     }
     if value not in aliases:
-        raise ValueError("anatomy must be one of: 'individual_mri' or 'fsaverage'")
+        raise ValueError("anatomy must be one of: 'individual_mri' or 'template'")
     return aliases[value]
 
 
@@ -433,12 +432,19 @@ events:
       - "STI 004"
       - "STI 005"
       - "STI 006"
-    min_duration: 0.0
+    min_duration_s: 0.0
     shortest_event: 1
-    min_gap: 7000
-    adjust_timeline_by_msec: 0.0
+    min_gap_s: 0.0
+    adjust_timeline_s: 0.0
     tolerance_samples: 1
     mute_bad_annotations: true
+  # Optional: join trigger events with a stimulus log (one file per recording).
+  # stimulus_log:
+  #   path: "sourcedata/stimulus_logs/sub-{{subject}}_task-{{task}}_log.tsv"
+  #   match: "code"  # "code": trigger value equals code_column; "order": only counts must agree
+  #   code_column: "value"
+  #   onset_column: "onset"
+  #   desc: "stimulus"
 
 preprocessing:
   filtering:
@@ -599,7 +605,7 @@ def init_project(
         "meeg" for combined MEG+EEG stored in a MEG FIF/BIDS layout.
     anatomy
         Anatomy strategy. Use "individual_mri" for project-specific structural
-        MRI workflows and "fsaverage" for template-anatomy workflows.
+        MRI workflows and "template" for template-anatomy (fsaverage) workflows.
     montage
         Optional MNE standard montage name for EEG projects, e.g.
         "standard_1020". When set, generated configs disable digitization-based

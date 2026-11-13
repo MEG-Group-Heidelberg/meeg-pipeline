@@ -3,6 +3,13 @@ from __future__ import annotations
 import argparse
 
 from meeg_pipeline import __version__
+from meeg_pipeline.anatomy import (
+    anatomy_status_to_dataframe,
+    create_scaled_template_subject,
+    discover_freesurfer_subjects,
+    results_to_dataframe as anatomy_results_to_dataframe,
+    scaled_template_qc_to_dataframe,
+)
 from meeg_pipeline.bids import (
     compare_subjects_with_participants,
     has_dataset_description,
@@ -28,6 +35,10 @@ from meeg_pipeline.events import (
     summarize_events,
     write_bids_events_for_recording,
 )
+from meeg_pipeline.event_derivatives import (
+    join_stimulus_log_for_recordings,
+    stimulus_log_join_results_to_dataframe,
+)
 from meeg_pipeline.project import init_project
 from meeg_pipeline.config import load_config
 from meeg_pipeline.workflow import (
@@ -38,6 +49,7 @@ from meeg_pipeline.workflow import (
 )
 from meeg_pipeline.source_modeling import (
     apply_inverse_to_evokeds_for_recordings,
+    apply_inverse_to_raw_labels_for_recordings,
     epoch_label_time_course_results_to_dataframe,
     extract_epoch_label_time_courses_for_recordings,
     extract_label_time_courses_for_recordings,
@@ -178,11 +190,11 @@ def main() -> None:
         default=None,
         help="Override stimulus channels used for binary event coding.",
     )
-    events_info_parser.add_argument("--min-duration", type=float, default=None)
+    events_info_parser.add_argument("--min-duration-s", type=float, default=None)
     events_info_parser.add_argument("--shortest-event", type=int, default=None)
-    events_info_parser.add_argument("--min-gap", type=int, default=None)
+    events_info_parser.add_argument("--min-gap-s", type=float, default=None)
     events_info_parser.add_argument(
-        "--adjust-timeline-by-msec",
+        "--adjust-timeline-s",
         type=float,
         default=None,
     )
@@ -313,6 +325,30 @@ def main() -> None:
             help="Show verbose MNE output.",
         )
 
+    join_stimulus_log_parser = subparsers.add_parser(
+        "events-join-stimulus-log",
+        help="Join trigger events with the stimulus log of one recording.",
+    )
+    add_recording_args(join_stimulus_log_parser)
+
+    anatomy_info_parser = subparsers.add_parser(
+        "anatomy-info",
+        help="Show the anatomy mode and preparation status of subjects.",
+    )
+    anatomy_info_parser.add_argument("--config", required=True)
+    anatomy_info_parser.add_argument(
+        "--subject",
+        nargs="+",
+        default=None,
+        help="Subjects to show. Default: FreeSurfer subjects and anatomy.subjects.",
+    )
+
+    anatomy_scaled_template_parser = subparsers.add_parser(
+        "anatomy-scaled-template",
+        help="Scale the template to the digitised head of a subject without MRI.",
+    )
+    add_recording_args(anatomy_scaled_template_parser)
+
     source_forward_parser = subparsers.add_parser(
         "source-forward",
         help="Write the forward solution for one recording.",
@@ -352,6 +388,17 @@ def main() -> None:
     source_apply_inverse_parser.add_argument("--spacing", default=None)
     source_apply_inverse_parser.add_argument("--noise-cov-mode", default=None)
     source_apply_inverse_parser.add_argument("--pick-ori", default=None)
+
+    source_apply_inverse_raw_parser = subparsers.add_parser(
+        "source-apply-inverse-raw",
+        help="Apply the inverse operator to continuous data, restricted to labels.",
+    )
+    add_recording_args(source_apply_inverse_raw_parser)
+    source_apply_inverse_raw_parser.add_argument("--method", default=None)
+    source_apply_inverse_raw_parser.add_argument("--snr", type=float, default=None)
+    source_apply_inverse_raw_parser.add_argument("--lambda2", type=float, default=None)
+    source_apply_inverse_raw_parser.add_argument("--spacing", default=None)
+    source_apply_inverse_raw_parser.add_argument("--noise-cov-mode", default=None)
 
     source_label_tc_parser = subparsers.add_parser(
         "source-label-time-courses",
@@ -595,21 +642,25 @@ def main() -> None:
 
         event_config = BinaryChannelEventConfig(
             stim_channels=tuple(args.stim_channels) if args.stim_channels else event_config.stim_channels,
-            min_duration=(
-                args.min_duration
-                if args.min_duration is not None
-                else event_config.min_duration
+            min_duration_s=(
+                args.min_duration_s
+                if args.min_duration_s is not None
+                else event_config.min_duration_s
             ),
             shortest_event=(
                 args.shortest_event
                 if args.shortest_event is not None
                 else event_config.shortest_event
             ),
-            min_gap=args.min_gap if args.min_gap is not None else event_config.min_gap,
-            adjust_timeline_by_msec=(
-                args.adjust_timeline_by_msec
-                if args.adjust_timeline_by_msec is not None
-                else event_config.adjust_timeline_by_msec
+            min_gap_s=(
+                args.min_gap_s
+                if args.min_gap_s is not None
+                else event_config.min_gap_s
+            ),
+            adjust_timeline_s=(
+                args.adjust_timeline_s
+                if args.adjust_timeline_s is not None
+                else event_config.adjust_timeline_s
             ),
             tolerance_samples=(
                 args.tolerance_samples
@@ -647,7 +698,17 @@ def main() -> None:
         if result.unique_ids is not None:
             print(f"Unique IDs: {result.unique_ids}")
         print(f"Output: {result.output_path}")
-    
+
+    elif args.command == "events-join-stimulus-log":
+        config = load_config(args.config)
+        recording = selected_recording_from_args(config, args)
+        print(f"Recording: {recording_label(recording)}")
+        results = join_stimulus_log_for_recordings(
+            config,
+            [recording],
+            on_existing="overwrite" if args.overwrite else "skip",
+        )
+        print_results_table(stimulus_log_join_results_to_dataframe(results))
 
     elif args.command == "list-recordings":
         config = load_config(args.config)
@@ -665,6 +726,63 @@ def main() -> None:
             print(df.to_csv(sep="\t", index=False), end="")
         else:
             print_results_table(df)
+
+    elif args.command == "anatomy-info":
+        config = load_config(args.config)
+        subjects = args.subject or sorted(
+            {
+                *discover_freesurfer_subjects(config.freesurfer.subjects_dir),
+                *(f"sub-{subject}" for subject in config.anatomy.subjects),
+            }
+            - {"sub-fsaverage"}
+        )
+        print_results_table(
+            anatomy_status_to_dataframe(
+                subjects,
+                subjects_dir=config.freesurfer.subjects_dir,
+                mri_root=config.paths.mri_root,
+                t1_patterns=config.anatomy.t1_patterns,
+                t2_patterns=config.anatomy.t2_patterns,
+                spacing=config.anatomy.source_space.spacing,
+                bem_ico=config.anatomy.bem.ico,
+                bem_conductivity=config.anatomy.bem.conductivity,
+                config=config,
+            )
+        )
+        qc = scaled_template_qc_to_dataframe(
+            subjects,
+            subjects_dir=config.freesurfer.subjects_dir,
+        )
+        if not qc.empty:
+            print()
+            print_results_table(qc)
+
+    elif args.command == "anatomy-scaled-template":
+        config = load_config(args.config)
+        recording = selected_recording_from_args(config, args)
+        print(f"Recording: {recording_label(recording)}")
+        raw_result = read_raw_bids_recording_if_exists(
+            config,
+            subject=recording["subject"],
+            session=recording["session"],
+            task=recording["task"],
+            run=recording["run"],
+            preload=False,
+        )
+        if raw_result.raw is None:
+            print(raw_result.message)
+            return
+        results = create_scaled_template_subject(
+            config,
+            recording["subject"],
+            raw_result.raw.info,
+            session=recording["session"],
+            task=recording["task"],
+            run=recording["run"],
+            on_existing="overwrite" if args.overwrite else "skip",
+            verbose=args.verbose,
+        )
+        print_results_table(anatomy_results_to_dataframe(results))
 
     elif args.command == "source-forward":
         config = load_config(args.config)
@@ -731,6 +849,23 @@ def main() -> None:
             spacing=args.spacing,
             noise_cov_mode=args.noise_cov_mode,
             pick_ori=args.pick_ori,
+            verbose=args.verbose,
+        )
+        print_results_table(source_estimate_results_to_dataframe(results))
+
+    elif args.command == "source-apply-inverse-raw":
+        config = load_config(args.config)
+        recording = selected_recording_from_args(config, args)
+        print(f"Recording: {recording_label(recording)}")
+        results = apply_inverse_to_raw_labels_for_recordings(
+            config,
+            [recording],
+            on_existing="overwrite" if args.overwrite else "skip",
+            method=args.method,
+            lambda2=args.lambda2,
+            snr=args.snr,
+            spacing=args.spacing,
+            noise_cov_mode=args.noise_cov_mode,
             verbose=args.verbose,
         )
         print_results_table(source_estimate_results_to_dataframe(results))

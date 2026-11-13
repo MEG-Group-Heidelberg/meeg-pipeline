@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import json
 from pathlib import Path
 import re
 from typing import Any, Iterable, Literal
@@ -27,6 +28,7 @@ from meeg_pipeline.conditions import (
     select_epoch_indices_from_metadata,
 )
 from meeg_pipeline.epoching import make_epochs_path
+from meeg_pipeline.preprocessing import make_filtered_raw_path
 from meeg_pipeline.paths import derivative_directory, derivative_path, sanitize_bids_label
 from meeg_pipeline.workflow import ExistingOutputPolicy, Recording
 
@@ -434,6 +436,76 @@ def make_epoch_label_time_course_path(
         run=run,
         kind="label_time_course_epochs",
         suffix=f"space-label_parc-{parc_label}_desc-epoch{method_label}{mode_label}{decim_label}-ltc{extension}",
+    )
+
+
+def make_raw_label_source_path(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    task: str | None = None,
+    session: str | None = None,
+    run: str | None = None,
+    label: str,
+    inverse_method: str | None = None,
+    extension: str = ".npy",
+) -> Path:
+    """Create the path for continuous source time courses of one label."""
+    method_label = sanitize_bids_label(inverse_method or config.source.inverse_method)
+    label_label = sanitize_bids_label(label)
+    extension = extension if extension.startswith(".") else f".{extension}"
+
+    return derivative_path(
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
+        kind="source_estimates_raw",
+        suffix=f"label-{label_label}_desc-raw{method_label}-stc{extension}",
+    )
+
+
+def make_raw_source_sidecar_path(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    task: str | None = None,
+    session: str | None = None,
+    run: str | None = None,
+    inverse_method: str | None = None,
+) -> Path:
+    """Create the path of the JSON sidecar shared by all labels of one recording."""
+    method_label = sanitize_bids_label(inverse_method or config.source.inverse_method)
+
+    return derivative_path(
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
+        kind="source_estimates_raw",
+        suffix=f"desc-raw{method_label}-stc.json",
+    )
+
+
+def make_raw_source_bad_mask_path(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    task: str | None = None,
+    session: str | None = None,
+    run: str | None = None,
+) -> Path:
+    """Create the path of the boolean BAD-annotation mask (one value per sample)."""
+    return derivative_path(
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
+        kind="source_estimates_raw",
+        suffix="desc-bad_mask.npy",
     )
 
 
@@ -2683,6 +2755,196 @@ def apply_inverse_to_evoked_for_recording(
     )
 
 
+def apply_inverse_raw_to_label_arrays(
+    raw: mne.io.BaseRaw,
+    inverse_operator: Any,
+    labels: list[mne.Label],
+    *,
+    lambda2: float,
+    method: str,
+    pick_ori: str | None = None,
+    chunk_s: float = 60.0,
+) -> tuple[dict[str, np.ndarray], dict[str, list[np.ndarray]]]:
+    """Apply an inverse operator to continuous data, one label and chunk at a time.
+
+    Returns the vertex-by-time arrays and the vertex numbers per label name.
+    Chunking only bounds memory; the result does not depend on ``chunk_s``.
+    """
+    chunk = max(int(round(chunk_s * raw.info["sfreq"])), 1)
+    chunks: dict[str, list[np.ndarray]] = {label.name: [] for label in labels}
+    vertices: dict[str, list[np.ndarray]] = {}
+
+    for start in range(0, raw.n_times, chunk):
+        stop = min(start + chunk, raw.n_times)
+        for label in labels:
+            stc = mne.minimum_norm.apply_inverse_raw(
+                raw,
+                inverse_operator,
+                lambda2=lambda2,
+                method=method,
+                label=label,
+                start=start,
+                stop=stop,
+                pick_ori=pick_ori,
+                verbose=False,
+            )
+            chunks[label.name].append(stc.data)
+            vertices.setdefault(label.name, stc.vertices)
+
+    arrays = {name: np.concatenate(parts, axis=1) for name, parts in chunks.items()}
+
+    return arrays, vertices
+
+
+def apply_inverse_to_raw_labels_for_recording(
+    config: PipelineConfig,
+    recording: Recording,
+    *,
+    on_existing: ExistingOutputPolicy = "skip",
+    method: str | None = None,
+    lambda2: float | None = None,
+    snr: float | None = None,
+    spacing: str | None = None,
+    noise_cov_mode: str | None = None,
+    verbose: bool | str | int | None = True,
+) -> SourceEstimateResult:
+    """Apply the inverse operator to continuous data, restricted to labels.
+
+    Writes one vertex-by-time ``.npy`` per label, the BAD-annotation mask and a
+    JSON sidecar under ``source_estimates_raw``.
+    """
+    entities = _recording_entities(recording)
+    subject = entities["subject"]
+    raw_config = _apply_inverse_config(config).raw
+    effective_method = _effective_apply_inverse_method(config, method)
+    effective_lambda2 = _effective_apply_inverse_lambda2(config, lambda2, snr)
+    mode = _noise_cov_mode(config, noise_cov_mode)
+
+    sidecar_path = make_raw_source_sidecar_path(
+        config,
+        **entities,
+        inverse_method=effective_method,
+    )
+    inverse_path = make_inverse_operator_path(
+        config,
+        **entities,
+        spacing=spacing,
+        noise_cov_mode=mode,
+        inverse_method=effective_method,
+    )
+    raw_path = (
+        make_cleaned_raw_path(config, **entities)
+        if raw_config.input == "cleaned"
+        else make_filtered_raw_path(config, **entities)
+    )
+
+    def result(status: str, message: str = "") -> SourceEstimateResult:
+        return SourceEstimateResult(
+            subject=_subject_label(subject),
+            session=entities["session"],
+            task=entities["task"],
+            run=entities["run"],
+            condition="raw",
+            path=str(sidecar_path),
+            status=status,
+            apply_to="raw",
+            method=effective_method,
+            lambda2=effective_lambda2,
+            evoked_path=str(raw_path),
+            inverse_path=str(inverse_path),
+            message=message,
+        )
+
+    if sidecar_path.exists() and on_existing == "skip":
+        return result("skipped_existing", "Raw source estimates already exist.")
+
+    missing = [
+        name
+        for name, path in (("raw", raw_path), ("inverse", inverse_path))
+        if not path.exists()
+    ]
+    if missing:
+        return result(
+            "missing_" + "_".join(missing),
+            "Missing required input(s): " + ", ".join(missing),
+        )
+
+    labels = labels_for_subject(
+        config,
+        subject=subject,
+        parcellation=raw_config.parcellation,
+        names=raw_config.names,
+        regexp=raw_config.regexp,
+        merge_to=raw_config.merge_to,
+    )
+    if not labels:
+        return result("missing_labels", "No label matched the selection.")
+
+    raw = mne.io.read_raw_fif(raw_path, preload=True, verbose=verbose)
+    if raw_config.l_freq is not None or raw_config.h_freq is not None:
+        raw.filter(raw_config.l_freq, raw_config.h_freq, verbose=verbose)
+    if raw_config.resample_sfreq is not None:
+        raw.resample(raw_config.resample_sfreq, verbose=verbose)
+
+    bad_mask = np.isnan(raw.get_data(picks=[0], reject_by_annotation="NaN")[0])
+    inverse_operator = mne.minimum_norm.read_inverse_operator(
+        inverse_path,
+        verbose=verbose,
+    )
+    arrays, vertices = apply_inverse_raw_to_label_arrays(
+        raw,
+        inverse_operator,
+        labels,
+        lambda2=effective_lambda2,
+        method=effective_method,
+        pick_ori=raw_config.pick_ori,
+        chunk_s=raw_config.chunk_s,
+    )
+
+    sidecar_path.parent.mkdir(parents=True, exist_ok=True)
+    np.save(make_raw_source_bad_mask_path(config, **entities), bad_mask)
+    label_rows = []
+    for label in labels:
+        np.save(
+            make_raw_label_source_path(
+                config,
+                **entities,
+                label=label.name,
+                inverse_method=effective_method,
+            ),
+            arrays[label.name].astype(np.float32),
+        )
+        label_rows.append(
+            {
+                "name": label.name,
+                "hemi": label.hemi,
+                "n_vertices": int(arrays[label.name].shape[0]),
+                "vertices": [[int(v) for v in hemi] for hemi in vertices[label.name]],
+            }
+        )
+
+    sidecar_path.write_text(
+        json.dumps(
+            {
+                "sfreq": float(raw.info["sfreq"]),
+                "n_times": int(raw.n_times),
+                "method": effective_method,
+                "lambda2": effective_lambda2,
+                "pick_ori": raw_config.pick_ori,
+                "input": raw_config.input,
+                "l_freq": raw_config.l_freq,
+                "h_freq": raw_config.h_freq,
+                "n_bad_samples": int(bad_mask.sum()),
+                "labels": label_rows,
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+
+    return result("written")
+
+
 def apply_inverse_to_evokeds_for_recordings(
     config: PipelineConfig,
     recordings: Iterable[Recording],
@@ -2775,6 +3037,57 @@ def apply_inverse_to_evokeds_for_recordings(
                 lambda2=_effective_apply_inverse_lambda2(config, lambda2, snr),
                 evoked_path=str(row.get("evoked_path", "")),
                 inverse_path=str(row.get("inverse_path", "")),
+                message=f"{type(exc).__name__}: {exc}",
+            )
+        results.append(result)
+
+    return results
+
+
+def apply_inverse_to_raw_labels_for_recordings(
+    config: PipelineConfig,
+    recordings: Iterable[Recording],
+    *,
+    on_existing: ExistingOutputPolicy = "skip",
+    method: str | None = None,
+    lambda2: float | None = None,
+    snr: float | None = None,
+    spacing: str | None = None,
+    noise_cov_mode: str | None = None,
+    verbose: bool | str | int | None = True,
+) -> list[SourceEstimateResult]:
+    """Apply inverse operators to continuous data of all selected recordings."""
+    results: list[SourceEstimateResult] = []
+    effective_method = _effective_apply_inverse_method(config, method)
+
+    for recording in recordings:
+        try:
+            result = apply_inverse_to_raw_labels_for_recording(
+                config,
+                recording,
+                on_existing=on_existing,
+                method=effective_method,
+                lambda2=lambda2,
+                snr=snr,
+                spacing=spacing,
+                noise_cov_mode=noise_cov_mode,
+                verbose=verbose,
+            )
+        except Exception as exc:  # noqa: BLE001 - batch notebooks should continue.
+            entities = _recording_entities(recording)
+            result = SourceEstimateResult(
+                subject=_subject_label(entities["subject"]),
+                session=entities["session"],
+                task=entities["task"],
+                run=entities["run"],
+                condition="raw",
+                path="",
+                status="failed",
+                apply_to="raw",
+                method=effective_method,
+                lambda2=_effective_apply_inverse_lambda2(config, lambda2, snr),
+                evoked_path="",
+                inverse_path="",
                 message=f"{type(exc).__name__}: {exc}",
             )
         results.append(result)
@@ -3507,6 +3820,64 @@ def _load_labels_for_subject(
             filtered.append(label)
 
     return filtered
+
+
+def merge_labels_per_hemisphere(
+    labels: list[mne.Label],
+    *,
+    name: str,
+) -> list[mne.Label]:
+    """Merge labels into one ROI per hemisphere, named ``<name>-<hemi>``."""
+    merged = []
+    for hemi in ("lh", "rh"):
+        hemi_labels = [label for label in labels if label.hemi == hemi]
+        if not hemi_labels:
+            continue
+        roi = sum(hemi_labels[1:], hemi_labels[0])
+        roi.name = f"{name}-{hemi}"
+        merged.append(roi)
+
+    return merged
+
+
+def labels_for_subject(
+    config: PipelineConfig,
+    *,
+    subject: str,
+    parcellation: str | None = None,
+    names: tuple[str, ...] | list[str] | str | None = None,
+    regexp: str | None = None,
+    merge_to: str | None = None,
+) -> list[mne.Label]:
+    """Load labels of one subject, optionally selected and merged into one ROI.
+
+    ``names`` and ``regexp`` both select labels (a label matching either is
+    kept). With ``merge_to``, the selection becomes one label per hemisphere.
+    """
+    labels = _load_labels_for_subject(
+        config,
+        subject=subject,
+        parcellation=parcellation,
+        target_labels=None,
+    )
+
+    if names is None and regexp is None:
+        pass
+    else:
+        wanted = set() if names is None else set(_effective_target_labels(config, names))
+        pattern = None if regexp is None else re.compile(regexp)
+        labels = [
+            label
+            for label in labels
+            if label.name in wanted
+            or label.name.rsplit("-", 1)[0] in wanted
+            or (pattern is not None and pattern.search(label.name))
+        ]
+
+    if merge_to is not None:
+        return merge_labels_per_hemisphere(labels, name=merge_to)
+
+    return labels
 
 
 def find_source_estimate_inputs_for_recording(

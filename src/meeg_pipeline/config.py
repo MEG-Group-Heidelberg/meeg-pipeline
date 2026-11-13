@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -71,17 +72,28 @@ class EventExtractionConfig:
         "STI 005",
         "STI 006",
     )
-    min_duration: float = 0.0
+    min_duration_s: float = 0.0
     shortest_event: int = 1
-    min_gap: int = 7000
-    adjust_timeline_by_msec: float = 0.0
+    min_gap_s: float = 0.0
+    adjust_timeline_s: float = 0.0
     tolerance_samples: int = 1
     mute_bad_annotations: bool = True
 
 
 @dataclass(frozen=True)
+class StimulusLogConfig:
+    # Path of the log; {subject}, {session}, {task} and {run} are filled per recording.
+    path: str | None = None
+    match: Literal["code", "order"] = "code"
+    code_column: str = "value"
+    onset_column: str = "onset"
+    desc: str = "stimulus"
+
+
+@dataclass(frozen=True)
 class EventsConfig:
     extraction: EventExtractionConfig
+    stimulus_log: StimulusLogConfig = field(default_factory=StimulusLogConfig)
 
 
 @dataclass(frozen=True)
@@ -217,6 +229,8 @@ class AnatomyVolumeSourceSpaceConfig:
 class AnatomyLabelsConfig:
     morph_from: str = "fsaverage"
     parcellations: tuple[str, ...] = ("aparc_sub",)
+    # Annotations created by the FreeSurfer recon. Read only, never morphed.
+    native: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -233,8 +247,21 @@ class AnatomyCoregistrationConfig:
 
 
 @dataclass(frozen=True)
+class AnatomySubjectConfig:
+    """Per-subject anatomy settings; see anatomy.subjects in the project config."""
+
+    mode: Literal["individual_mri", "scaled_template", "template"] = "individual_mri"
+    template: str = "fsaverage"
+    scaling: Literal["uniform", "3-axis"] = "3-axis"
+    icp_n_iterations: int = 20
+    omit_distance_mm: float = 5.0
+    max_mean_distance_mm: float = 5.0
+    scale_range: tuple[float, float] = (0.85, 1.15)
+
+
+@dataclass(frozen=True)
 class AnatomyConfig:
-    mode: Literal["individual_mri", "fsaverage"] = "individual_mri"
+    mode: Literal["individual_mri", "scaled_template", "template"] = "individual_mri"
     t1_patterns: tuple[str, ...] = (
         "{subject}/anat/T1.mgz",
         "{subject}/anat/*T1w*.nii*",
@@ -251,6 +278,7 @@ class AnatomyConfig:
     volume_source_space: AnatomyVolumeSourceSpaceConfig = AnatomyVolumeSourceSpaceConfig()
     labels: AnatomyLabelsConfig = AnatomyLabelsConfig()
     coregistration: AnatomyCoregistrationConfig = AnatomyCoregistrationConfig()
+    subjects: dict[str, AnatomySubjectConfig] = field(default_factory=dict)
 
     @property
     def t1_pattern(self) -> str:
@@ -284,8 +312,22 @@ class SourceNoiseCovConfig:
 
 
 @dataclass(frozen=True)
+class SourceApplyInverseRawConfig:
+    input: Literal["cleaned", "filtered"] = "cleaned"
+    l_freq: float | None = None
+    h_freq: float | None = None
+    resample_sfreq: float | None = None
+    parcellation: str | None = None
+    names: tuple[str, ...] | None = None
+    regexp: str | None = None
+    merge_to: str | None = None
+    pick_ori: str | None = None
+    chunk_s: float = 60.0
+
+
+@dataclass(frozen=True)
 class SourceApplyInverseConfig:
-    apply_to: Literal["evoked", "epochs"] = "evoked"
+    apply_to: Literal["evoked", "epochs", "raw"] = "evoked"
     # Resolved from source.inverse by default. Kept here so step-specific
     # overrides and older code paths can keep using config.source.apply_inverse.*.
     method: Literal["MNE", "dSPM", "sLORETA", "eLORETA"] = "dSPM"
@@ -294,6 +336,7 @@ class SourceApplyInverseConfig:
     pick_conditions: tuple[str, ...] | Literal["all"] = "all"
     save_stcs: bool = True
     stc_format: Literal["h5"] = "h5"
+    raw: SourceApplyInverseRawConfig = SourceApplyInverseRawConfig()
 
 
 @dataclass(frozen=True)
@@ -490,6 +533,64 @@ def _optional_int_or_float(value: Any) -> int | float | None:
     return int(text)
 
 
+ANATOMY_MODES = {"individual_mri", "scaled_template", "template"}
+
+
+def _anatomy_subject_key(subject: str) -> str:
+    return str(subject).removeprefix("sub-")
+
+
+def _anatomy_subject_config(
+    subject: str,
+    raw: dict[str, Any],
+    *,
+    default_mode: str,
+) -> AnatomySubjectConfig:
+    mode = str(raw.get("mode", default_mode))
+    if mode not in ANATOMY_MODES:
+        raise ValueError(
+            f"anatomy.subjects.{subject}.mode must be one of 'individual_mri', "
+            f"'scaled_template' or 'template', got {mode!r}."
+        )
+
+    scaling = str(raw.get("scaling", "3-axis"))
+    if scaling not in {"uniform", "3-axis"}:
+        raise ValueError(
+            f"anatomy.subjects.{subject}.scaling must be 'uniform' or '3-axis', "
+            f"got {scaling!r}."
+        )
+
+    icp_raw = raw.get("icp", {}) or {}
+    qc_raw = raw.get("qc", {}) or {}
+    scale_range = tuple(float(value) for value in qc_raw.get("scale_range", (0.85, 1.15)))
+    if len(scale_range) != 2:
+        raise ValueError(
+            f"anatomy.subjects.{subject}.qc.scale_range must have two values."
+        )
+
+    return AnatomySubjectConfig(
+        mode=mode,
+        template=str(raw.get("template", "fsaverage")),
+        scaling=scaling,
+        icp_n_iterations=int(icp_raw.get("n_iterations", 20)),
+        omit_distance_mm=float(icp_raw.get("omit_distance_mm", 5.0)),
+        max_mean_distance_mm=float(qc_raw.get("max_mean_distance_mm", 5.0)),
+        scale_range=scale_range,
+    )
+
+
+def anatomy_for_subject(config: "PipelineConfig", subject: str) -> AnatomySubjectConfig:
+    """Return the effective anatomy settings of one subject.
+
+    Subjects without an entry in anatomy.subjects use the project-wide mode.
+    """
+    key = _anatomy_subject_key(subject)
+    if key in config.anatomy.subjects:
+        return config.anatomy.subjects[key]
+
+    return AnatomySubjectConfig(mode=config.anatomy.mode)
+
+
 def _optional_float_tuple(value: Any) -> tuple[float, ...] | None:
     if value is None:
         return None
@@ -578,6 +679,65 @@ def _ica_n_components(value: Any) -> int | float | None:
     return float(value)
 
 
+class _TrackedDict(dict):
+    """Config section that remembers which keys the parser has read."""
+
+    def __init__(self, data: dict[str, Any], path: str = "") -> None:
+        super().__init__(
+            {
+                key: _track(value, f"{path}.{key}" if path else str(key))
+                for key, value in data.items()
+            }
+        )
+        self.seen: set[Any] = set()
+
+    def __getitem__(self, key: Any) -> Any:
+        self.seen.add(key)
+        return super().__getitem__(key)
+
+    def __contains__(self, key: Any) -> bool:
+        self.seen.add(key)
+        return super().__contains__(key)
+
+    def get(self, key: Any, default: Any = None) -> Any:
+        self.seen.add(key)
+        return super().get(key, default)
+
+    # Iterating a section means its keys are user-defined (conditions, windows, ...).
+    def __iter__(self):
+        self.seen.update(super().keys())
+        return super().__iter__()
+
+    def keys(self):
+        self.seen.update(super().keys())
+        return super().keys()
+
+    def values(self):
+        self.seen.update(super().keys())
+        return super().values()
+
+    def items(self):
+        self.seen.update(super().keys())
+        return super().items()
+
+
+def _track(value: Any, path: str) -> Any:
+    return _TrackedDict(value, path) if isinstance(value, dict) else value
+
+
+def _unused_config_keys(section: _TrackedDict, path: str = "") -> list[str]:
+    """Return dotted paths of keys the parser never read."""
+    unused: list[str] = []
+    for key, value in dict.items(section):
+        key_path = f"{path}.{key}" if path else str(key)
+        if key not in section.seen:
+            unused.append(key_path)
+        elif isinstance(value, _TrackedDict):
+            unused.extend(_unused_config_keys(value, key_path))
+
+    return unused
+
+
 def load_config(config_path: str | Path) -> PipelineConfig:
     config_path = Path(config_path).expanduser().resolve()
 
@@ -592,7 +752,7 @@ def load_config(config_path: str | Path) -> PipelineConfig:
     with config_path.open("r", encoding="utf-8") as f:
         raw_loaded = yaml.safe_load(f)
 
-    raw: dict[str, Any] = raw_loaded if raw_loaded is not None else {}
+    raw = _TrackedDict(raw_loaded if raw_loaded is not None else {})
 
     paths_raw = raw["paths"]
 
@@ -642,11 +802,20 @@ def load_config(config_path: str | Path) -> PipelineConfig:
     anatomy_coregistration_raw = anatomy_raw.get("coregistration", {})
 
     anatomy_mode = str(anatomy_raw.get("mode", "individual_mri"))
-    if anatomy_mode not in {"individual_mri", "fsaverage"}:
+    if anatomy_mode not in ANATOMY_MODES:
         raise ValueError(
-            "anatomy.mode must be one of 'individual_mri' or 'fsaverage', "
-            f"got {anatomy_mode!r}."
+            "anatomy.mode must be one of 'individual_mri', 'scaled_template' "
+            f"or 'template', got {anatomy_mode!r}."
         )
+
+    anatomy_subjects = {
+        _anatomy_subject_key(subject): _anatomy_subject_config(
+            subject,
+            subject_raw or {},
+            default_mode=anatomy_mode,
+        )
+        for subject, subject_raw in (anatomy_raw.get("subjects", {}) or {}).items()
+    }
 
     bem_method = anatomy_bem_raw.get("method", "watershed")
     if bem_method not in {"watershed", "flash"}:
@@ -675,6 +844,7 @@ def load_config(config_path: str | Path) -> PipelineConfig:
 
     anatomy = AnatomyConfig(
         mode=anatomy_mode,
+        subjects=anatomy_subjects,
         t1_patterns=_anatomy_patterns(
             anatomy_raw,
             plural_key="t1_patterns",
@@ -728,6 +898,9 @@ def load_config(config_path: str | Path) -> PipelineConfig:
             parcellations=tuple(
                 str(value)
                 for value in anatomy_labels_raw.get("parcellations", ["aparc_sub"])
+            ),
+            native=tuple(
+                str(value) for value in anatomy_labels_raw.get("native", [])
             ),
         ),
         coregistration=AnatomyCoregistrationConfig(
@@ -882,17 +1055,39 @@ def load_config(config_path: str | Path) -> PipelineConfig:
                 ],
             )
         ),
-        min_duration=float(extraction_raw.get("min_duration", 0.0)),
+        min_duration_s=float(extraction_raw.get("min_duration_s", 0.0)),
         shortest_event=int(extraction_raw.get("shortest_event", 1)),
-        min_gap=int(extraction_raw.get("min_gap", 7000)),
-        adjust_timeline_by_msec=float(
-            extraction_raw.get("adjust_timeline_by_msec", 0.0)
+        min_gap_s=float(extraction_raw.get("min_gap_s", 0.0)),
+        adjust_timeline_s=float(
+            extraction_raw.get("adjust_timeline_s", 0.0)
         ),
         tolerance_samples=int(extraction_raw.get("tolerance_samples", 1)),
         mute_bad_annotations=bool(extraction_raw.get("mute_bad_annotations", True)),
     )
 
-    events = EventsConfig(extraction=event_extraction)
+    stimulus_log_raw = events_raw.get("stimulus_log", {})
+    stimulus_log_path = stimulus_log_raw.get("path")
+    stimulus_log_match = str(stimulus_log_raw.get("match", "code"))
+    if stimulus_log_match not in {"code", "order"}:
+        raise ValueError(
+            f"events.stimulus_log.match must be 'code' or 'order', "
+            f"got {stimulus_log_match!r}."
+        )
+
+    events = EventsConfig(
+        extraction=event_extraction,
+        stimulus_log=StimulusLogConfig(
+            path=(
+                str(_resolve_path(stimulus_log_path, base_dir=project_root))
+                if stimulus_log_path is not None
+                else None
+            ),
+            match=stimulus_log_match,
+            code_column=str(stimulus_log_raw.get("code_column", "value")),
+            onset_column=str(stimulus_log_raw.get("onset_column", "onset")),
+            desc=str(stimulus_log_raw.get("desc", "stimulus")),
+        ),
+    )
 
     preprocessing_raw = raw.get("preprocessing", {})
     filtering_raw = preprocessing_raw.get("filtering", {})
@@ -1146,11 +1341,22 @@ def load_config(config_path: str | Path) -> PipelineConfig:
     )
 
     apply_to = str(apply_inverse_raw.get("apply_to", "evoked"))
-    if apply_to not in {"evoked", "epochs"}:
+    if apply_to not in {"evoked", "epochs", "raw"}:
         raise ValueError(
-            "source.apply_inverse.apply_to must be one of 'evoked' or 'epochs', "
-            f"got {apply_to!r}."
+            "source.apply_inverse.apply_to must be one of 'evoked', 'epochs' "
+            f"or 'raw', got {apply_to!r}."
         )
+
+    apply_inverse_raw_raw = apply_inverse_raw.get("raw", {}) or {}
+    raw_input = str(apply_inverse_raw_raw.get("input", "cleaned"))
+    if raw_input not in {"cleaned", "filtered"}:
+        raise ValueError(
+            "source.apply_inverse.raw.input must be 'cleaned' or 'filtered', "
+            f"got {raw_input!r}."
+        )
+    raw_names = apply_inverse_raw_raw.get("names", None)
+    if isinstance(raw_names, str):
+        raw_names = [raw_names]
 
     apply_inverse_method = str(apply_inverse_raw.get("method", inverse_method))
     if apply_inverse_method not in valid_inverse_methods:
@@ -1254,6 +1460,20 @@ def load_config(config_path: str | Path) -> PipelineConfig:
             pick_conditions=pick_conditions,
             save_stcs=bool(apply_inverse_raw.get("save_stcs", True)),
             stc_format=stc_format,
+            raw=SourceApplyInverseRawConfig(
+                input=raw_input,
+                l_freq=_optional_float(apply_inverse_raw_raw.get("l_freq", None)),
+                h_freq=_optional_float(apply_inverse_raw_raw.get("h_freq", None)),
+                resample_sfreq=_optional_float(
+                    apply_inverse_raw_raw.get("resample_sfreq", None)
+                ),
+                parcellation=apply_inverse_raw_raw.get("parcellation", None),
+                names=None if raw_names is None else tuple(str(n) for n in raw_names),
+                regexp=apply_inverse_raw_raw.get("regexp", None),
+                merge_to=apply_inverse_raw_raw.get("merge_to", None),
+                pick_ori=apply_inverse_raw_raw.get("pick_ori", None),
+                chunk_s=float(apply_inverse_raw_raw.get("chunk_s", 60.0)),
+            ),
         ),
         morph=SourceMorphConfig(
             enabled=bool(morph_raw.get("enabled", True)),
@@ -1280,7 +1500,7 @@ def load_config(config_path: str | Path) -> PipelineConfig:
         ),
     )
 
-    return PipelineConfig(
+    config = PipelineConfig(
         project_name=raw["project"]["name"],
         paths=paths,
         runtime=runtime,
@@ -1299,3 +1519,13 @@ def load_config(config_path: str | Path) -> PipelineConfig:
         conditions=conditions,
         connectivity=connectivity,
     )
+
+    unused_keys = _unused_config_keys(raw)
+    if unused_keys:
+        warnings.warn(
+            f"{config_path.name} contains keys the pipeline does not use "
+            f"(renamed or misspelled?): {', '.join(unused_keys)}",
+            stacklevel=2,
+        )
+
+    return config

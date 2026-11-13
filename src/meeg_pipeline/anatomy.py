@@ -15,8 +15,11 @@ from pathlib import Path
 from typing import Any, Literal
 
 import mne
+import numpy as np
 import pandas as pd
 from mne import bem as mne_bem
+
+from meeg_pipeline.config import anatomy_for_subject
 
 ExistingOutputPolicy = Literal["skip", "overwrite"]
 PatternLike = str | Sequence[str]
@@ -1640,15 +1643,32 @@ def morph_labels_from_fsaverage(
     *,
     subjects_dir: str | Path,
     parcellations: Sequence[str] = ("aparc_sub", "HCPMMP1_combined", "HCPMMP1"),
+    native: Sequence[str] = (),
     overwrite: bool = False,
 ) -> list[AnatomyFileResult]:
-    """Morph fsaverage annotation labels to one individual subject."""
+    """Morph fsaverage annotation labels to one individual subject.
+
+    Annotations listed in ``native`` come from the subject's own recon and are
+    never morphed or overwritten.
+    """
     subject = _subject_label(subject)
     subjects_dir = Path(subjects_dir).expanduser().resolve()
     results: list[AnatomyFileResult] = []
 
     for parc in parcellations:
         output_path = subjects_dir / subject / "label" / f"lh.{parc}.annot"
+
+        if parc in native:
+            results.append(
+                AnatomyFileResult(
+                    subject=subject,
+                    step=f"morph_labels_{parc}",
+                    path=str(output_path),
+                    status="skipped_native",
+                    message="Native annotation is read only.",
+                )
+            )
+            continue
 
         if output_path.exists() and not overwrite:
             results.append(
@@ -1694,6 +1714,219 @@ def morph_labels_from_fsaverage(
     return results
 
 
+ANATOMY_PROVENANCE_NAME = "meeg-pipeline-anatomy.json"
+
+
+def anatomy_provenance_path(subjects_dir: str | Path, subject: str) -> Path:
+    """Return the provenance file of a template-based FreeSurfer subject."""
+    return subject_dir(Path(subjects_dir).expanduser().resolve(), subject) / ANATOMY_PROVENANCE_NAME
+
+
+def template_subjects_skipped(
+    config: Any,
+    subjects: Iterable[str],
+    *,
+    step: str,
+) -> list[AnatomyFileResult]:
+    """Report subjects whose anatomy is template-based for an MRI-only step.
+
+    Recon, watershed and MRI conversion need an individual MRI. For subjects
+    with another anatomy mode they are skipped, not missing.
+    """
+    results = []
+    for subject in subjects:
+        mode = anatomy_for_subject(config, subject).mode
+        if mode == "individual_mri":
+            continue
+        results.append(
+            AnatomyFileResult(
+                subject=_subject_label(subject),
+                step=step,
+                path="",
+                status="skipped_template",
+                message=f"Anatomy mode is {mode!r}; the step needs an individual MRI.",
+            )
+        )
+    return results
+
+
+def create_scaled_template_subject(
+    config: Any,
+    subject: str,
+    info: mne.Info,
+    *,
+    session: str | None = None,
+    task: str | None = None,
+    run: str | None = None,
+    on_existing: ExistingOutputPolicy = "skip",
+    verbose: bool | str | int | None = True,
+) -> list[AnatomyFileResult]:
+    """Scale a template subject to the digitised head of a subject without MRI.
+
+    The template (fsaverage) is fitted to the head points in ``info`` with
+    fiducials, ICP, omission of outliers and a second ICP. The scaled
+    template becomes a normal FreeSurfer subject ``sub-X`` including its BEM
+    surfaces and annotations. The transform goes to the coregistration
+    derivative path. QC values and scale factors are written to a provenance
+    file in the subject directory.
+    """
+    subject = _subject_label(subject)
+    settings = anatomy_for_subject(config, subject)
+    if settings.mode != "scaled_template":
+        raise ValueError(
+            f"Anatomy mode of {subject} is {settings.mode!r}, not 'scaled_template'."
+        )
+
+    subjects_dir = Path(config.freesurfer.subjects_dir).expanduser().resolve()
+    trans_path = coregistration_trans_path(
+        config,
+        subject=subject,
+        session=session,
+        task=task,
+        run=run,
+    )
+    provenance_path = anatomy_provenance_path(subjects_dir, subject)
+
+    if provenance_path.exists() and trans_path.exists() and on_existing == "skip":
+        return [
+            AnatomyFileResult(
+                subject=subject,
+                step="scaled_template",
+                path=str(provenance_path),
+                status="skipped_existing",
+                message="Scaled template already exists.",
+            )
+        ]
+
+    ensure_project_local_fsaverage(
+        subjects_dir=subjects_dir,
+        freesurfer_home=config.freesurfer.home,
+    )
+
+    # scale_mri needs a fiducials file. Without one, Coregistration estimates
+    # MNI fiducials; store those in the project-local template so both agree.
+    template_fiducials = (
+        subjects_dir / settings.template / "bem" / f"{settings.template}-fiducials.fif"
+    )
+    if not template_fiducials.exists():
+        mne.io.write_fiducials(
+            template_fiducials,
+            mne.coreg.get_mni_fiducials(
+                settings.template,
+                subjects_dir=subjects_dir,
+                verbose=verbose,
+            ),
+            coord_frame=mne.io.constants.FIFF.FIFFV_COORD_MRI,
+            verbose=verbose,
+        )
+
+    coreg = mne.coreg.Coregistration(
+        info,
+        settings.template,
+        subjects_dir=subjects_dir,
+        fiducials="auto",
+    )
+    coreg.set_scale_mode(settings.scaling)
+    coreg.fit_fiducials(verbose=verbose)
+    coreg.fit_icp(n_iterations=settings.icp_n_iterations, verbose=verbose)
+    coreg.omit_head_shape_points(settings.omit_distance_mm / 1000)
+    coreg.fit_icp(n_iterations=settings.icp_n_iterations, verbose=verbose)
+
+    distances_mm = np.asarray(coreg.compute_dig_mri_distances()) * 1000
+    scale = np.asarray(coreg.scale, dtype=float).reshape(-1)
+    scale = np.full(3, scale[0]) if scale.size == 1 else scale
+
+    qc_issues = []
+    if distances_mm.mean() > settings.max_mean_distance_mm:
+        qc_issues.append(
+            f"mean head-point distance {distances_mm.mean():.2f} mm exceeds "
+            f"{settings.max_mean_distance_mm} mm"
+        )
+    low, high = settings.scale_range
+    if scale.min() < low or scale.max() > high:
+        qc_issues.append(
+            f"scale factors {np.round(scale, 3).tolist()} outside [{low}, {high}]"
+        )
+
+    mne.scale_mri(
+        settings.template,
+        subject,
+        scale,
+        subjects_dir=subjects_dir,
+        labels=True,
+        annot=True,
+        overwrite=on_existing == "overwrite",
+        verbose=verbose,
+    )
+
+    trans_path.parent.mkdir(parents=True, exist_ok=True)
+    mne.write_trans(trans_path, coreg.trans, overwrite=True)
+
+    provenance = {
+        "anatomy_mode": "scaled_template",
+        "template": settings.template,
+        "scaling": settings.scaling,
+        "scale": [float(value) for value in scale],
+        "n_head_points_used": int(len(distances_mm)),
+        "mean_distance_mm": float(distances_mm.mean()),
+        "max_distance_mm": float(distances_mm.max()),
+        "icp_n_iterations": settings.icp_n_iterations,
+        "omit_distance_mm": settings.omit_distance_mm,
+        "qc_passed": not qc_issues,
+        "qc_issues": qc_issues,
+        "trans_path": str(trans_path),
+        "mne_version": mne.__version__,
+        "created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    provenance_path.write_text(json.dumps(provenance, indent=2), encoding="utf-8")
+
+    return [
+        AnatomyFileResult(
+            subject=subject,
+            step="scaled_template",
+            path=str(provenance_path),
+            status="written" if not qc_issues else "written_qc_failed",
+            message="; ".join(qc_issues),
+        ),
+        AnatomyFileResult(
+            subject=subject,
+            step="scaled_template_trans",
+            path=str(trans_path),
+            status="written",
+        ),
+    ]
+
+
+def scaled_template_qc_to_dataframe(
+    subjects: Iterable[str],
+    *,
+    subjects_dir: str | Path,
+) -> pd.DataFrame:
+    """Summarize the provenance files of template-based subjects."""
+    rows = []
+    for subject in subjects:
+        subject = _subject_label(subject)
+        path = anatomy_provenance_path(subjects_dir, subject)
+        if not path.exists():
+            continue
+        provenance = json.loads(path.read_text(encoding="utf-8"))
+        rows.append(
+            {
+                "subject": subject,
+                "anatomy_mode": provenance.get("anatomy_mode"),
+                "template": provenance.get("template"),
+                "scale": [round(value, 3) for value in provenance.get("scale", [])],
+                "n_head_points_used": provenance.get("n_head_points_used"),
+                "mean_distance_mm": round(provenance.get("mean_distance_mm", float("nan")), 2),
+                "max_distance_mm": round(provenance.get("max_distance_mm", float("nan")), 2),
+                "qc_passed": provenance.get("qc_passed"),
+                "qc_issues": "; ".join(provenance.get("qc_issues", [])),
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
 def anatomy_status_to_dataframe(
     subjects: Iterable[str],
     *,
@@ -1704,8 +1937,12 @@ def anatomy_status_to_dataframe(
     spacing: str = "ico5",
     bem_ico: int = 4,
     bem_conductivity: Sequence[float] = (0.3,),
+    config: Any = None,
 ) -> pd.DataFrame:
-    """Summarize expected anatomy-preparation files for subjects."""
+    """Summarize expected anatomy-preparation files for subjects.
+
+    With ``config``, the table also shows each subject's anatomy mode.
+    """
     rows = []
     subjects_dir = Path(subjects_dir).expanduser().resolve()
 
@@ -1731,6 +1968,11 @@ def anatomy_status_to_dataframe(
         rows.append(
             {
                 "subject": subject,
+                **(
+                    {}
+                    if config is None
+                    else {"anatomy_mode": anatomy_for_subject(config, subject).mode}
+                ),
                 "t1_exists": t1_path is not None and t1_path.exists(),
                 "t1_path": "" if t1_path is None else str(t1_path),
                 "t2_exists": t2_path is not None and t2_path.exists(),

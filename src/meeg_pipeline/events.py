@@ -5,6 +5,7 @@ from typing import Literal
 from functools import reduce
 from itertools import combinations
 from pathlib import Path
+import warnings
 
 import mne
 import numpy as np
@@ -46,10 +47,10 @@ class BinaryChannelEventConfig:
     """
 
     stim_channels: tuple[str, ...]
-    min_duration: float = 0.0
+    min_duration_s: float = 0.0
     shortest_event: int = 1
-    min_gap: int = 0
-    adjust_timeline_by_msec: float = 0.0
+    min_gap_s: float = 0.0
+    adjust_timeline_s: float = 0.0
     tolerance_samples: int = 1
     mute_bad_annotations: bool = True
 
@@ -148,6 +149,11 @@ def find_binary_channel_events(
     events
         MNE-style events array of shape (n_events, 3), with columns:
         sample, previous_value, event_id.
+
+    Warns
+    -----
+    UserWarning
+        If min_gap_s removes events.
     """
     _validate_stim_channels(raw, config.stim_channels)
 
@@ -164,7 +170,7 @@ def find_binary_channel_events(
     for stim_channel in config.stim_channels:
         channel_events = mne.find_events(
             work_raw,
-            min_duration=config.min_duration,
+            min_duration=config.min_duration_s,
             shortest_event=config.shortest_event,
             stim_channel=[stim_channel],
             verbose=False,
@@ -237,22 +243,32 @@ def find_binary_channel_events(
         dtype=np.int32,
     )
 
-    if config.adjust_timeline_by_msec != 0:
+    if config.adjust_timeline_s != 0:
         sample_shift = int(
-            round(config.adjust_timeline_by_msec * 1e-3 * raw.info["sfreq"])
+            round(config.adjust_timeline_s * raw.info["sfreq"])
         )
         events[:, 0] += sample_shift
 
-    if config.min_gap > 0 and len(events) > 1:
+    min_gap = int(round(config.min_gap_s * raw.info["sfreq"]))
+
+    if min_gap > 0 and len(events) > 1:
+        n_before = len(events)
         kept = [events[0]]
         last_sample = events[0, 0]
 
         for event in events[1:]:
-            if event[0] - last_sample >= config.min_gap:
+            if event[0] - last_sample >= min_gap:
                 kept.append(event)
                 last_sample = event[0]
 
         events = np.array(kept, dtype=np.int32)
+
+        if len(events) < n_before:
+            warnings.warn(
+                f"min_gap of {min_gap} samples dropped "
+                f"{n_before - len(events)} of {n_before} events.",
+                stacklevel=2,
+            )
 
     return events
 
@@ -271,10 +287,10 @@ def binary_event_config_from_pipeline_config(
 
     return BinaryChannelEventConfig(
         stim_channels=extraction.stim_channels,
-        min_duration=extraction.min_duration,
+        min_duration_s=extraction.min_duration_s,
         shortest_event=extraction.shortest_event,
-        min_gap=extraction.min_gap,
-        adjust_timeline_by_msec=extraction.adjust_timeline_by_msec,
+        min_gap_s=extraction.min_gap_s,
+        adjust_timeline_s=extraction.adjust_timeline_s,
         tolerance_samples=extraction.tolerance_samples,
         mute_bad_annotations=extraction.mute_bad_annotations,
     )

@@ -8,8 +8,12 @@ The package contains reusable pipeline code and a versioned project template.
 Concrete research projects should live outside this repository and use this
 package as a library.
 
+New to the pipeline? Start with the step-by-step guide in
+[docs/getting-started.md](docs/getting-started.md).
+
 ## Contents
 
+- [Getting started (step-by-step guide)](docs/getting-started.md)
 - [What this repository is](#what-this-repository-is)
 - [Installation](#installation)
 - [Creating a project](#creating-a-project)
@@ -933,9 +937,38 @@ Write trigger-derived BIDS events:
 meegpipe write-events --config configs/local.yaml --subject 0001 --task rest
 ```
 
-Source-modeling CLI commands exist for targeted batch/HPC work, but the current
-recommended workflow is still notebook-first for interactive QC, anatomy,
-coregistration, and project-specific event handling.
+Join trigger events with a stimulus log (see `events.stimulus_log`):
+
+```bash
+meegpipe events-join-stimulus-log --config configs/local.yaml --subject 0001 --task rest
+```
+
+Show the anatomy mode and status per subject, and scale the template to the
+digitised head of a subject without MRI:
+
+```bash
+meegpipe anatomy-info --config configs/local.yaml
+meegpipe anatomy-scaled-template --config configs/local.yaml --subject 0002
+```
+
+List recordings and run source-modeling steps for one recording
+(`--overwrite` replaces existing outputs, `--verbose` shows MNE output):
+
+```bash
+meegpipe list-recordings --config configs/local.yaml
+meegpipe source-forward --config configs/local.yaml --subject 0001 --task rest
+meegpipe source-noise-cov --config configs/local.yaml --subject 0001 --task rest
+meegpipe source-inverse --config configs/local.yaml --subject 0001 --task rest
+meegpipe source-apply-inverse --config configs/local.yaml --subject 0001 --task rest
+meegpipe source-apply-inverse-raw --config configs/local.yaml --subject 0001 --task rest
+meegpipe source-label-time-courses --config configs/local.yaml --subject 0001 --task rest
+meegpipe source-label-time-courses-epochs --config configs/local.yaml --subject 0001 --task rest
+```
+
+Interactive QC (bad channels, artifact annotation, ICA, coregistration) and the
+preprocessing, epoching, and evoked steps are notebook-only. The table in
+[docs/getting-started.md](docs/getting-started.md#which-steps-have-a-command)
+lists which step has a command.
 
 ## Template maintenance
 

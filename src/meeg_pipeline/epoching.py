@@ -11,6 +11,7 @@ import pandas as pd
 from mne import Epochs
 from mne.io import BaseRaw
 
+from meeg_pipeline.annotations import apply_bad_annotations
 from meeg_pipeline.bids import make_events_path
 from meeg_pipeline.cleaning import make_cleaned_raw_path
 from meeg_pipeline.preprocessing import make_filtered_raw_path
@@ -287,6 +288,18 @@ def load_raw_for_epoching(
         preload=preload,
         verbose="error",
     )
+
+    if input_stage == "filtered":
+        # The cleaned stage already carries the saved bad segments; the
+        # filtered stage does not, so epochs would otherwise ignore them.
+        apply_bad_annotations(
+            raw,
+            config,
+            subject=subject,
+            session=session,
+            task=task,
+            run=run,
+        )
 
     return LoadRawResult(
         raw=raw,

@@ -3769,6 +3769,7 @@ def _condition_from_source_estimate_path(
     output uses the original condition entity.
     """
     desc = _parse_entity_from_filename(Path(path), "desc") or Path(path).stem
+    desc = desc.removesuffix("-stc")
     method = sanitize_bids_label(inverse_method or "")
     if method and desc.lower().endswith(method.lower()):
         return desc[: -len(method)]

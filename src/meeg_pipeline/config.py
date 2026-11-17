@@ -121,8 +121,20 @@ class ICAConfig:
 
 
 @dataclass(frozen=True)
+class BadChannelsConfig:
+    """Fixed channel list for channels that are bad in (almost) every recording.
+
+    ``always_bad`` is added to the automatic Maxwell candidates by
+    ``meegpipe bad-channels-detect`` and pre-marked in the QC notebook.
+    """
+
+    always_bad: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class CleaningConfig:
     ica: ICAConfig
+    bad_channels: BadChannelsConfig = BadChannelsConfig()
 
 
 @dataclass(frozen=True)
@@ -466,6 +478,50 @@ class ConnectivityConfig:
             )
 
 
+STATS_KINDS = ("ttest", "regression", "anova")
+
+
+@dataclass(frozen=True)
+class StatsTermConfig:
+    """One condition of a task that enters an analysis with a weight."""
+
+    condition: str
+    task: str | None = None
+    weight: float = 1.0
+
+
+@dataclass(frozen=True)
+class StatsAnalysisConfig:
+    """One group-level cluster test on source estimates.
+
+    ``ttest`` tests the weighted sum of the terms against zero, ``regression``
+    tests that weighted sum against a continuous moderator, and ``anova`` runs a
+    repeated-measures ANOVA across the terms.
+    """
+
+    kind: Literal["ttest", "regression", "anova"]
+    terms: tuple[StatsTermConfig, ...]
+    moderator: str | None = None
+    tmin: float | None = None
+    tmax: float | None = None
+
+
+@dataclass(frozen=True)
+class StatsConfig:
+    tmin: float = 0.05
+    tmax: float = 0.25
+    n_permutations: int = 10000
+    cluster_p_threshold: float = 0.001
+    alpha: float = 0.05
+    seed: int = 0
+    n_jobs: int | None = None
+    subjects: tuple[str, ...] | Literal["all"] = "all"
+    exclude_subjects: tuple[str, ...] = ()
+    scores_path: Path | None = None
+    parcellation: str = "aparc"
+    analyses: dict[str, StatsAnalysisConfig] = field(default_factory=dict)
+
+
 @dataclass(frozen=True)
 class PipelineConfig:
     project_name: str
@@ -485,6 +541,7 @@ class PipelineConfig:
     source: SourceConfig
     conditions: ConditionsConfig = ConditionsConfig()
     connectivity: ConnectivityConfig = ConnectivityConfig()
+    stats: StatsConfig = field(default_factory=StatsConfig)
 
 
 def _resolve_path(path: str | Path, *, base_dir: Path) -> Path:
@@ -1122,7 +1179,12 @@ def load_config(config_path: str | Path) -> PipelineConfig:
             fit_resample_sfreq=_optional_float(
                 ica_raw.get("fit_resample_sfreq", None)
             ),
-        )
+        ),
+        bad_channels=BadChannelsConfig(
+            always_bad=_str_tuple(
+                cleaning_raw.get("bad_channels", {}).get("always_bad", []), ()
+            ),
+        ),
     )
 
     epochs_raw = raw.get("epochs", {})
@@ -1274,6 +1336,57 @@ def load_config(config_path: str | Path) -> PipelineConfig:
         block_size=int(connectivity_raw.get("block_size", 1000)),
         n_jobs=connectivity_n_jobs,
         save_format=connectivity_save_format,
+    )
+
+    stats_raw = raw.get("stats", {})
+    stats_analyses: dict[str, StatsAnalysisConfig] = {}
+    for name, analysis_raw in stats_raw.get("analyses", {}).items():
+        kind = str(analysis_raw.get("kind", "ttest"))
+        if kind not in STATS_KINDS:
+            raise ValueError(
+                f"stats.analyses.{name}.kind must be one of {STATS_KINDS}, got {kind!r}."
+            )
+        terms = tuple(
+            StatsTermConfig(
+                condition=str(term_raw["condition"]),
+                task=None if term_raw.get("task") is None else str(term_raw["task"]),
+                weight=float(term_raw.get("weight", 1.0)),
+            )
+            for term_raw in analysis_raw.get("terms", [])
+        )
+        if not terms:
+            raise ValueError(f"stats.analyses.{name}.terms must not be empty.")
+        if kind == "regression" and not analysis_raw.get("moderator"):
+            raise ValueError(f"stats.analyses.{name}.moderator is required for regression.")
+        if kind == "anova" and len(terms) < 2:
+            raise ValueError(f"stats.analyses.{name} needs at least two terms for anova.")
+        stats_analyses[str(name)] = StatsAnalysisConfig(
+            kind=kind,
+            terms=terms,
+            moderator=analysis_raw.get("moderator"),
+            tmin=_optional_float(analysis_raw.get("tmin")),
+            tmax=_optional_float(analysis_raw.get("tmax")),
+        )
+
+    stats_scores_raw = stats_raw.get("scores_path", None)
+    stats_subjects_raw = stats_raw.get("subjects", "all")
+    stats = StatsConfig(
+        tmin=float(stats_raw.get("tmin", 0.05)),
+        tmax=float(stats_raw.get("tmax", 0.25)),
+        n_permutations=int(stats_raw.get("n_permutations", 10000)),
+        cluster_p_threshold=float(stats_raw.get("cluster_p_threshold", 0.001)),
+        alpha=float(stats_raw.get("alpha", 0.05)),
+        seed=int(stats_raw.get("seed", 0)),
+        n_jobs=_optional_int(stats_raw.get("n_jobs", None)),
+        subjects="all" if stats_subjects_raw == "all" else _str_tuple(stats_subjects_raw, ()),
+        exclude_subjects=_str_tuple(stats_raw.get("exclude_subjects", []), ()),
+        scores_path=(
+            None
+            if stats_scores_raw is None
+            else _resolve_path(stats_scores_raw, base_dir=project_root)
+        ),
+        parcellation=str(stats_raw.get("parcellation", "aparc")),
+        analyses=stats_analyses,
     )
 
     source_raw = raw.get("source", {})
@@ -1518,6 +1631,7 @@ def load_config(config_path: str | Path) -> PipelineConfig:
         source=source,
         conditions=conditions,
         connectivity=connectivity,
+        stats=stats,
     )
 
     unused_keys = _unused_config_keys(raw)

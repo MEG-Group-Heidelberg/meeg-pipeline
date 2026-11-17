@@ -100,6 +100,10 @@ preprocessing:
     method: "fir"
 
 cleaning:
+  # Channels that are bad in (almost) every recording; pre-marked in the QC notebook
+  # and added by `meegpipe bad-channels-detect`.
+  # bad_channels:
+  #   always_bad: ["MEG 001"]
   ica:
     # If false, epochs.input: "auto" uses filtered raw derivatives directly.
     enabled: true

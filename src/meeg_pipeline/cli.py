@@ -56,11 +56,21 @@ from meeg_pipeline.source_modeling import (
     forward_results_to_dataframe,
     inverse_operator_results_to_dataframe,
     label_time_course_results_to_dataframe,
+    morph_evoked_source_estimates_for_recordings,
+    morphed_source_estimate_results_to_dataframe,
     noise_covariance_results_to_dataframe,
     source_estimate_results_to_dataframe,
     write_forward_solutions_for_recordings,
     write_inverse_operators_for_recordings,
     write_noise_covariances_for_recordings,
+)
+from meeg_pipeline.qc import (
+    bad_channels_results_to_dataframe,
+    detect_bad_channels_for_recordings,
+)
+from meeg_pipeline.stats import (
+    run_cluster_analysis,
+    stats_input_status_to_dataframe,
 )
 
 
@@ -263,10 +273,10 @@ def main() -> None:
     init_project_parser.add_argument(
         "--anatomy",
         default="individual_mri",
-        choices=["individual_mri", "fsaverage"],
+        choices=["individual_mri", "template"],
         help=(
             "Default anatomy strategy. 'individual_mri' creates standard "
-            "project-specific MRI defaults. 'fsaverage' records a template "
+            "project-specific MRI defaults. 'template' records a template "
             "anatomy strategy for EEG/template-anatomy projects."
         ),
     )
@@ -292,6 +302,22 @@ def main() -> None:
         help="Report which files would be created or skipped without writing anything.",
     )
 
+
+    stats_info_parser = subparsers.add_parser(
+        "stats-info",
+        help="Show which subjects have all inputs for each group analysis.",
+    )
+    stats_info_parser.add_argument("--config", required=True)
+
+    stats_cluster_parser = subparsers.add_parser(
+        "stats-cluster",
+        help="Run a group-level cluster permutation test defined under stats.analyses.",
+    )
+    stats_cluster_parser.add_argument("--config", required=True)
+    stats_cluster_parser.add_argument("--analysis", nargs="+", required=True)
+    stats_cluster_parser.add_argument("--n-permutations", type=int, default=None)
+    stats_cluster_parser.add_argument("--n-jobs", type=int, default=None)
+    stats_cluster_parser.add_argument("--overwrite", action="store_true")
 
     list_recordings_parser = subparsers.add_parser(
         "list-recordings",
@@ -349,6 +375,13 @@ def main() -> None:
     )
     add_recording_args(anatomy_scaled_template_parser)
 
+    bad_channels_parser = subparsers.add_parser(
+        "bad-channels-detect",
+        help="Detect bad channels automatically (Maxwell candidates plus the fixed list).",
+    )
+    add_recording_args(bad_channels_parser)
+    bad_channels_parser.add_argument("--n-jobs", type=int, default=1)
+
     source_forward_parser = subparsers.add_parser(
         "source-forward",
         help="Write the forward solution for one recording.",
@@ -399,6 +432,15 @@ def main() -> None:
     source_apply_inverse_raw_parser.add_argument("--lambda2", type=float, default=None)
     source_apply_inverse_raw_parser.add_argument("--spacing", default=None)
     source_apply_inverse_raw_parser.add_argument("--noise-cov-mode", default=None)
+
+    source_morph_parser = subparsers.add_parser(
+        "source-morph",
+        help="Morph evoked source estimates of one recording to fsaverage.",
+    )
+    add_recording_args(source_morph_parser)
+    source_morph_parser.add_argument("--method", default=None)
+    source_morph_parser.add_argument("--conditions", nargs="+", default=None)
+    source_morph_parser.add_argument("--subject-to", default=None)
 
     source_label_tc_parser = subparsers.add_parser(
         "source-label-time-courses",
@@ -784,6 +826,19 @@ def main() -> None:
         )
         print_results_table(anatomy_results_to_dataframe(results))
 
+    elif args.command == "bad-channels-detect":
+        config = load_config(args.config)
+        recording = selected_recording_from_args(config, args)
+        print(f"Recording: {recording_label(recording)}")
+        results = detect_bad_channels_for_recordings(
+            config,
+            [recording],
+            on_existing="overwrite" if args.overwrite else "load",
+            n_jobs=args.n_jobs,
+            verbose=args.verbose,
+        )
+        print_results_table(bad_channels_results_to_dataframe(results))
+
     elif args.command == "source-forward":
         config = load_config(args.config)
         recording = selected_recording_from_args(config, args)
@@ -869,6 +924,41 @@ def main() -> None:
             verbose=args.verbose,
         )
         print_results_table(source_estimate_results_to_dataframe(results))
+
+    elif args.command == "source-morph":
+        config = load_config(args.config)
+        recording = selected_recording_from_args(config, args)
+        print(f"Recording: {recording_label(recording)}")
+        results = morph_evoked_source_estimates_for_recordings(
+            config,
+            [recording],
+            on_existing="overwrite" if args.overwrite else "skip",
+            method=args.method,
+            pick_conditions=args.conditions,
+            subject_to=args.subject_to,
+            verbose=args.verbose,
+        )
+        print_results_table(morphed_source_estimate_results_to_dataframe(results))
+
+    elif args.command == "stats-info":
+        config = load_config(args.config)
+        print_results_table(stats_input_status_to_dataframe(config))
+
+    elif args.command == "stats-cluster":
+        config = load_config(args.config)
+        for name in args.analysis:
+            result = run_cluster_analysis(
+                config,
+                name,
+                n_permutations=args.n_permutations,
+                n_jobs=args.n_jobs,
+                on_existing="overwrite" if args.overwrite else "skip",
+            )
+            print(
+                f"{result.analysis}: {result.status} "
+                f"(subjects={result.n_subjects}, clusters={result.n_clusters}, "
+                f"significant={result.n_significant}) {result.directory} {result.message}".rstrip()
+            )
 
     elif args.command == "source-label-time-courses":
         config = load_config(args.config)

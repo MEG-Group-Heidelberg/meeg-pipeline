@@ -20,7 +20,9 @@ package as a library.
 - [Preprocessing, ICA, and epoching inputs](#preprocessing-ica-and-epoching-inputs)
 - [FreeSurfer and MRI setup](#freesurfer-and-mri-setup)
 - [Source modeling and connectivity](#source-modeling-and-connectivity)
+- [Group statistics](#group-statistics)
 - [Command-line tools](#command-line-tools)
+- [Testing your installation](#testing-your-installation)
 - [Troubleshooting](#when-something-goes-wrong)
 - [Template maintenance](#template-maintenance)
 - [Development status](#development-status)
@@ -338,6 +340,7 @@ my-meeg-project/
     3_source_modeling/
     4_connectivity/
     5_decoding/
+    6_group_statistics/
 
   sourcedata/
     sub-0001/
@@ -514,6 +517,9 @@ notebooks/
   5_decoding/
     01_sensor_decoding.ipynb
     02_label_time_course_decoding.ipynb
+
+  6_group_statistics/
+    01_source_cluster_tests.ipynb
 ```
 
 `1A_anatomy` and `1B_preprocessing` can often be started independently.
@@ -538,7 +544,7 @@ the project folder.
 | 3 | Fill in the config | - | `meegpipe config-info --config configs/local.yaml` | the [required fields](#required-config-fields) |
 | 4 | Check what was found | `00_project_summary` | `meegpipe sourcedata-info --config configs/local.yaml` | every recording you expect is listed |
 | 5 | Convert to BIDS | `1B_preprocessing/01_raw_bids_import` | `meegpipe convert-to-bids --config configs/local.yaml` | `rawdata/` now contains the recordings |
-| 6 | Mark bad channels, write trigger events | `1B_preprocessing/02_bad_channels_and_events` | `meegpipe write-events --config configs/local.yaml --subject XXXX --task NAME` | trigger channels in `events.extraction`; event counts look right |
+| 6 | Mark bad channels, write trigger events | `1B_preprocessing/02_bad_channels_and_events` | `meegpipe bad-channels-detect ...`, `meegpipe write-events --config configs/local.yaml --subject XXXX --task NAME` | trigger channels in `events.extraction`; event counts look right; `cleaning.bad_channels.always_bad` |
 | 7 | Optional: project-specific events or stimulus log | `03_project_specific_events`, `03b_join_stimulus_log` | `meegpipe events-join-stimulus-log ...` | only if the trigger alone does not describe the trial |
 | 8 | Filter, mark bad segments, clean with ICA | `04_preprocessing`, `05_artifact_annotation`, `06_ica_cleaning` | - | filter limits in `preprocessing.filtering`; ICA can be switched off with `cleaning.ica.enabled: false` |
 | 9 | Anatomy | `1A_anatomy/01` to `04` | `meegpipe anatomy-info --config configs/local.yaml` | see [Using fsaverage without individual MRIs](#using-fsaverage-without-individual-mris) |
@@ -546,8 +552,9 @@ the project folder.
 | 11 | Evoked responses | `2_sensor_analysis/01_evokeds` | - | condition definitions |
 | 12 | Forward solution | `3_source_modeling/01_forward_solution` | `meegpipe source-forward ...` | transform and BEM exist (status table) |
 | 13 | Noise covariance, inverse | `02_noise_covariance`, `03_inverse_operator` | `meegpipe source-noise-cov ...`, `meegpipe source-inverse ...` | `source.noise_cov.mode` |
-| 14 | Source estimates and label time courses | `04` to `07` | `meegpipe source-apply-inverse ...`, `source-label-time-courses ...` | `source.labels.parcellation` |
+| 14 | Source estimates, morph to fsaverage, label time courses | `04` to `07` | `meegpipe source-apply-inverse ...`, `source-morph ...`, `source-label-time-courses ...` | `source.labels.parcellation` |
 | 15 | Continuous source time courses (e.g. reverse correlation) | `08_apply_inverse_raw_labels` | `meegpipe source-apply-inverse-raw ...` | `source.apply_inverse.raw` |
+| 16 | Group statistics on source estimates | - | `meegpipe stats-info ...`, `meegpipe stats-cluster ...` | `stats` block, see [Group statistics](#group-statistics) |
 
 Run notebook `00_project_summary` at any time. It is read-only and shows which
 steps are finished for which recording.
@@ -625,6 +632,7 @@ values you normally have to touch; everything else has a sensible default.
 | `conditions.definitions` | names and rules of your conditions |
 | `anatomy.mode`, `anatomy.subjects` | where each subject's anatomy comes from |
 | `source.noise_cov.mode` | `erm` (empty room) for MEG; `baseline` for EEG |
+| `cleaning.bad_channels.always_bad` | optional: channels that are bad in (almost) every recording of your system, added by `bad-channels-detect` and pre-marked in the QC notebook |
 
 All time values in the config end in `_s` and are in seconds. MNE-style
 `tmin`, `tmax` and `baseline` keep their names. If you mistype a key or use an
@@ -1022,6 +1030,58 @@ connectivity:
   conditions: "all"
 ```
 
+## Group statistics
+
+`meegpipe stats-cluster` runs spatio-temporal cluster permutation tests on the
+subject-level source estimates morphed to fsaverage
+(`derivatives/meeg-pipeline/sub-*/meg/source_estimates_fsaverage/`). Run the
+source chain up to the morph step first (`stats-info` shows what is missing).
+
+Each analysis is defined once under `stats.analyses` in the config. A term is
+one condition of one task with a weight; the weighted sum of the terms is the
+subject-level effect:
+
+```yaml
+stats:
+  tmin: 0.05                 # analysis window in seconds
+  tmax: 0.25
+  n_permutations: 10000
+  cluster_p_threshold: 0.001 # cluster-forming threshold (two-sided for t)
+  alpha: 0.05
+  n_jobs: 4
+  scores_path: behavior/participant_scores.tsv   # TSV with a subject column
+  analyses:
+    first_vs_pre:
+      kind: ttest            # weighted sum against zero
+      terms:
+        - {task: nochords, condition: first_non_diatonic, weight: 1}
+        - {task: nochords, condition: diatonic_pre, weight: -1}
+    first_vs_pre_by_score:
+      kind: regression       # same effect against a continuous moderator
+      moderator: amma_total
+      terms:
+        - {task: nochords, condition: first_non_diatonic, weight: 1}
+        - {task: nochords, condition: diatonic_pre, weight: -1}
+    position:
+      kind: anova            # repeated-measures ANOVA across the terms
+      terms:
+        - {task: nochords, condition: pos1}
+        - {task: nochords, condition: pos2}
+        - {task: nochords, condition: pos3}
+```
+
+How the tests are permuted: `ttest` flips the sign of whole subjects,
+`regression` permutes the moderator across subjects, and `anova` permutes the
+term labels within each subject. The cluster statistic is the sum of the test
+statistic inside a spatio-temporal cluster, and p-values come from the
+distribution of the largest cluster under permutation.
+
+Results go to `derivatives/meeg-pipeline/group/stats/<analysis>/`: a cluster
+table (`*_clusters.tsv`, with time range, peak, and anatomical labels from
+`stats.parcellation`), the statistic maps and null distribution
+(`*_statistic.npz`), and a JSON sidecar with the settings, subjects used, and
+subjects skipped.
+
 ## Command-line tools
 
 Show the installed version:
@@ -1141,15 +1201,40 @@ meegpipe source-label-time-courses --config configs/local.yaml --subject 0001 --
 meegpipe source-label-time-courses-epochs --config configs/local.yaml --subject 0001 --task rest
 ```
 
+Detect bad channels without opening the GUI (existing decisions are kept; add
+`--overwrite` to replace them):
+
+```bash
+meegpipe bad-channels-detect --config configs/local.yaml --subject 0001 --task rest
+```
+
+Morph the evoked source estimates of one recording to fsaverage:
+
+```bash
+meegpipe source-morph --config configs/local.yaml --subject 0001 --task rest
+```
+
+Show which subjects have all inputs for each group analysis, then run analyses
+(see [Group statistics](#group-statistics)):
+
+```bash
+meegpipe stats-info --config configs/local.yaml
+```
+
+```bash
+meegpipe stats-cluster --config configs/local.yaml --analysis h1 --n-permutations 1000
+```
+
 ### Which steps have a command
 
 | Area | Command line | Notebook only |
 | --- | --- | --- |
 | Inspection | `config-info`, `sourcedata-info`, `bids-info`, `list-recordings`, `raw-info`, `channels-info`, `events-info` | summary dashboard |
-| Import and events | `convert-to-bids`, `write-events`, `events-join-stimulus-log` | bad channels, project-specific events |
+| Import and events | `convert-to-bids`, `bad-channels-detect`, `write-events`, `events-join-stimulus-log` | manual bad-channel review, project-specific events |
 | Anatomy | `anatomy-info`, `anatomy-scaled-template` | MRI conversion, `recon-all`, BEM, source space, coregistration |
 | Preprocessing | - | filtering, artifact annotation, ICA, epoching, evokeds |
-| Source modeling | `source-forward`, `source-noise-cov`, `source-inverse`, `source-apply-inverse`, `source-apply-inverse-raw`, `source-label-time-courses`, `source-label-time-courses-epochs` | morphing to fsaverage |
+| Source modeling | `source-forward`, `source-noise-cov`, `source-inverse`, `source-apply-inverse`, `source-apply-inverse-raw`, `source-morph`, `source-label-time-courses`, `source-label-time-courses-epochs` | - |
+| Group statistics | `stats-info`, `stats-cluster` | - |
 | Connectivity, decoding | - | all notebooks (decoding is a placeholder) |
 
 The interactive steps (bad channels, artifact annotation, ICA, coregistration)
@@ -1173,6 +1258,27 @@ need a person looking at the data and stay in notebooks on purpose.
 | `scale_mri` or FreeSurfer fails on files like `._xyz` | macOS metadata files on external drives; delete them on the Mac: `find <project> -name '._*' -delete` |
 | interactive plot does not open | restart the kernel and run the Qt setup cell first ([Interactive plotting setup](#interactive-plotting-setup)) |
 | source step reports a missing input | the previous step has not run for this recording; the status table names it |
+
+## Testing your installation
+
+The repository contains a self-contained test that runs the whole workflow (BIDS
+import to group statistics) on the public MNE sample dataset. No own data and no
+FreeSurfer installation are needed, so it also works on Windows. It downloads about
+1.7 GB on first use into `~/mne_data` (the MNE server can be slow) and takes a few
+minutes afterwards.
+
+```bash
+python scripts/make_test_project.py pipeline-test-project
+python scripts/smoke_test.py pipeline-test-project
+```
+
+`make_test_project.py` builds a small project with three pseudo-subjects, an
+empty-room recording and fsaverage scaled to the head shape (`scaled_template`).
+`smoke_test.py` runs the notebooks one after another without Jupyter or GUI (the
+interactive steps are replaced by their command-line versions) and prints PASS or
+FAIL for each step. The result is also written to
+`pipeline-test-project/smoke_test_report.md`; attach that file when reporting a
+problem.
 
 ## Template maintenance
 

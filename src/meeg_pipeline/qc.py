@@ -10,6 +10,7 @@ import pandas as pd
 from mne.io import BaseRaw
 from mne.preprocessing import find_bad_channels_maxwell
 
+from meeg_pipeline.bids import read_raw_bids_recording_if_exists
 from meeg_pipeline.config import PipelineConfig
 from meeg_pipeline.paths import derivative_path
 
@@ -433,4 +434,100 @@ def update_channels_tsv_with_bads(
         status=status,
         n_bad_channels=len(known_bads),
         message=message,
+    )
+
+
+def detect_bad_channels_for_recordings(
+    config: PipelineConfig,
+    recordings: list[dict[str, str | None]],
+    *,
+    on_existing: ExistingBadChannelsPolicy = "load",
+    n_jobs: int = 1,
+    verbose: bool | str | int | None = False,
+) -> list[BadChannelsResult]:
+    """Detect and save bad channels without manual review.
+
+    Maxwell-based noisy and flat channels are combined with the project's
+    ``cleaning.bad_channels.always_bad`` list. Existing decisions are kept
+    unless ``on_existing`` is ``"overwrite"``, so manual decisions are never
+    replaced by accident.
+    """
+    results: list[BadChannelsResult] = []
+    always_bad = list(config.cleaning.bad_channels.always_bad)
+
+    for recording in recordings:
+        entities = {
+            "subject": recording["subject"],
+            "session": recording.get("session"),
+            "task": recording.get("task"),
+            "run": recording.get("run"),
+        }
+        path = make_bad_channels_path(config, **entities)
+
+        if path.exists() and on_existing == "load":
+            existing = load_bad_channels(config, **entities)
+            results.append(
+                BadChannelsResult(
+                    bads=existing.bads,
+                    path=str(path),
+                    status="loaded_existing",
+                    method=existing.method,
+                    notes=existing.notes,
+                    message="Bad-channel file already exists; left unchanged.",
+                )
+            )
+            continue
+
+        raw_result = read_raw_bids_recording_if_exists(config, **entities, preload=False)
+        if raw_result.raw is None:
+            results.append(
+                BadChannelsResult(
+                    bads=[],
+                    path=str(path),
+                    status=raw_result.status,
+                    message=raw_result.message,
+                )
+            )
+            continue
+
+        raw = raw_result.raw
+        raw.info["bads"] = []
+        candidates = detect_bad_channel_candidates_maxwell(
+            raw, n_jobs=n_jobs, verbose=verbose
+        )
+        bads = normalize_channel_names(candidates.noisy + candidates.flat + always_bad)
+        bads = [name for name in bads if name in raw.ch_names]
+
+        results.append(
+            save_or_load_bad_channels(
+                config,
+                **entities,
+                bads=bads,
+                method="automatic_maxwell_with_fixed_list" if always_bad else "automatic_maxwell",
+                notes=(
+                    f"Maxwell noisy ({len(candidates.noisy)}) and flat "
+                    f"({len(candidates.flat)}) channels"
+                    + (f" plus fixed list ({len(always_bad)} channels)" if always_bad else "")
+                    + "; not reviewed manually."
+                ),
+                on_existing="overwrite",
+            )
+        )
+
+    return results
+
+
+def bad_channels_results_to_dataframe(results: list[BadChannelsResult]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "status": result.status,
+                "n_bads": len(result.bads),
+                "bads": ", ".join(result.bads),
+                "method": result.method,
+                "path": result.path,
+            }
+            for result in results
+        ],
+        columns=["status", "n_bads", "bads", "method", "path"],
     )

@@ -1,0 +1,648 @@
+
+===== 1B_preprocessing/01_raw_bids_import.ipynb (convert sourcedata to BIDS)
+PROJECT_ROOT: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project
+CONFIG_PATH: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\configs\local.yaml
+BIDS_ROOT: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata
+Project root: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project
+Raw BIDS root: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata
+dataset_description.json: found - C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\dataset_description.json
+participants.tsv: found - C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\participants.tsv
+participants.json: found - C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\participants.json
+README: found - C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\README
+  subject session    task   run                                                                                                               source_path                                                                                                target_path  target_exists
+0    0001    None  audvis  None  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\sourcedata\sub-0001\meg\task-audvis\sub-0001_task-audvis_raw.fif  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-0001\meg\sub-0001_task-audvis_meg.fif           True
+1    0002    None  audvis  None  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\sourcedata\sub-0002\meg\task-audvis\sub-0002_task-audvis_raw.fif  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-0002\meg\sub-0002_task-audvis_meg.fif           True
+2    0003    None  audvis  None  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\sourcedata\sub-0003\meg\task-audvis\sub-0003_task-audvis_raw.fif  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-0003\meg\sub-0003_task-audvis_meg.fif           True
+        kind   session   task   run                                                                                                  source_path                                                                                                                                   target_path  target_exists status message
+0  emptyroom  20021206  noise  None  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\sourcedata\emptyroom\ses-20021206\emptyroom_raw.fif  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-emptyroom\ses-20021206\meg\sub-emptyroom_ses-20021206_task-noise_meg.fif           True  found        
+                                                                                                   source_path                                                                                                                                   target_path            status                 message
+0  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\sourcedata\emptyroom\ses-20021206\emptyroom_raw.fif  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-emptyroom\ses-20021206\meg\sub-emptyroom_ses-20021206_task-noise_meg.fif  skipped_existing  Target already exists.
+              recording subject session    task   run
+0  sub-0001_task-audvis    0001    None  audvis  None
+1  sub-0002_task-audvis    0002    None  audvis  None
+2  sub-0003_task-audvis    0003    None  audvis  None
+----- PASS (2 s)
+
+===== cli:bad-channels-detect (automatic bad channels (replaces the interactive notebook 02))
+Recording: sub-0001_task-audvis
+         status  n_bads     bads            method                                                                                                                                         path
+loaded_existing       1 MEG 2443 automatic_maxwell C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\qc\sub-0001_task-audvis_desc-badchannels.json
+
+Recording: sub-0002_task-audvis
+         status  n_bads     bads            method                                                                                                                                         path
+loaded_existing       1 MEG 2443 automatic_maxwell C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\qc\sub-0002_task-audvis_desc-badchannels.json
+
+Recording: sub-0003_task-audvis
+         status  n_bads     bads            method                                                                                                                                         path
+loaded_existing       1 MEG 2443 automatic_maxwell C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\qc\sub-0003_task-audvis_desc-badchannels.json
+
+----- PASS (20 s)
+
+===== cli:write-events (trigger events (command line))
+Status: skipped_existing
+Message: Target already exists.
+Output: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-0001\meg\sub-0001_task-audvis_events.tsv
+
+Status: skipped_existing
+Message: Target already exists.
+Output: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-0002\meg\sub-0002_task-audvis_events.tsv
+
+Status: skipped_existing
+Message: Target already exists.
+Output: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-0003\meg\sub-0003_task-audvis_events.tsv
+
+----- PASS (16 s)
+
+===== 1B_preprocessing/04_preprocessing.ipynb (filtering)
+PROJECT_ROOT: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project
+CONFIG_PATH: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\configs\local.yaml
+   index             recording subject session    task   run
+0      0  sub-0001_task-audvis    0001    None  audvis  None
+1      1  sub-0002_task-audvis    0002    None  audvis  None
+2      2  sub-0003_task-audvis    0003    None  audvis  None
+        step  overwrite policy
+0  filtering      False   skip
+FilteringConfig(notch_freqs=(60.0,), l_freq=1.0, h_freq=40.0, method='fir')
+              recording  badchannels_exists  n_bad_channels bad_channels             method                                                                                                                                          path
+0  sub-0001_task-audvis                True               1     MEG 2443  automatic_maxwell  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\qc\sub-0001_task-audvis_desc-badchannels.json
+1  sub-0002_task-audvis                True               1     MEG 2443  automatic_maxwell  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\qc\sub-0002_task-audvis_desc-badchannels.json
+2  sub-0003_task-audvis                True               1     MEG 2443  automatic_maxwell  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\qc\sub-0003_task-audvis_desc-badchannels.json
+Skipped single-file inspection cell 16 in 1B_meg_preprocessing/03_preprocessing.ipynb. Set RUN_SINGLE_FILE_INSPECTIONS = True to run it.
+Skipped single-file inspection cell 18 in 1B_meg_preprocessing/03_preprocessing.ipynb. Set RUN_SINGLE_FILE_INSPECTIONS = True to run it.
+Skipped single-file inspection cell 20 in 1B_meg_preprocessing/03_preprocessing.ipynb. Set RUN_SINGLE_FILE_INSPECTIONS = True to run it.
+Skipped single-file inspection cell 22 in 1B_meg_preprocessing/03_preprocessing.ipynb. Set RUN_SINGLE_FILE_INSPECTIONS = True to run it.
+----- PASS (0 s)
+
+===== 1A_anatomy/03_anatomy_setup.ipynb (scaled template, BEM, source space, labels)
+PROJECT_ROOT: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project
+CONFIG_PATH: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\configs\local.yaml
+                  step  overwrite policy
+0      scaled_template      False   skip
+1            watershed      False   skip
+2          dense_scalp      False   skip
+3                  bem      False   skip
+4         source_space      False   skip
+5     source_distances      False   skip
+6  volume_source_space      False   skip
+7         morph_labels      False   skip
+[]
+Using high resolution head model in C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\freesurfer\subjects\fsaverage\bem\fsaverage-head-dense.fif
+----- FAIL (1 s)
+cell 6:   File "C:\Users\<user>\MEEG\.venv\Lib\site-packages\mne\coreg.py", line 1409, in _setup_bem
+    self._bem_low_res = _read_surface(low_res_path, on_defects=self._on_defects)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\<user>\MEEG\.venv\Lib\site-packages\mne\coreg.py", line 1260, in _read_surface
+    raise ValueError(
+ValueError: Error loading surface from C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\freesurfer\subjects\fsaverage\bem\outer_skin.surf (see Terminal for details).
+
+
+===== 1A_anatomy/04_coregistration.ipynb (coregistration status)
+PROJECT_ROOT: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project
+CONFIG_PATH: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\configs\local.yaml
+   index             recording subject session    task   run
+0      0  sub-0001_task-audvis    0001    None  audvis  None
+1      1  sub-0002_task-audvis    0002    None  audvis  None
+2      2  sub-0003_task-audvis    0003    None  audvis  None
+    subject session    task   run  raw_exists                                                                                                   raw_path  freesurfer_subject_exists                                                                            freesurfer_subject_dir trans_scope  trans_exists                                                                                                                                               trans_path
+0  sub-0001    None  audvis  None        True  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-0001\meg\sub-0001_task-audvis_meg.fif                      False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\freesurfer\subjects\sub-0001   recording         False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\coregistration\sub-0001_task-audvis_desc-coreg_trans.fif
+1  sub-0002    None  audvis  None        True  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-0002\meg\sub-0002_task-audvis_meg.fif                      False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\freesurfer\subjects\sub-0002   recording         False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\coregistration\sub-0002_task-audvis_desc-coreg_trans.fif
+2  sub-0003    None  audvis  None        True  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-0003\meg\sub-0003_task-audvis_meg.fif                      False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\freesurfer\subjects\sub-0003   recording         False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\coregistration\sub-0003_task-audvis_desc-coreg_trans.fif
+Empty DataFrame
+Columns: []
+Index: []
+Using pyvistaqt 3d backend.
+    subject session    task   run  raw_exists                                                                                                   raw_path  freesurfer_subject_exists                                                                            freesurfer_subject_dir trans_scope  trans_exists                                                                                                                                               trans_path
+0  sub-0001    None  audvis  None        True  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-0001\meg\sub-0001_task-audvis_meg.fif                      False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\freesurfer\subjects\sub-0001   recording         False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\coregistration\sub-0001_task-audvis_desc-coreg_trans.fif
+1  sub-0002    None  audvis  None        True  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-0002\meg\sub-0002_task-audvis_meg.fif                      False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\freesurfer\subjects\sub-0002   recording         False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\coregistration\sub-0002_task-audvis_desc-coreg_trans.fif
+2  sub-0003    None  audvis  None        True  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-0003\meg\sub-0003_task-audvis_meg.fif                      False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\freesurfer\subjects\sub-0003   recording         False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\coregistration\sub-0003_task-audvis_desc-coreg_trans.fif
+----- FAIL (13 s)
+cell 12: Traceback (most recent call last):
+  File "C:\Users\<user>\MEEG\meeg-pipeline\scripts\smoke_test.py", line 97, in run_notebook
+    exec(compile(source, f"{path.name}[cell {index}]", "exec"), namespace)
+  File "04_coregistration.ipynb[cell 12]", line 74, in <module>
+FileNotFoundError: No head surface found for FreeSurfer subject sub-0001 in C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\freesurfer\subjects\sub-0001\bem
+
+
+===== 1B_preprocessing/07_epoching.ipynb (epochs)
+PROJECT_ROOT: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project
+CONFIG_PATH: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\configs\local.yaml
+MNE browser backend: qt
+   index             recording subject session    task   run
+0      0  sub-0001_task-audvis    0001    None  audvis  None
+1      1  sub-0002_task-audvis    0002    None  audvis  None
+2      2  sub-0003_task-audvis    0003    None  audvis  None
+              recording raw_input raw_status events_status events_kind  n_events  epochs_exists                                                                                                                                                 raw_path                                                                                                   events_path                                                                                                                                       epochs_path message
+0  sub-0001_task-audvis  filtered     loaded        loaded     trigger       132          False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\preprocessing\sub-0001_task-audvis_desc-filtered_meg.fif  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-0001\meg\sub-0001_task-audvis_events.tsv  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\epochs\sub-0001_task-audvis_desc-filtered_epo.fif        
+1  sub-0002_task-audvis  filtered     loaded        loaded     trigger       134          False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\preprocessing\sub-0002_task-audvis_desc-filtered_meg.fif  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-0002\meg\sub-0002_task-audvis_events.tsv  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\epochs\sub-0002_task-audvis_desc-filtered_epo.fif        
+2  sub-0003_task-audvis  filtered     loaded        loaded     trigger        54          False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\preprocessing\sub-0003_task-audvis_desc-filtered_meg.fif  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-0003\meg\sub-0003_task-audvis_events.tsv  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\epochs\sub-0003_task-audvis_desc-filtered_epo.fif        
+Epoching filtered raw input for subject=0001, session=None, task=audvis, run=None.
+Epoch windows: saved=(-0.2, 0.5), work=(-0.2, 0.5), crop_to_saved=False
+Adding metadata with 5 columns
+132 matching events found
+No baseline correction applied
+Created an SSP operator (subspace dimension = 3)
+3 projection items activated
+Using data from preloaded Raw for 132 events and 421 original time points ...
+1 bad epochs dropped
+Autoreject disabled.
+Epoching filtered raw input for subject=0002, session=None, task=audvis, run=None.
+Epoch windows: saved=(-0.2, 0.5), work=(-0.2, 0.5), crop_to_saved=False
+Adding metadata with 5 columns
+134 matching events found
+No baseline correction applied
+Created an SSP operator (subspace dimension = 3)
+3 projection items activated
+Using data from preloaded Raw for 134 events and 421 original time points ...
+0 bad epochs dropped
+Autoreject disabled.
+Epoching filtered raw input for subject=0003, session=None, task=audvis, run=None.
+Epoch windows: saved=(-0.2, 0.5), work=(-0.2, 0.5), crop_to_saved=False
+Adding metadata with 5 columns
+54 matching events found
+No baseline correction applied
+Created an SSP operator (subspace dimension = 3)
+3 projection items activated
+Using data from preloaded Raw for 54 events and 421 original time points ...
+1 bad epochs dropped
+Autoreject disabled.
+              recording   status  n_epochs  n_events  n_event_ids events_kind                                                                                     message                                                                                                                                              path
+0  sub-0001_task-audvis  written       131       132            6     trigger  raw_input=filtered; saved_window=(-0.2, 0.5); work_window=(-0.2, 0.5); crop_to_saved=False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\epochs\sub-0001_task-audvis_desc-filtered_epo.fif
+1  sub-0002_task-audvis  written       134       134            6     trigger  raw_input=filtered; saved_window=(-0.2, 0.5); work_window=(-0.2, 0.5); crop_to_saved=False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\epochs\sub-0002_task-audvis_desc-filtered_epo.fif
+2  sub-0003_task-audvis  written        53        54            6     trigger  raw_input=filtered; saved_window=(-0.2, 0.5); work_window=(-0.2, 0.5); crop_to_saved=False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\epochs\sub-0003_task-audvis_desc-filtered_epo.fif
+Skipped single-file inspection cell 18 in 1B_preprocessing/07_epoching.ipynb. Set RUN_SINGLE_FILE_INSPECTIONS = True to run it.
+Skipped single-file inspection cell 20 in 1B_preprocessing/07_epoching.ipynb. Set RUN_SINGLE_FILE_INSPECTIONS = True to run it.
+Skipped single-file inspection cell 22 in 1B_preprocessing/07_epoching.ipynb. Set RUN_SINGLE_FILE_INSPECTIONS = True to run it.
+Skipped single-file inspection cell 24 in 1B_preprocessing/07_epoching.ipynb. Set RUN_SINGLE_FILE_INSPECTIONS = True to run it.
+----- PASS (7 s)
+
+===== 2_sensor_analysis/01_evokeds.ipynb (evoked responses)
+PROJECT_ROOT: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project
+CONFIG_PATH: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\configs\local.yaml
+MNE browser backend: qt
+   index             recording subject session    task   run
+0      0  sub-0001_task-audvis    0001    None  audvis  None
+1      1  sub-0002_task-audvis    0002    None  audvis  None
+2      2  sub-0003_task-audvis    0003    None  audvis  None
+              recording epochs_status  n_epochs                             condition_counts  n_evoked_files_existing                            metadata_columns                                                                                                                                       epochs_path                                                                                                                                                                                                                                                                                                                                           evokeds_paths message
+0  sub-0001_task-audvis        loaded       131  {'left_auditory': 30, 'right_auditory': 31}                        0  duration, onset, sample, trial_type, value  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\epochs\sub-0001_task-audvis_desc-filtered_epo.fif  {'left_auditory': 'C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\evokeds\sub-0001_task-audvis_desc-leftAuditory_ave.fif', 'right_auditory': 'C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\evokeds\sub-0001_task-audvis_desc-rightAuditory_ave.fif'}        
+1  sub-0002_task-audvis        loaded       134  {'left_auditory': 31, 'right_auditory': 30}                        0  duration, onset, sample, trial_type, value  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\epochs\sub-0002_task-audvis_desc-filtered_epo.fif  {'left_auditory': 'C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\evokeds\sub-0002_task-audvis_desc-leftAuditory_ave.fif', 'right_auditory': 'C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\evokeds\sub-0002_task-audvis_desc-rightAuditory_ave.fif'}        
+2  sub-0003_task-audvis        loaded        53  {'left_auditory': 11, 'right_auditory': 12}                        0  duration, onset, sample, trial_type, value  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\epochs\sub-0003_task-audvis_desc-filtered_epo.fif  {'left_auditory': 'C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\evokeds\sub-0003_task-audvis_desc-leftAuditory_ave.fif', 'right_auditory': 'C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\evokeds\sub-0003_task-audvis_desc-rightAuditory_ave.fif'}        
+        onset  duration  trial_type  value  sample
+0    3.624618       0.0   trigger_2      2   27977
+1    4.238988       0.0   trigger_3      3   28346
+2    4.946596       0.0   trigger_1      1   28771
+3    5.692499       0.0   trigger_4      4   29219
+4    6.413426       0.0   trigger_2      2   29652
+5    7.036121       0.0   trigger_3      3   30026
+6    7.742065       0.0   trigger_1      1   30450
+7    8.389734       0.0   trigger_4      4   30839
+8    9.057383       0.0   trigger_2      2   31240
+9    9.766656       0.0   trigger_3      3   31666
+10  10.490914       0.0   trigger_1      1   32101
+11  11.186867       0.0   trigger_4      4   32519
+12  11.879490       0.0   trigger_2      2   32935
+13  12.530490       0.0   trigger_3      3   33326
+14  13.173164       0.0   trigger_1      1   33712
+15  13.802519       0.0   trigger_5      5   34090
+16  14.538432       0.0   trigger_2      2   34532
+17  14.733232       0.0  trigger_32     32   34649
+18  15.246040       0.0   trigger_3      3   34957
+19  16.030236       0.0   trigger_1      1   35428
+20  16.732849       0.0   trigger_4      4   35850
+21  17.333900       0.0   trigger_2      2   36211
+22  17.943275       0.0   trigger_3      3   36577
+23  18.659208       0.0   trigger_1      1   37007
+24  19.413435       0.0   trigger_4      4   37460
+25  20.162667       0.0   trigger_2      2   37910
+26  20.856955       0.0   trigger_3      3   38327
+27  21.496300       0.0   trigger_1      1   38711
+28  22.193918       0.0   trigger_4      4   39130
+29  22.914846       0.0   trigger_2      2   39563
+        condition definition  n_epochs message
+0   left_auditory        [1]        30        
+1  right_auditory        [2]        31        
+              recording   status  n_evokeds                     conditions message                                                                                               directory
+0  sub-0001_task-audvis  written          2  left_auditory, right_auditory          C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\evokeds
+1  sub-0002_task-audvis  written          2  left_auditory, right_auditory          C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\evokeds
+2  sub-0003_task-audvis  written          2  left_auditory, right_auditory          C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\evokeds
+              recording       condition   status  n_epochs           desc                                                                                                                                                    path message
+0  sub-0001_task-audvis   left_auditory  written        30   leftAuditory   C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\evokeds\sub-0001_task-audvis_desc-leftAuditory_ave.fif        
+1  sub-0001_task-audvis  right_auditory  written        31  rightAuditory  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\evokeds\sub-0001_task-audvis_desc-rightAuditory_ave.fif        
+2  sub-0002_task-audvis   left_auditory  written        31   leftAuditory   C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\evokeds\sub-0002_task-audvis_desc-leftAuditory_ave.fif        
+3  sub-0002_task-audvis  right_auditory  written        30  rightAuditory  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\evokeds\sub-0002_task-audvis_desc-rightAuditory_ave.fif        
+4  sub-0003_task-audvis   left_auditory  written        11   leftAuditory   C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\evokeds\sub-0003_task-audvis_desc-leftAuditory_ave.fif        
+5  sub-0003_task-audvis  right_auditory  written        12  rightAuditory  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\evokeds\sub-0003_task-audvis_desc-rightAuditory_ave.fif        
+Skipped single-file inspection cell 22 in 2_sensor_analysis/01_evokeds.ipynb. Set RUN_SINGLE_FILE_INSPECTIONS = True to run it.
+Skipped single-file inspection cell 24 in 2_sensor_analysis/01_evokeds.ipynb. Set RUN_SINGLE_FILE_INSPECTIONS = True to run it.
+----- PASS (3 s)
+
+===== 3_source_modeling/01_forward_solution.ipynb (forward solution)
+PROJECT_ROOT: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project
+CONFIG_PATH: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\configs\local.yaml
+MNE browser backend: qt
+   index             recording subject session    task   run
+0      0  sub-0001_task-audvis    0001    None  audvis  None
+1      1  sub-0002_task-audvis    0002    None  audvis  None
+2      2  sub-0003_task-audvis    0003    None  audvis  None
+    subject session    task   run                                   status                                                       message info_input_kind  info_input_exists                                                                                                                                        info_input trans_status                                                   trans_message trans_scope trans_match                                                                                                                                     canonical_trans_path  trans_exists                                                                                                                                               trans_path  src_exists                                                                                                                    src_path  bem_exists                                                                                                                            bem_path  fwd_exists                                                                                                                                                 fwd_path fwd_desc  fwd_meg  fwd_eeg  overwrite
+0  sub-0001    None  audvis  None  missing_trans_source_space_bem_solution  Missing required input(s): trans, source_space, bem_solution          epochs               True  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\epochs\sub-0001_task-audvis_desc-filtered_epo.fif      missing  No canonical or compatible coregistration transform was found.   recording   canonical  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\coregistration\sub-0001_task-audvis_desc-coreg_trans.fif         False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\coregistration\sub-0001_task-audvis_desc-coreg_trans.fif       False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\freesurfer\subjects\sub-0001\bem\sub-0001-ico5-src.fif       False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\freesurfer\subjects\sub-0001\bem\sub-0001-4-1layer-bem-sol.fif       False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\forward\sub-0001_task-audvis_space-ico5_desc-meg-fwd.fif      meg     True    False      False
+1  sub-0002    None  audvis  None  missing_trans_source_space_bem_solution  Missing required input(s): trans, source_space, bem_solution          epochs               True  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\epochs\sub-0002_task-audvis_desc-filtered_epo.fif      missing  No canonical or compatible coregistration transform was found.   recording   canonical  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\coregistration\sub-0002_task-audvis_desc-coreg_trans.fif         False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\coregistration\sub-0002_task-audvis_desc-coreg_trans.fif       False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\freesurfer\subjects\sub-0002\bem\sub-0002-ico5-src.fif       False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\freesurfer\subjects\sub-0002\bem\sub-0002-4-1layer-bem-sol.fif       False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\forward\sub-0002_task-audvis_space-ico5_desc-meg-fwd.fif      meg     True    False      False
+2  sub-0003    None  audvis  None  missing_trans_source_space_bem_solution  Missing required input(s): trans, source_space, bem_solution          epochs               True  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\epochs\sub-0003_task-audvis_desc-filtered_epo.fif      missing  No canonical or compatible coregistration transform was found.   recording   canonical  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\coregistration\sub-0003_task-audvis_desc-coreg_trans.fif         False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\coregistration\sub-0003_task-audvis_desc-coreg_trans.fif       False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\freesurfer\subjects\sub-0003\bem\sub-0003-ico5-src.fif       False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\freesurfer\subjects\sub-0003\bem\sub-0003-4-1layer-bem-sol.fif       False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\forward\sub-0003_task-audvis_space-ico5_desc-meg-fwd.fif      meg     True    False      False
+Empty DataFrame
+Columns: [subject, session, task, run, fwd_desc, fwd_meg, fwd_eeg, info_input_kind, info_input, trans_status, trans_scope, trans_match, trans_message, trans_path, canonical_trans_path, src_path, bem_path, fwd_path]
+Index: []
+    subject session    task   run                                                                                                                                                     path                                   status                                                                                                                                        info_input info_input_kind                                                                                                                                               trans_path                                                                                                                    src_path                                                                                                                            bem_path                                                       message
+0  sub-0001    None  audvis  None  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\forward\sub-0001_task-audvis_space-ico5_desc-meg-fwd.fif  missing_trans_source_space_bem_solution  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\epochs\sub-0001_task-audvis_desc-filtered_epo.fif          epochs  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\coregistration\sub-0001_task-audvis_desc-coreg_trans.fif  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\freesurfer\subjects\sub-0001\bem\sub-0001-ico5-src.fif  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\freesurfer\subjects\sub-0001\bem\sub-0001-4-1layer-bem-sol.fif  Missing required input(s): trans, source_space, bem_solution
+1  sub-0002    None  audvis  None  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\forward\sub-0002_task-audvis_space-ico5_desc-meg-fwd.fif  missing_trans_source_space_bem_solution  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\epochs\sub-0002_task-audvis_desc-filtered_epo.fif          epochs  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\coregistration\sub-0002_task-audvis_desc-coreg_trans.fif  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\freesurfer\subjects\sub-0002\bem\sub-0002-ico5-src.fif  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\freesurfer\subjects\sub-0002\bem\sub-0002-4-1layer-bem-sol.fif  Missing required input(s): trans, source_space, bem_solution
+2  sub-0003    None  audvis  None  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\forward\sub-0003_task-audvis_space-ico5_desc-meg-fwd.fif  missing_trans_source_space_bem_solution  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\epochs\sub-0003_task-audvis_desc-filtered_epo.fif          epochs  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\coregistration\sub-0003_task-audvis_desc-coreg_trans.fif  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\freesurfer\subjects\sub-0003\bem\sub-0003-ico5-src.fif  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\freesurfer\subjects\sub-0003\bem\sub-0003-4-1layer-bem-sol.fif  Missing required input(s): trans, source_space, bem_solution
+Skipped single-file inspection cell 22 in 3_source_modeling/01_forward_solution.ipynb. Set RUN_SINGLE_FILE_INSPECTIONS = True to run it.
+Skipped detailed forward-selection diagnostics.
+----- FAIL (0 s)
+6 result row(s) with a failed status, e.g.:
+status=missing_trans_source_space_bem_solution: Missing required input(s): trans, source_space, bem_solution
+status=missing_trans_source_space_bem_solution: Missing required input(s): trans, source_space, bem_solution
+status=missing_trans_source_space_bem_solution: Missing required input(s): trans, source_space, bem_solution
+
+===== 3_source_modeling/02_noise_covariance.ipynb (noise covariance)
+PROJECT_ROOT: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project
+CONFIG_PATH: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\configs\local.yaml
+   index             recording subject session    task   run
+0      0  sub-0001_task-audvis    0001    None  audvis  None
+1      1  sub-0002_task-audvis    0002    None  audvis  None
+2      2  sub-0003_task-audvis    0003    None  audvis  None
+    subject session    task   run status                                                               message mode data_input_kind  data_input_exists                                                                                                                                    data_input  cov_exists                                                                                                                                  cov_path  overwrite     match_strategy               recording_meas_date selected_erm_session selected_erm_run            selected_erm_meas_date  selected_erm_session_date  time_diff_hours
+0  sub-0001    None  audvis  None  ready  Selected nearest empty-room recording by measurement date (68.25 h).  erm             erm               True  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-emptyroom\ses-20021206\meg\sub-emptyroom_ses-20021206_task-noise_meg.fif       False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\cov\sub-0001_task-audvis_desc-erm-cov.fif      False  meas_date_nearest  2002-12-03T19:01:10.720100+00:00             20021206             None  2002-12-06T15:16:18.982786+00:00  2002-12-06T00:00:00+00:00        68.252295
+1  sub-0002    None  audvis  None  ready  Selected nearest empty-room recording by measurement date (68.25 h).  erm             erm               True  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-emptyroom\ses-20021206\meg\sub-emptyroom_ses-20021206_task-noise_meg.fif       False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\cov\sub-0002_task-audvis_desc-erm-cov.fif      False  meas_date_nearest  2002-12-03T19:01:10.720100+00:00             20021206             None  2002-12-06T15:16:18.982786+00:00  2002-12-06T00:00:00+00:00        68.252295
+2  sub-0003    None  audvis  None  ready  Selected nearest empty-room recording by measurement date (68.25 h).  erm             erm               True  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-emptyroom\ses-20021206\meg\sub-emptyroom_ses-20021206_task-noise_meg.fif       False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\cov\sub-0003_task-audvis_desc-erm-cov.fif      False  meas_date_nearest  2002-12-03T19:01:10.720100+00:00             20021206             None  2002-12-06T15:16:18.982786+00:00  2002-12-06T00:00:00+00:00        68.252295
+    subject session    task   run status                                                               message mode data_input_kind     match_strategy               recording_meas_date selected_erm_session            selected_erm_meas_date  time_diff_hours                                                                                                                                    data_input                                                                                                                                  cov_path
+0  sub-0001    None  audvis  None  ready  Selected nearest empty-room recording by measurement date (68.25 h).  erm             erm  meas_date_nearest  2002-12-03T19:01:10.720100+00:00             20021206  2002-12-06T15:16:18.982786+00:00        68.252295  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-emptyroom\ses-20021206\meg\sub-emptyroom_ses-20021206_task-noise_meg.fif  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\cov\sub-0001_task-audvis_desc-erm-cov.fif
+1  sub-0002    None  audvis  None  ready  Selected nearest empty-room recording by measurement date (68.25 h).  erm             erm  meas_date_nearest  2002-12-03T19:01:10.720100+00:00             20021206  2002-12-06T15:16:18.982786+00:00        68.252295  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-emptyroom\ses-20021206\meg\sub-emptyroom_ses-20021206_task-noise_meg.fif  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\cov\sub-0002_task-audvis_desc-erm-cov.fif
+2  sub-0003    None  audvis  None  ready  Selected nearest empty-room recording by measurement date (68.25 h).  erm             erm  meas_date_nearest  2002-12-03T19:01:10.720100+00:00             20021206  2002-12-06T15:16:18.982786+00:00        68.252295  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-emptyroom\ses-20021206\meg\sub-emptyroom_ses-20021206_task-noise_meg.fif  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\cov\sub-0003_task-audvis_desc-erm-cov.fif
+    subject session    task   run mode     match_strategy selected_erm_session  time_diff_hours                                                                                                                                    data_input                                                                                                                                  cov_path
+0  sub-0001    None  audvis  None  erm  meas_date_nearest             20021206        68.252295  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-emptyroom\ses-20021206\meg\sub-emptyroom_ses-20021206_task-noise_meg.fif  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\cov\sub-0001_task-audvis_desc-erm-cov.fif
+1  sub-0002    None  audvis  None  erm  meas_date_nearest             20021206        68.252295  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-emptyroom\ses-20021206\meg\sub-emptyroom_ses-20021206_task-noise_meg.fif  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\cov\sub-0002_task-audvis_desc-erm-cov.fif
+2  sub-0003    None  audvis  None  erm  meas_date_nearest             20021206        68.252295  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-emptyroom\ses-20021206\meg\sub-emptyroom_ses-20021206_task-noise_meg.fif  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\cov\sub-0003_task-audvis_desc-erm-cov.fif
+Opening raw data file C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-emptyroom\ses-20021206\meg\sub-emptyroom_ses-20021206_task-noise_meg.fif...
+Isotrak not found
+    Read a total of 3 projection items:
+        PCA-v1 (1 x 102)  idle
+        PCA-v2 (1 x 102)  idle
+        PCA-v3 (1 x 102)  idle
+    Range : 19800 ... 85867 =     32.966 ...   142.965 secs
+Ready.
+Reading 0 ... 66067  =      0.000 ...   109.999 secs...
+Filtering raw data in 1 contiguous segment
+Setting up band-stop filter from 59 - 61 Hz
+
+FIR filter parameters
+---------------------
+Designing a one-pass, zero-phase, non-causal bandstop filter:
+- Windowed time-domain design (firwin) method
+- Hamming window with 0.0194 passband ripple and 53 dB stopband attenuation
+- Lower passband edge: 59.35
+- Lower transition bandwidth: 0.50 Hz (-6 dB cutoff frequency: 59.10 Hz)
+- Upper passband edge: 60.65 Hz
+- Upper transition bandwidth: 0.50 Hz (-6 dB cutoff frequency: 60.90 Hz)
+- Filter length: 3965 samples (6.602 s)
+
+Filtering raw data in 1 contiguous segment
+Setting up band-pass filter from 1 - 40 Hz
+
+FIR filter parameters
+---------------------
+Designing a one-pass, zero-phase, non-causal bandpass filter:
+- Windowed time-domain design (firwin) method
+- Hamming window with 0.0194 passband ripple and 53 dB stopband attenuation
+- Lower passband edge: 1.00
+- Lower transition bandwidth: 1.00 Hz (-6 dB cutoff frequency: 0.50 Hz)
+- Upper passband edge: 40.00 Hz
+- Upper transition bandwidth: 10.00 Hz (-6 dB cutoff frequency: 45.00 Hz)
+- Filter length: 1983 samples (3.302 s)
+
+Using up to 550 segments
+Number of samples used : 66000
+[done]
+Opening raw data file C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-emptyroom\ses-20021206\meg\sub-emptyroom_ses-20021206_task-noise_meg.fif...
+Isotrak not found
+    Read a total of 3 projection items:
+        PCA-v1 (1 x 102)  idle
+        PCA-v2 (1 x 102)  idle
+        PCA-v3 (1 x 102)  idle
+    Range : 19800 ... 85867 =     32.966 ...   142.965 secs
+Ready.
+Reading 0 ... 66067  =      0.000 ...   109.999 secs...
+Filtering raw data in 1 contiguous segment
+Setting up band-stop filter from 59 - 61 Hz
+
+FIR filter parameters
+---------------------
+Designing a one-pass, zero-phase, non-causal bandstop filter:
+- Windowed time-domain design (firwin) method
+- Hamming window with 0.0194 passband ripple and 53 dB stopband attenuation
+- Lower passband edge: 59.35
+- Lower transition bandwidth: 0.50 Hz (-6 dB cutoff frequency: 59.10 Hz)
+- Upper passband edge: 60.65 Hz
+- Upper transition bandwidth: 0.50 Hz (-6 dB cutoff frequency: 60.90 Hz)
+- Filter length: 3965 samples (6.602 s)
+
+Filtering raw data in 1 contiguous segment
+Setting up band-pass filter from 1 - 40 Hz
+
+FIR filter parameters
+---------------------
+Designing a one-pass, zero-phase, non-causal bandpass filter:
+- Windowed time-domain design (firwin) method
+- Hamming window with 0.0194 passband ripple and 53 dB stopband attenuation
+- Lower passband edge: 1.00
+- Lower transition bandwidth: 1.00 Hz (-6 dB cutoff frequency: 0.50 Hz)
+- Upper passband edge: 40.00 Hz
+- Upper transition bandwidth: 10.00 Hz (-6 dB cutoff frequency: 45.00 Hz)
+- Filter length: 1983 samples (3.302 s)
+
+Using up to 550 segments
+Number of samples used : 66000
+[done]
+Opening raw data file C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-emptyroom\ses-20021206\meg\sub-emptyroom_ses-20021206_task-noise_meg.fif...
+Isotrak not found
+    Read a total of 3 projection items:
+        PCA-v1 (1 x 102)  idle
+        PCA-v2 (1 x 102)  idle
+        PCA-v3 (1 x 102)  idle
+    Range : 19800 ... 85867 =     32.966 ...   142.965 secs
+Ready.
+Reading 0 ... 66067  =      0.000 ...   109.999 secs...
+Filtering raw data in 1 contiguous segment
+Setting up band-stop filter from 59 - 61 Hz
+
+FIR filter parameters
+---------------------
+Designing a one-pass, zero-phase, non-causal bandstop filter:
+- Windowed time-domain design (firwin) method
+- Hamming window with 0.0194 passband ripple and 53 dB stopband attenuation
+- Lower passband edge: 59.35
+- Lower transition bandwidth: 0.50 Hz (-6 dB cutoff frequency: 59.10 Hz)
+- Upper passband edge: 60.65 Hz
+- Upper transition bandwidth: 0.50 Hz (-6 dB cutoff frequency: 60.90 Hz)
+- Filter length: 3965 samples (6.602 s)
+
+Filtering raw data in 1 contiguous segment
+Setting up band-pass filter from 1 - 40 Hz
+
+FIR filter parameters
+---------------------
+Designing a one-pass, zero-phase, non-causal bandpass filter:
+- Windowed time-domain design (firwin) method
+- Hamming window with 0.0194 passband ripple and 53 dB stopband attenuation
+- Lower passband edge: 1.00
+- Lower transition bandwidth: 1.00 Hz (-6 dB cutoff frequency: 0.50 Hz)
+- Upper passband edge: 40.00 Hz
+- Upper transition bandwidth: 10.00 Hz (-6 dB cutoff frequency: 45.00 Hz)
+- Filter length: 1983 samples (3.302 s)
+
+Using up to 550 segments
+Number of samples used : 66000
+[done]
+    subject session    task   run                                                                                                                                      path   status mode                                                                                                                                    data_input message
+0  sub-0001    None  audvis  None  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\cov\sub-0001_task-audvis_desc-erm-cov.fif  written  erm  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-emptyroom\ses-20021206\meg\sub-emptyroom_ses-20021206_task-noise_meg.fif        
+1  sub-0002    None  audvis  None  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\cov\sub-0002_task-audvis_desc-erm-cov.fif  written  erm  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-emptyroom\ses-20021206\meg\sub-emptyroom_ses-20021206_task-noise_meg.fif        
+2  sub-0003    None  audvis  None  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\cov\sub-0003_task-audvis_desc-erm-cov.fif  written  erm  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\rawdata\sub-emptyroom\ses-20021206\meg\sub-emptyroom_ses-20021206_task-noise_meg.fif        
+Using covariance table: noise_cov_results_df
+    subject  ...  _cov_file_exists
+0  sub-0001  ...              True
+1  sub-0002  ...              True
+2  sub-0003  ...              True
+
+[3 rows x 11 columns]
+Plotting 3 covariance file(s).
+    subject  ...  _cov_file_exists
+0  sub-0001  ...              True
+1  sub-0002  ...              True
+2  sub-0003  ...              True
+
+[3 rows x 11 columns]
+================================================================================
+sub-0001 audvis
+cov_path: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\cov\sub-0001_task-audvis_desc-erm-cov.fif
+FAILED: Could not find raw BIDS FIF for subject=0001, task=audvis.
+================================================================================
+sub-0002 audvis
+cov_path: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\cov\sub-0002_task-audvis_desc-erm-cov.fif
+FAILED: Could not find raw BIDS FIF for subject=0002, task=audvis.
+================================================================================
+sub-0003 audvis
+cov_path: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\cov\sub-0003_task-audvis_desc-erm-cov.fif
+FAILED: Could not find raw BIDS FIF for subject=0003, task=audvis.
+    subject  ...                                            message
+0  sub-0001  ...  Could not find raw BIDS FIF for subject=0001, ...
+1  sub-0002  ...  Could not find raw BIDS FIF for subject=0002, ...
+2  sub-0003  ...  Could not find raw BIDS FIF for subject=0003, ...
+
+[3 rows x 14 columns]
+----- PASS (18 s)
+
+===== 3_source_modeling/03_inverse_operator.ipynb (inverse operator)
+PROJECT_ROOT: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project
+CONFIG_PATH: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\configs\local.yaml
+   index             recording subject session    task   run
+0      0  sub-0001_task-audvis    0001    None  audvis  None
+1      1  sub-0002_task-audvis    0002    None  audvis  None
+2      2  sub-0003_task-audvis    0003    None  audvis  None
+    subject session    task   run           status                             message info_input_kind  info_input_exists                                                                                                                                        info_input  fwd_exists                                                                                                                                                 fwd_path  cov_exists                                                                                                                                  cov_path  inverse_exists                                                                                                                                                 inverse_path  overwrite spacing noise_cov_mode inverse_method
+0  sub-0001    None  audvis  None  missing_forward  Missing required input(s): forward          epochs               True  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\epochs\sub-0001_task-audvis_desc-filtered_epo.fif       False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\forward\sub-0001_task-audvis_space-ico5_desc-meg-fwd.fif        True  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\cov\sub-0001_task-audvis_desc-erm-cov.fif           False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\inverse\sub-0001_task-audvis_space-ico5_desc-ermdspm-inv.fif      False    ico5            erm           dSPM
+1  sub-0002    None  audvis  None  missing_forward  Missing required input(s): forward          epochs               True  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\epochs\sub-0002_task-audvis_desc-filtered_epo.fif       False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\forward\sub-0002_task-audvis_space-ico5_desc-meg-fwd.fif        True  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\cov\sub-0002_task-audvis_desc-erm-cov.fif           False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\inverse\sub-0002_task-audvis_space-ico5_desc-ermdspm-inv.fif      False    ico5            erm           dSPM
+2  sub-0003    None  audvis  None  missing_forward  Missing required input(s): forward          epochs               True  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\epochs\sub-0003_task-audvis_desc-filtered_epo.fif       False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\forward\sub-0003_task-audvis_space-ico5_desc-meg-fwd.fif        True  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\cov\sub-0003_task-audvis_desc-erm-cov.fif           False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\inverse\sub-0003_task-audvis_space-ico5_desc-ermdspm-inv.fif      False    ico5            erm           dSPM
+Empty DataFrame
+Columns: [subject, session, task, run, info_input_kind, info_input, fwd_path, cov_path, inverse_path]
+Index: []
+    subject session    task   run                                                                                                                                                         path           status                                                                                                                                        info_input info_input_kind                                                                                                                                                 fwd_path                                                                                                                                  cov_path                             message
+0  sub-0001    None  audvis  None  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\inverse\sub-0001_task-audvis_space-ico5_desc-ermdspm-inv.fif  missing_forward  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\epochs\sub-0001_task-audvis_desc-filtered_epo.fif          epochs  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\forward\sub-0001_task-audvis_space-ico5_desc-meg-fwd.fif  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\cov\sub-0001_task-audvis_desc-erm-cov.fif  Missing required input(s): forward
+1  sub-0002    None  audvis  None  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\inverse\sub-0002_task-audvis_space-ico5_desc-ermdspm-inv.fif  missing_forward  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\epochs\sub-0002_task-audvis_desc-filtered_epo.fif          epochs  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\forward\sub-0002_task-audvis_space-ico5_desc-meg-fwd.fif  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\cov\sub-0002_task-audvis_desc-erm-cov.fif  Missing required input(s): forward
+2  sub-0003    None  audvis  None  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\inverse\sub-0003_task-audvis_space-ico5_desc-ermdspm-inv.fif  missing_forward  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\epochs\sub-0003_task-audvis_desc-filtered_epo.fif          epochs  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\forward\sub-0003_task-audvis_space-ico5_desc-meg-fwd.fif  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\cov\sub-0003_task-audvis_desc-erm-cov.fif  Missing required input(s): forward
+----- FAIL (0 s)
+6 result row(s) with a failed status, e.g.:
+status=missing_forward: Missing required input(s): forward
+status=missing_forward: Missing required input(s): forward
+status=missing_forward: Missing required input(s): forward
+
+===== 3_source_modeling/04_apply_inverse_evokeds.ipynb (source estimates)
+PROJECT_ROOT: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project
+CONFIG_PATH: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\configs\local.yaml
+   index             recording subject session    task   run
+0      0  sub-0001_task-audvis    0001    None  audvis  None
+1      1  sub-0002_task-audvis    0002    None  audvis  None
+2      2  sub-0003_task-audvis    0003    None  audvis  None
+  apply_to method  snr   lambda2 pick_conditions  save_stcs stc_format
+0   evoked   dSPM  3.0  0.111111             all       True         h5
+    subject session    task   run      condition           status                             message apply_to method  evoked_exists                                                                                                                                             evoked_path  inverse_exists                                                                                                                                                 inverse_path  stc_exists                                                                                                                                                                         stc_path  overwrite
+0  sub-0001    None  audvis  None   leftAuditory  missing_inverse  Missing required input(s): inverse   evoked   dSPM           True   C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\evokeds\sub-0001_task-audvis_desc-leftAuditory_ave.fif           False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\inverse\sub-0001_task-audvis_space-ico5_desc-ermdspm-inv.fif       False   C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\source_estimates\sub-0001_task-audvis_space-source_desc-leftauditorydspm-stc.h5      False
+1  sub-0001    None  audvis  None  rightAuditory  missing_inverse  Missing required input(s): inverse   evoked   dSPM           True  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\evokeds\sub-0001_task-audvis_desc-rightAuditory_ave.fif           False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\inverse\sub-0001_task-audvis_space-ico5_desc-ermdspm-inv.fif       False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\source_estimates\sub-0001_task-audvis_space-source_desc-rightauditorydspm-stc.h5      False
+2  sub-0002    None  audvis  None   leftAuditory  missing_inverse  Missing required input(s): inverse   evoked   dSPM           True   C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\evokeds\sub-0002_task-audvis_desc-leftAuditory_ave.fif           False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\inverse\sub-0002_task-audvis_space-ico5_desc-ermdspm-inv.fif       False   C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\source_estimates\sub-0002_task-audvis_space-source_desc-leftauditorydspm-stc.h5      False
+3  sub-0002    None  audvis  None  rightAuditory  missing_inverse  Missing required input(s): inverse   evoked   dSPM           True  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\evokeds\sub-0002_task-audvis_desc-rightAuditory_ave.fif           False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\inverse\sub-0002_task-audvis_space-ico5_desc-ermdspm-inv.fif       False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\source_estimates\sub-0002_task-audvis_space-source_desc-rightauditorydspm-stc.h5      False
+4  sub-0003    None  audvis  None   leftAuditory  missing_inverse  Missing required input(s): inverse   evoked   dSPM           True   C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\evokeds\sub-0003_task-audvis_desc-leftAuditory_ave.fif           False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\inverse\sub-0003_task-audvis_space-ico5_desc-ermdspm-inv.fif       False   C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\source_estimates\sub-0003_task-audvis_space-source_desc-leftauditorydspm-stc.h5      False
+5  sub-0003    None  audvis  None  rightAuditory  missing_inverse  Missing required input(s): inverse   evoked   dSPM           True  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\evokeds\sub-0003_task-audvis_desc-rightAuditory_ave.fif           False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\inverse\sub-0003_task-audvis_space-ico5_desc-ermdspm-inv.fif       False  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\source_estimates\sub-0003_task-audvis_space-source_desc-rightauditorydspm-stc.h5      False
+Empty DataFrame
+Columns: [subject, session, task, run, condition, evoked_path, inverse_path, stc_path]
+Index: []
+    subject session    task   run      condition                                                                                                                                                                             path           status apply_to method   lambda2                                                                                                                                             evoked_path                                                                                                                                                 inverse_path                             message
+0  sub-0001    None  audvis  None   leftAuditory   C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\source_estimates\sub-0001_task-audvis_space-source_desc-leftauditorydspm-stc.h5  missing_inverse   evoked   dSPM  0.111111   C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\evokeds\sub-0001_task-audvis_desc-leftAuditory_ave.fif  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\inverse\sub-0001_task-audvis_space-ico5_desc-ermdspm-inv.fif  Missing required input(s): inverse
+1  sub-0001    None  audvis  None  rightAuditory  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\source_estimates\sub-0001_task-audvis_space-source_desc-rightauditorydspm-stc.h5  missing_inverse   evoked   dSPM  0.111111  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\evokeds\sub-0001_task-audvis_desc-rightAuditory_ave.fif  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0001\meg\inverse\sub-0001_task-audvis_space-ico5_desc-ermdspm-inv.fif  Missing required input(s): inverse
+2  sub-0002    None  audvis  None   leftAuditory   C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\source_estimates\sub-0002_task-audvis_space-source_desc-leftauditorydspm-stc.h5  missing_inverse   evoked   dSPM  0.111111   C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\evokeds\sub-0002_task-audvis_desc-leftAuditory_ave.fif  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\inverse\sub-0002_task-audvis_space-ico5_desc-ermdspm-inv.fif  Missing required input(s): inverse
+3  sub-0002    None  audvis  None  rightAuditory  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\source_estimates\sub-0002_task-audvis_space-source_desc-rightauditorydspm-stc.h5  missing_inverse   evoked   dSPM  0.111111  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\evokeds\sub-0002_task-audvis_desc-rightAuditory_ave.fif  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0002\meg\inverse\sub-0002_task-audvis_space-ico5_desc-ermdspm-inv.fif  Missing required input(s): inverse
+4  sub-0003    None  audvis  None   leftAuditory   C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\source_estimates\sub-0003_task-audvis_space-source_desc-leftauditorydspm-stc.h5  missing_inverse   evoked   dSPM  0.111111   C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\evokeds\sub-0003_task-audvis_desc-leftAuditory_ave.fif  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\inverse\sub-0003_task-audvis_space-ico5_desc-ermdspm-inv.fif  Missing required input(s): inverse
+5  sub-0003    None  audvis  None  rightAuditory  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\source_estimates\sub-0003_task-audvis_space-source_desc-rightauditorydspm-stc.h5  missing_inverse   evoked   dSPM  0.111111  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\evokeds\sub-0003_task-audvis_desc-rightAuditory_ave.fif  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\sub-0003\meg\inverse\sub-0003_task-audvis_space-ico5_desc-ermdspm-inv.fif  Missing required input(s): inverse
+----- FAIL (0 s)
+12 result row(s) with a failed status, e.g.:
+status=missing_inverse: Missing required input(s): inverse
+status=missing_inverse: Missing required input(s): inverse
+status=missing_inverse: Missing required input(s): inverse
+
+===== 3_source_modeling/05_morph_evoked_source_estimates_to_fsaverage.ipynb (morph to fsaverage)
+PROJECT_ROOT: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project
+CONFIG_PATH: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\configs\local.yaml
+   enabled subject_to  spacing smooth method pick_conditions stc_format
+0     True  fsaverage        5   None   dSPM             all         h5
+   enabled subject_to  spacing smooth method pick_conditions stc_format
+0     True  fsaverage        5   None   dSPM             all         h5
+              recording subject session    task   run
+0  sub-0001_task-audvis    0001    None  audvis  None
+1  sub-0002_task-audvis    0002    None  audvis  None
+2  sub-0003_task-audvis    0003    None  audvis  None
+              recording subject session    task   run
+0  sub-0001_task-audvis    0001    None  audvis  None
+1  sub-0002_task-audvis    0002    None  audvis  None
+2  sub-0003_task-audvis    0003    None  audvis  None
+    subject session    task  ...  morphed_exists morphed_path  overwrite
+0  sub-0001    None  audvis  ...           False                   False
+1  sub-0002    None  audvis  ...           False                   False
+2  sub-0003    None  audvis  ...           False                   False
+
+[3 rows x 14 columns]
+     task                   status  n
+0  audvis  missing_source_estimate  3
+    subject  ...                                            message
+0  sub-0001  ...  No matching native evoked source estimates wer...
+1  sub-0002  ...  No matching native evoked source estimates wer...
+2  sub-0003  ...  No matching native evoked source estimates wer...
+
+[3 rows x 13 columns]
+     task                   status  n
+0  audvis  missing_source_estimate  3
+    subject  session  ... mean_abs                                     message
+0  sub-0001      NaN  ...     None  RuntimeError: Unknown extension for file .
+1  sub-0002      NaN  ...     None  RuntimeError: Unknown extension for file .
+2  sub-0003      NaN  ...     None  RuntimeError: Unknown extension for file .
+
+[3 rows x 16 columns]
+    subject  session  ... mean_abs                                     message
+0  sub-0001      NaN  ...     None  RuntimeError: Unknown extension for file .
+1  sub-0002      NaN  ...     None  RuntimeError: Unknown extension for file .
+2  sub-0003      NaN  ...     None  RuntimeError: Unknown extension for file .
+
+[3 rows x 16 columns]
+----- PASS (0 s)
+
+===== 3_source_modeling/06_extract_label_time_courses_evokeds.ipynb (label time courses (evoked))
+PROJECT_ROOT: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project
+CONFIG_PATH: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\configs\local.yaml
+   index             recording subject session    task   run
+0      0  sub-0001_task-audvis    0001    None  audvis  None
+1      1  sub-0002_task-audvis    0002    None  audvis  None
+2      2  sub-0003_task-audvis    0003    None  audvis  None
+  parcellation extract_mode target_labels inverse_method source_spacing apply_inverse_method apply_inverse_pick_conditions
+0    aparc_sub    mean_flip          None           dSPM           ico5                 dSPM                           all
+    subject session    task   run condition       status                                        message  stc_exists stc_path labels_status                                                                                                  labels_message n_labels  ltc_exists ltc_path labels_path times_path parcellation extract_mode target_labels  overwrite
+0  sub-0001    None  audvis  None      None  missing_stc  No matching source-estimate files were found.       False                missing  ModuleNotFoundError: nibabel is required to Reading labels from parcellations, got:\nNo module named 'nibabel'     None       False                                    aparc_sub    mean_flip          None      False
+1  sub-0002    None  audvis  None      None  missing_stc  No matching source-estimate files were found.       False                missing  ModuleNotFoundError: nibabel is required to Reading labels from parcellations, got:\nNo module named 'nibabel'     None       False                                    aparc_sub    mean_flip          None      False
+2  sub-0003    None  audvis  None      None  missing_stc  No matching source-estimate files were found.       False                missing  ModuleNotFoundError: nibabel is required to Reading labels from parcellations, got:\nNo module named 'nibabel'     None       False                                    aparc_sub    mean_flip          None      False
+Empty DataFrame
+Columns: [subject, session, task, run, condition, stc_path, parcellation, extract_mode, n_labels, ltc_path]
+Index: []
+    subject session    task   run condition path       status stc_path labels_path times_path parcellation extract_mode n_labels n_times                                        message
+0  sub-0001    None  audvis  None      None       missing_stc                                    aparc_sub    mean_flip     None    None  No matching source-estimate files were found.
+1  sub-0002    None  audvis  None      None       missing_stc                                    aparc_sub    mean_flip     None    None  No matching source-estimate files were found.
+2  sub-0003    None  audvis  None      None       missing_stc                                    aparc_sub    mean_flip     None    None  No matching source-estimate files were found.
+----- FAIL (0 s)
+6 result row(s) with a failed status, e.g.:
+status=missing_stc: No matching source-estimate files were found.
+status=missing_stc: No matching source-estimate files were found.
+status=missing_stc: No matching source-estimate files were found.
+
+===== 3_source_modeling/07_extract_label_time_courses_epochs.ipynb (label time courses (epochs))
+PROJECT_ROOT: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project
+CONFIG_PATH: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\configs\local.yaml
+   enabled method  snr   lambda2  ...  tmax    dtype save_format source_spacing
+0     True   dSPM  3.0  0.111111  ...  None  float32         npy           ico5
+
+[1 rows x 13 columns]
+   enabled method  snr   lambda2  ...  tmax    dtype save_format source_spacing
+0     True   dSPM  3.0  0.111111  ...  None  float32         npy           ico5
+
+[1 rows x 13 columns]
+              recording subject session    task   run
+0  sub-0001_task-audvis    0001    None  audvis  None
+1  sub-0002_task-audvis    0002    None  audvis  None
+2  sub-0003_task-audvis    0003    None  audvis  None
+              recording subject session    task   run
+0  sub-0001_task-audvis    0001    None  audvis  None
+1  sub-0002_task-audvis    0002    None  audvis  None
+2  sub-0003_task-audvis    0003    None  audvis  None
+    subject session    task   run  ... target_labels  decim    dtype  overwrite
+0  sub-0001    None  audvis  None  ...          None      5  float32      False
+1  sub-0002    None  audvis  None  ...          None      5  float32      False
+2  sub-0003    None  audvis  None  ...          None      5  float32      False
+
+[3 rows x 26 columns]
+     task                         status  n
+0  audvis  missing_epochs_inverse_labels  3
+    subject  ...                                            message
+0  sub-0001  ...  Missing required input(s): epochs, inverse, la...
+1  sub-0002  ...  Missing required input(s): epochs, inverse, la...
+2  sub-0003  ...  Missing required input(s): epochs, inverse, la...
+
+[3 rows x 21 columns]
+     task                         status  n
+0  audvis  missing_epochs_inverse_labels  3
+    subject  ...                                            message
+0  sub-0001  ...  FileNotFoundError: C:\Users\<user>\MEEG\meeg-pi...
+1  sub-0002  ...  FileNotFoundError: C:\Users\<user>\MEEG\meeg-pi...
+2  sub-0003  ...  FileNotFoundError: C:\Users\<user>\MEEG\meeg-pi...
+
+[3 rows x 15 columns]
+    subject  ...                                            message
+0  sub-0001  ...  FileNotFoundError: C:\Users\<user>\MEEG\meeg-pi...
+1  sub-0002  ...  FileNotFoundError: C:\Users\<user>\MEEG\meeg-pi...
+2  sub-0003  ...  FileNotFoundError: C:\Users\<user>\MEEG\meeg-pi...
+
+[3 rows x 15 columns]
+----- PASS (0 s)
+
+===== 6_group_statistics/01_source_cluster_tests.ipynb (group cluster statistics)
+PROJECT_ROOT: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project
+CONFIG_PATH: C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\configs\local.yaml
+status         missing_input
+analysis                    
+left_vs_right              3
+        analysis         status                                                                                                  directory  n_subjects  n_clusters  n_significant                                                                                                                                                                                                                                                                                                                                                                            message
+0  left_vs_right  missing_input  C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\derivatives\meeg-pipeline\group\stats\leftVsRight           0           0              0  Need at least 3 subjects with complete data, found 0. Skipped: {'0001': 'missing source estimate: sub-0001_task-audvis_space-fsaverage_desc-leftauditorydspm-stc.h5', '0002': 'missing source estimate: sub-0002_task-audvis_space-fsaverage_desc-leftauditorydspm-stc.h5', '0003': 'missing source estimate: sub-0003_task-audvis_space-fsaverage_desc-leftauditorydspm-stc.h5'}
+left_vs_right: no cluster table yet
+----- FAIL (0 s)
+1 result row(s) with a failed status, e.g.:
+status=missing_input: Need at least 3 subjects with complete data, found 0. Skipped: {'0001': 'missing source estimate: sub-0001_task-audvis_space-fsaverage_desc-leftauditorydspm-stc.h5', '0002': 'missing source estimate: sub-0002_task-audvis_space-fsaverage_desc-leftauditorydspm-stc.h5', '0003': 'missing source estimate
+
+Report written to C:\Users\<user>\MEEG\meeg-pipeline\pipeline-test-project\smoke_test_report.md
+PASS    1B_preprocessing/01_raw_bids_import.ipynb
+PASS    cli:bad-channels-detect
+PASS    cli:write-events
+PASS    1B_preprocessing/04_preprocessing.ipynb
+FAIL    1A_anatomy/03_anatomy_setup.ipynb
+FAIL    1A_anatomy/04_coregistration.ipynb
+PASS    1B_preprocessing/07_epoching.ipynb
+PASS    2_sensor_analysis/01_evokeds.ipynb
+FAIL    3_source_modeling/01_forward_solution.ipynb
+PASS    3_source_modeling/02_noise_covariance.ipynb
+FAIL    3_source_modeling/03_inverse_operator.ipynb
+FAIL    3_source_modeling/04_apply_inverse_evokeds.ipynb
+PASS    3_source_modeling/05_morph_evoked_source_estimates_to_fsaverage.ipynb
+FAIL    3_source_modeling/06_extract_label_time_courses_evokeds.ipynb
+PASS    3_source_modeling/07_extract_label_time_courses_epochs.ipynb
+FAIL    6_group_statistics/01_source_cluster_tests.ipynb
